@@ -18,6 +18,11 @@ class messageQueueHandler {
 		let useCloudConnection = remoteConnection || secure || photo || method == "get_network_info";
 		if (!useCloudConnection && !localConnectionState && mqttConnectionState) {
 			useCloudConnection = true;
+			await this.adapter.updateTransportDiagnostics(duid, {
+				lastTransport: "cloud",
+				lastTransportReason: "local-unavailable-fallback",
+				lastCommandMethod: method,
+			});
 			this.adapter.log.info(`Local connection unavailable for ${duid}. Falling back to cloud connection for method ${method}.`);
 		}
 
@@ -40,16 +45,28 @@ class messageQueueHandler {
 		if (roborockMessage) {
 			return new Promise((resolve, reject) => {
 				if (!deviceOnline) {
+					this.adapter.updateTransportDiagnostics(duid, {
+						lastCommandMethod: method,
+						lastTransportReason: "device-offline",
+					});
 					this.adapter.pendingRequests.delete(messageID);
 					this.adapter.log.debug(`Device ${duid} offline. Not sending for method ${method} request!`);
 					reject();
 				}
 				else if (!mqttConnectionState && useCloudConnection) {
+					this.adapter.updateTransportDiagnostics(duid, {
+						lastCommandMethod: method,
+						lastTransportReason: "mqtt-unavailable",
+					});
 					this.adapter.pendingRequests.delete(messageID);
 					this.adapter.log.debug(`Cloud connection not available. Not sending for method ${method} request!`);
 					reject();
 				}
 				else if (!localConnectionState && !useCloudConnection) {
+					this.adapter.updateTransportDiagnostics(duid, {
+						lastCommandMethod: method,
+						lastTransportReason: "local-socket-unavailable",
+					});
 					this.adapter.pendingRequests.delete(messageID);
 					this.adapter.log.debug(`Adapter not connect locally to robot ${duid}. Not sending for method ${method} request!`);
 					reject();
@@ -70,6 +87,19 @@ class messageQueueHandler {
 
 					if (useCloudConnection) {
 						this.adapter.rr_mqtt_connector.sendMessage(duid, roborockMessage);
+						this.adapter.updateTransportDiagnostics(duid, {
+							lastTransport: "cloud",
+							lastTransportReason: secure
+								? "secure-command"
+								: photo
+								? "photo-command"
+								: remoteConnection
+								? "remote-device"
+								: method == "get_network_info"
+								? "network-info-cloud-only"
+								: "cloud-request",
+							lastCommandMethod: method,
+						});
 						this.adapter.log.debug(`Sent payload for ${duid} with ${payload} using cloud connection`);
 						//client.publish(`rr/m/i/${rriot.u}/${mqttUser}/${duid}`, roborockMessage, { qos: 1 });
 						// this.adapter.log.debug(`Promise for messageID ${messageID} created. ${this.adapter.message._decodeMsg(roborockMessage, duid).payload}`);
@@ -79,6 +109,11 @@ class messageQueueHandler {
 
 						const fullMessage = Buffer.concat([lengthBuffer, roborockMessage]);
 						this.adapter.localConnector.sendMessage(duid, fullMessage);
+						this.adapter.updateTransportDiagnostics(duid, {
+							lastTransport: "local",
+							lastTransportReason: "local-request",
+							lastCommandMethod: method,
+						});
 						// this.adapter.log.debug(`sent fullMessage: ${fullMessage.toString("hex")}`);
 						this.adapter.log.debug(`Sent payload for ${duid} with ${payload} using local connection`);
 					}

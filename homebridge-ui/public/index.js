@@ -227,7 +227,11 @@ function renderDiagnostics(result, errorMessage) {
   result.devices.forEach((device) => {
     const card = document.createElement('article');
     card.className = 'diagnostic-device';
-    const localClass = device.hasLocalKey ? 'good' : 'warn';
+    const localClass = device.tcpConnectionState === 'connected'
+      ? 'good'
+      : device.hasLocalKey
+        ? 'warn'
+        : 'warn';
     const onlineText = device.online === null ? 'unknown' : String(device.online);
     card.innerHTML = `
       <div class="device-header">
@@ -242,6 +246,14 @@ function renderDiagnostics(result, errorMessage) {
         <div><dt>Product ID</dt><dd>${escapeHtml(device.productId == null ? 'n/a' : String(device.productId))}</dd></div>
         <div><dt>HomeData Source</dt><dd>${escapeHtml(device.homeDataSource || 'unknown')}</dd></div>
         <div><dt>Online</dt><dd>${escapeHtml(onlineText)}</dd></div>
+        <div><dt>Local IP</dt><dd>${escapeHtml(device.localIp || 'n/a')}</dd></div>
+        <div><dt>Discovery</dt><dd>${escapeHtml(device.localDiscoveryState || 'n/a')}</dd></div>
+        <div><dt>TCP State</dt><dd>${escapeHtml(device.tcpConnectionState || 'n/a')}</dd></div>
+        <div><dt>Marked Remote</dt><dd>${escapeHtml(device.isRemote === null ? 'unknown' : String(device.isRemote))}</dd></div>
+        <div><dt>Remote Reason</dt><dd>${escapeHtml(device.remoteReason || 'n/a')}</dd></div>
+        <div><dt>Last Transport</dt><dd>${escapeHtml(device.lastTransport || 'n/a')}</dd></div>
+        <div><dt>Last Reason</dt><dd>${escapeHtml(device.lastTransportReason || 'n/a')}</dd></div>
+        <div><dt>Last Method</dt><dd>${escapeHtml(device.lastCommandMethod || 'n/a')}</dd></div>
       </dl>
     `;
     elements.diagnosticsList.appendChild(card);

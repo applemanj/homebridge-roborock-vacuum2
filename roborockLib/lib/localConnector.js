@@ -68,12 +68,24 @@ class localConnector {
 
 	async createClient(duid, ip) {
 		const client = new EnhancedSocket();
+		await this.adapter.updateTransportDiagnostics(duid, {
+			localIp: ip,
+			tcpConnectionState: "connecting",
+			lastTransport: "local-pending",
+		});
 
 		// Wrap the connect method in a promise to await its completion
 		await new Promise((resolve, reject) => {
 			client
 				.connect(58867, ip, async () => {
 					this.adapter.log.debug(`tcp client for ${duid} connected`);
+					await this.adapter.updateTransportDiagnostics(duid, {
+						tcpConnectionState: "connected",
+						isRemote: false,
+						remoteReason: null,
+						lastTransport: "local",
+						lastTransportReason: "tcp-connected",
+					});
 					this.ensureL01Handshake(duid).catch((error) => {
 						this.adapter.log.debug(`L01 handshake on connect failed for ${duid}: ${error.message}`);
 					});
@@ -83,11 +95,22 @@ class localConnector {
 					this.adapter.log.debug(`error on tcp client for ${duid}. ${error.message}`);
 					reject(error);
 				});
-		}).catch((error) => {
-			const online = this.adapter.onlineChecker(duid);
+		}).catch(async (error) => {
+			const online = await this.adapter.onlineChecker(duid);
+			await this.adapter.updateTransportDiagnostics(duid, {
+				tcpConnectionState: "connect-failed",
+				lastTransport: "cloud",
+				lastTransportReason: online
+					? "tcp-connect-failed"
+					: "device-offline-during-connect",
+			});
 			if (online) { // if the device is online, we can assume that the device is a remote device
 				this.adapter.log.info(`error on tcp client for ${duid}. Marking this device as remote device. Connecting via MQTT instead ${error.message}`);
 				this.adapter.remoteDevices.add(duid);
+				await this.adapter.updateTransportDiagnostics(duid, {
+					isRemote: true,
+					remoteReason: "marked-remote-after-connect-failure",
+				});
 				// this.adapter.catchError(`Failed to create tcp client: ${error.stack}`, `function createClient`, duid);
 			}
 		});
@@ -175,6 +198,11 @@ class localConnector {
 
 		client.on("close", () => {
 			this.adapter.log.debug(`tcp client for ${duid} disconnected, attempting to reconnect...`);
+			this.adapter.updateTransportDiagnostics(duid, {
+				tcpConnectionState: "disconnected",
+				lastTransport: "cloud",
+				lastTransportReason: "tcp-disconnected",
+			});
 			const waiter = this.l01HandshakeWaiters.get(duid);
 			if (waiter) {
 				this.adapter.clearTimeout(waiter.timeout);
@@ -190,6 +218,10 @@ class localConnector {
 
 		client.on("error", (error) => {
 			this.adapter.log.debug(`error on tcp client for ${duid}. ${error.message}`);
+			this.adapter.updateTransportDiagnostics(duid, {
+				tcpConnectionState: "error",
+				lastTransportReason: `tcp-error: ${error.message}`,
+			});
 		});
 
 		this.localClients[duid] = client;
@@ -306,6 +338,11 @@ class localConnector {
 						// if there's no localKey, decryption cannot work. For example when the found robot is not associated with a roborock account
 						if (!devices[parsedDecodedMessage.duid]) {
 							devices[parsedDecodedMessage.duid] = parsedDecodedMessage.ip;
+							this.adapter.updateTransportDiagnostics(parsedDecodedMessage.duid, {
+								localIp: parsedDecodedMessage.ip,
+								localDiscoveryState: "broadcast-detected",
+								lastTransportReason: "udp-broadcast-discovery",
+							});
 						}
 					}
 				}

@@ -24,7 +24,12 @@ const messageQueueHandler =
 
 let socketServer, webserver;
 
-const PERSISTED_STATE_IDS = new Set(["UserData", "clientID", "HomeData"]);
+const PERSISTED_STATE_IDS = new Set([
+  "UserData",
+  "clientID",
+  "HomeData",
+  "TransportDiagnostics",
+]);
 
 const dockingStationStates = [
   "cleanFluidStatus",
@@ -346,6 +351,44 @@ class Roborock {
     );
   }
 
+  getTransportDiagnostics() {
+    const diagnostics = this.getStateAsync("TransportDiagnostics");
+    if (diagnostics && typeof diagnostics.val == "string") {
+      try {
+        return JSON.parse(diagnostics.val);
+      } catch (error) {
+        this.log.debug(
+          `Failed to parse transport diagnostics state: ${error.message}`
+        );
+      }
+    }
+
+    return {};
+  }
+
+  async updateTransportDiagnostics(duid, patch) {
+    if (!duid || !patch || typeof patch !== "object") {
+      return;
+    }
+
+    const diagnostics = this.getTransportDiagnostics();
+    const currentEntry =
+      diagnostics[duid] && typeof diagnostics[duid] === "object"
+        ? diagnostics[duid]
+        : {};
+
+    diagnostics[duid] = {
+      ...currentEntry,
+      ...patch,
+      updatedAt: new Date().toISOString(),
+    };
+
+    await this.setStateAsync("TransportDiagnostics", {
+      val: JSON.stringify(diagnostics),
+      ack: true,
+    });
+  }
+
   getKnownProducts(homedata) {
     const homeDataSource = homedata || this.getStoredHomeData();
     return this.normalizeArray(homeDataSource?.products || this.products);
@@ -581,6 +624,10 @@ class Roborock {
             const duid = device;
             const ip = this.localDevices[device];
 
+            await this.updateTransportDiagnostics(duid, {
+              localIp: ip,
+              localDiscoveryState: "discovered",
+            });
             await this.localConnector.createClient(duid, ip);
           }
 
@@ -1144,8 +1191,15 @@ class Roborock {
         return false;
       }
 
-      return device?.online || receivedDevice?.online;
+      const onlineState = device?.online || receivedDevice?.online;
+      await this.updateTransportDiagnostics(duid, {
+        online: Boolean(onlineState),
+      });
+      return onlineState;
     } else {
+      await this.updateTransportDiagnostics(duid, {
+        online: false,
+      });
       return false;
     }
   }
@@ -1161,11 +1215,24 @@ class Roborock {
       const remoteDevice = this.remoteDevices.has(duid);
 
       if (receivedDevice || remoteDevice) {
+        await this.updateTransportDiagnostics(duid, {
+          isRemote: true,
+          remoteReason: receivedDevice
+            ? "received-device"
+            : "marked-remote-after-connect-failure",
+        });
         return true;
       }
 
+      await this.updateTransportDiagnostics(duid, {
+        isRemote: false,
+        remoteReason: null,
+      });
       return false;
     } else {
+      await this.updateTransportDiagnostics(duid, {
+        isRemote: false,
+      });
       return false;
     }
   }

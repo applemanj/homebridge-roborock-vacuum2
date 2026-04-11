@@ -255,7 +255,12 @@ class RoborockUiServer {
       const userDataState = this.readJsonFile(
         path.join(storagePath, "roborock.UserData")
       );
+      const transportDiagnosticsState = this.readJsonFile(
+        path.join(storagePath, "roborock.TransportDiagnostics")
+      );
       const homeData = this.parseStatePayload(homeDataState?.val);
+      const transportDiagnostics =
+        this.parseStatePayload(transportDiagnosticsState?.val) || {};
 
       const products = Array.isArray(homeData?.products) ? homeData.products : [];
       const devices = this.collectDevices(homeData);
@@ -275,6 +280,13 @@ class RoborockUiServer {
         ]);
         const resolvedModel = deviceModel || productModel || "unknown";
         const localKey = this.firstNonEmptyString([device.localKey]);
+        const transport = transportDiagnostics[device.duid] || {};
+        const localConnectivityState =
+          transport.tcpConnectionState === "connected"
+            ? "Local TCP connected"
+            : localKey
+            ? "Local key available"
+            : "Cloud-only fallback likely";
 
         return {
           name: device.name || device.duid || "Unknown device",
@@ -284,9 +296,16 @@ class RoborockUiServer {
           deviceModel: deviceModel || null,
           productModel: productModel || null,
           hasLocalKey: Boolean(localKey),
-          localConnectivityState: localKey
-            ? "Local key available"
-            : "Cloud-only fallback likely",
+          localConnectivityState,
+          localIp: transport.localIp || null,
+          localDiscoveryState: transport.localDiscoveryState || null,
+          tcpConnectionState: transport.tcpConnectionState || null,
+          isRemote: transport.isRemote ?? null,
+          remoteReason: transport.remoteReason || null,
+          lastTransport: transport.lastTransport || null,
+          lastTransportReason: transport.lastTransportReason || null,
+          lastCommandMethod: transport.lastCommandMethod || null,
+          transportUpdatedAt: transport.updatedAt || null,
           homeDataSource: Array.isArray(homeData?.receivedDevices) &&
             homeData.receivedDevices.some((entry: Record<string, any>) => entry.duid === device.duid)
               ? "receivedDevices"
