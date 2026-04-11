@@ -12,6 +12,10 @@ const elements = {
   verify2fa: document.getElementById('verify-2fa'),
   twoFactorSection: document.getElementById('two-factor-section'),
   toastContainer: document.getElementById('toast-container'),
+  refreshDiagnostics: document.getElementById('refresh-diagnostics'),
+  diagnosticsSummary: document.getElementById('diagnostics-summary'),
+  diagnosticsEmpty: document.getElementById('diagnostics-empty'),
+  diagnosticsList: document.getElementById('diagnostics-list'),
 };
 
 function showToast(type, message) {
@@ -59,6 +63,7 @@ async function loadConfig() {
   elements.debugMode.checked = Boolean(config.debugMode);
 
   setLoggedInState(Boolean(config.encryptedToken));
+  await loadDiagnostics();
 }
 
 function getEmail() {
@@ -178,9 +183,91 @@ async function logout() {
     await updatePluginConfig({ encryptedToken: undefined });
     showToast('success', result.message || 'Logged out.');
     setLoggedInState(false);
+    renderDiagnostics(null);
   } else {
     showToast('error', result.message || 'Logout failed.');
   }
+}
+
+async function loadDiagnostics() {
+  const result = await request('/diagnostics/state', {});
+  if (!result.ok) {
+    renderDiagnostics(null, result.message || 'Failed to load diagnostics.');
+    return;
+  }
+
+  renderDiagnostics(result);
+}
+
+function renderDiagnostics(result, errorMessage) {
+  elements.diagnosticsList.innerHTML = '';
+
+  if (errorMessage) {
+    elements.diagnosticsSummary.textContent = errorMessage;
+    elements.diagnosticsEmpty.classList.remove('hidden');
+    return;
+  }
+
+  if (!result || !result.hasHomeData) {
+    elements.diagnosticsSummary.textContent = 'No cached HomeData found yet.';
+    elements.diagnosticsEmpty.classList.remove('hidden');
+    return;
+  }
+
+  const tokenSummary = result.hasEncryptedToken ? 'token saved' : 'no saved token';
+  elements.diagnosticsSummary.textContent = `${result.deviceCount} device(s), ${tokenSummary}, last snapshot ${formatTimestamp(result.generatedAt)}.`;
+
+  if (!result.devices || result.devices.length === 0) {
+    elements.diagnosticsEmpty.classList.remove('hidden');
+    return;
+  }
+
+  elements.diagnosticsEmpty.classList.add('hidden');
+
+  result.devices.forEach((device) => {
+    const card = document.createElement('article');
+    card.className = 'diagnostic-device';
+    const localClass = device.hasLocalKey ? 'good' : 'warn';
+    const onlineText = device.online === null ? 'unknown' : String(device.online);
+    card.innerHTML = `
+      <div class="device-header">
+        <h3>${escapeHtml(device.name || 'Unknown device')}</h3>
+        <span class="pill ${localClass}">${escapeHtml(device.localConnectivityState)}</span>
+      </div>
+      <dl>
+        <div><dt>DUID</dt><dd>${escapeHtml(device.duid || 'unknown')}</dd></div>
+        <div><dt>Resolved Model</dt><dd>${escapeHtml(device.resolvedModel || 'unknown')}</dd></div>
+        <div><dt>Device Model</dt><dd>${escapeHtml(device.deviceModel || 'n/a')}</dd></div>
+        <div><dt>Product Model</dt><dd>${escapeHtml(device.productModel || 'n/a')}</dd></div>
+        <div><dt>Product ID</dt><dd>${escapeHtml(device.productId == null ? 'n/a' : String(device.productId))}</dd></div>
+        <div><dt>HomeData Source</dt><dd>${escapeHtml(device.homeDataSource || 'unknown')}</dd></div>
+        <div><dt>Online</dt><dd>${escapeHtml(onlineText)}</dd></div>
+      </dl>
+    `;
+    elements.diagnosticsList.appendChild(card);
+  });
+}
+
+function formatTimestamp(value) {
+  if (!value) {
+    return 'unknown time';
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return 'unknown time';
+  }
+
+  return date.toLocaleString();
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function normalizeBaseUrl(value) {
@@ -241,6 +328,11 @@ function init() {
   elements.skipDevices.addEventListener('change', saveCredentials);
   elements.debugMode.addEventListener('change', saveCredentials);
   elements.email.addEventListener('change', saveCredentials);
+  elements.refreshDiagnostics.addEventListener('click', () => {
+    loadDiagnostics().catch(() => {
+      showToast('error', 'Failed to load diagnostics.');
+    });
+  });
 }
 
 if (window.homebridge) {

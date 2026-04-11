@@ -52,6 +52,19 @@
       <button id="verify-2fa" class="secondary">Verify Code</button>
     </div>
   </section>
+
+  <section class="card">
+    <div class="section-header">
+      <div>
+        <h2>Diagnostics</h2>
+        <p class="help">Inspect cached discovery data, model resolution, and whether local connectivity is likely available.</p>
+      </div>
+      <button id="refresh-diagnostics" class="secondary">Refresh</button>
+    </div>
+    <div id="diagnostics-summary" class="diagnostics-summary muted">No diagnostics loaded yet.</div>
+    <div id="diagnostics-empty" class="help">Run a successful plugin startup, then refresh to inspect the latest cached HomeData.</div>
+    <div id="diagnostics-list" class="diagnostics-list"></div>
+  </section>
 </main>
 
 <div id="toast-container" class="toast-container"></div>

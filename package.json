@@ -11,12 +11,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+hhttps://github.com/tasict/homebridge-roborock-vacuum"
+    "url": "git+https://github.com/applemanj/homebridge-roborock-vacuum2.git"
   },
   "bugs": {
-    "url": "https://github.com/tasict/homebridge-roborock-vacuum/issues"
+    "url": "https://github.com/applemanj/homebridge-roborock-vacuum2/issues"
   },
-  "homepage": "https://github.com/tasict/homebridge-roborock-vacuum",
+  "homepage": "https://github.com/applemanj/homebridge-roborock-vacuum2",
   "main": "dist/index.js",
   "engines": {
     "homebridge": "^1.6.0 || ^2.0.0-beta.0",

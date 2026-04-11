@@ -24,6 +24,8 @@ const messageQueueHandler =
 
 let socketServer, webserver;
 
+const PERSISTED_STATE_IDS = new Set(["UserData", "clientID", "HomeData"]);
+
 const dockingStationStates = [
   "cleanFluidStatus",
   "waterBoxFilterStatus",
@@ -123,7 +125,7 @@ class Roborock {
 
   getStateAsync(id) {
     try {
-      if (id == "UserData" || id == "clientID") {
+      if (PERSISTED_STATE_IDS.has(id)) {
         const persistPath = this.getPersistPath(id);
         if (fs.existsSync(persistPath)) {
           return JSON.parse(fs.readFileSync(persistPath, "utf8"));
@@ -157,7 +159,7 @@ class Roborock {
 
   async setStateAsync(id, state) {
     try {
-      if (id == "UserData" || id == "clientID") {
+      if (PERSISTED_STATE_IDS.has(id)) {
         const persistPath = this.getPersistPath(id);
         fs.mkdirSync(path.dirname(persistPath), { recursive: true });
         fs.writeFileSync(persistPath, JSON.stringify(state, null, 2, "utf8"));
@@ -170,7 +172,7 @@ class Roborock {
       }
     } catch (error) {
       if (
-        (id == "UserData" || id == "clientID") &&
+        PERSISTED_STATE_IDS.has(id) &&
         error &&
         error.code == "EACCES"
       ) {
@@ -202,7 +204,7 @@ class Roborock {
 
   async deleteStateAsync(id) {
     try {
-      if (id == "UserData" || id == "clientID") {
+      if (PERSISTED_STATE_IDS.has(id)) {
         const persistPath = this.getPersistPath(id);
         if (fs.existsSync(persistPath)) {
           fs.unlinkSync(persistPath);
@@ -317,6 +319,59 @@ class Roborock {
         .filter((entry) => entry);
     }
     return [];
+  }
+
+  normalizeArray(value) {
+    return Array.isArray(value) ? value : [];
+  }
+
+  getStoredHomeData() {
+    const homedata = this.getStateAsync("HomeData");
+
+    if (homedata && typeof homedata.val == "string") {
+      return JSON.parse(homedata.val);
+    }
+
+    return null;
+  }
+
+  getAllHomeDevices(homedata) {
+    const homeDataSource = homedata || this.getStoredHomeData();
+    if (!homeDataSource) {
+      return [];
+    }
+
+    return this.normalizeArray(homeDataSource.devices).concat(
+      this.normalizeArray(homeDataSource.receivedDevices)
+    );
+  }
+
+  getKnownProducts(homedata) {
+    const homeDataSource = homedata || this.getStoredHomeData();
+    return this.normalizeArray(homeDataSource?.products || this.products);
+  }
+
+  getDeviceAttribute(device, attribute) {
+    if (!device) {
+      return null;
+    }
+
+    const candidateKeys =
+      attribute === "model"
+        ? ["model", "productModel", "productCode", "modelId"]
+        : [attribute];
+
+    for (const key of candidateKeys) {
+      const value = device[key];
+      if (typeof value === "string" && value.trim()) {
+        return value.trim();
+      }
+      if (value !== undefined && value !== null && value !== "") {
+        return value;
+      }
+    }
+
+    return null;
   }
 
   /**
@@ -1008,13 +1063,22 @@ class Roborock {
   }
 
   getProductAttribute(duid, attribute) {
-    const products = this.products;
-    const productID = this.devices.find(
-      (device) => device.duid == duid
-    ).productId;
-    const product = products.find((product) => product.id == productID);
+    const device = this.getVacuumDeviceData(duid);
+    const deviceValue = this.getDeviceAttribute(device, attribute);
+    if (deviceValue !== null) {
+      return deviceValue;
+    }
 
-    return product ? product[attribute] : null;
+    const products = this.getKnownProducts();
+    const productID = device?.productId;
+    const product = products.find((entry) => entry.id == productID);
+
+    if (!product) {
+      return null;
+    }
+
+    const productValue = this.getDeviceAttribute(product, attribute);
+    return productValue !== null ? productValue : null;
   }
 
   startMainUpdateInterval(duid, online) {
@@ -1282,9 +1346,10 @@ class Roborock {
   }
 
   async updateConsumablesPercent(devices) {
+    devices = this.normalizeArray(devices);
     for (const device of devices) {
       const duid = device.duid;
-      const deviceStatus = device.deviceStatus;
+      const deviceStatus = device?.deviceStatus || {};
 
       for (const [attribute, value] of Object.entries(deviceStatus)) {
         const targetConsumable = await this.getObjectAsync(
@@ -1303,6 +1368,7 @@ class Roborock {
   }
 
   async updateDeviceInfo(devices) {
+    devices = this.normalizeArray(devices);
     for (const device in devices) {
       const duid = devices[device].duid;
 
@@ -1833,30 +1899,13 @@ class Roborock {
   }
 
   getProductData(productId) {
-    const homedata = this.getStateAsync("HomeData");
-
-    if (homedata && typeof homedata.val == "string") {
-      const homedataJSON = JSON.parse(homedata.val);
-      const product = homedataJSON.products.find(
-        (product) => product.id == productId
-      );
-
-      return product;
-    }
+    const products = this.getKnownProducts();
+    return products.find((product) => product.id == productId);
   }
 
   getVacuumDeviceData(duid) {
-    const homedata = this.getStateAsync("HomeData");
-
-    if (homedata && typeof homedata.val == "string") {
-      const homedataJSON = JSON.parse(homedata.val);
-      const device = homedataJSON.devices.find((device) => device.duid == duid);
-      const receivedDevice = homedataJSON.receivedDevices.find(
-        (device) => device.duid == duid
-      );
-
-      return device || receivedDevice;
-    }
+    const devices = this.getAllHomeDevices();
+    return devices.find((device) => device.duid == duid);
   }
 
   getVacuumSchemaId(duid, code) {
@@ -1902,16 +1951,7 @@ class Roborock {
   }
 
   getVacuumList() {
-    const homedata = this.getStateAsync("HomeData");
-
-    if (homedata && typeof homedata.val == "string") {
-      const homedataJSON = JSON.parse(homedata.val);
-      const devices = homedataJSON.devices.concat(homedataJSON.receivedDevices);
-
-      return devices;
-    }
-
-    return [];
+    return this.getAllHomeDevices();
   }
 
   setDeviceNotify(callback) {

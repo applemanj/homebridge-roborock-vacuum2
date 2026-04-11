@@ -53,9 +53,20 @@ header h1 {
   font-size: 1.4rem;
 }
 
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
 .help {
   color: var(--muted);
   margin-top: 0;
+}
+
+.muted {
+  color: var(--muted);
 }
 
 label {
@@ -171,6 +182,75 @@ button:hover {
   border-color: #f59e0b;
 }
 
+.diagnostics-summary {
+  margin: 18px 0 14px;
+}
+
+.diagnostics-list {
+  display: grid;
+  gap: 14px;
+}
+
+.diagnostic-device {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 16px;
+  background: rgba(11, 19, 40, 0.8);
+}
+
+.device-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.device-header h3 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 0.8rem;
+  border: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.pill.good {
+  background: rgba(34, 197, 94, 0.12);
+  border-color: rgba(34, 197, 94, 0.4);
+  color: #86efac;
+}
+
+.pill.warn {
+  background: rgba(245, 158, 11, 0.12);
+  border-color: rgba(245, 158, 11, 0.4);
+  color: #fcd34d;
+}
+
+.diagnostic-device dl {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px 16px;
+}
+
+.diagnostic-device dt {
+  color: var(--muted);
+  font-size: 0.82rem;
+  margin-bottom: 4px;
+}
+
+.diagnostic-device dd {
+  margin: 0;
+  word-break: break-word;
+}
+
 @keyframes slide-in {
   from {
     transform: translateY(10px);
@@ -185,5 +265,11 @@ button:hover {
 @media (max-width: 640px) {
   header h1 {
     font-size: 2.1rem;
+  }
+
+  .section-header,
+  .device-header {
+    flex-direction: column;
+    align-items: stretch;
   }
 }

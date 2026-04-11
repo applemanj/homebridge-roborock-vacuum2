@@ -201,12 +201,14 @@ export default class RoborockVacuumAccessory {
    * Check if scenes have changed
    */
   private scenesChanged(newScenes: any[]): boolean {
-    if (this.currentScenes.length !== newScenes.length) {
+    const nextScenes = Array.isArray(newScenes) ? newScenes : [];
+
+    if (this.currentScenes.length !== nextScenes.length) {
       return true;
     }
     
     const currentIds = this.currentScenes.map(scene => scene.id).sort();
-    const newIds = newScenes.map(scene => scene.id).sort();
+    const newIds = nextScenes.map(scene => scene.id).sort();
     
     return JSON.stringify(currentIds) !== JSON.stringify(newIds);
   }
@@ -257,10 +259,13 @@ export default class RoborockVacuumAccessory {
       if(id == 'CloudMessage' || id == 'LocalMessage') {
 
         this.platform.log.debug(`Updating accessory with ${id} data: ` + JSON.stringify(data)); 
-        
-  
-        if(data.length > 0) {
-          const messages = data[0];
+
+        const payload = Array.isArray(data) ? data : (data ? [data] : []);
+        if(payload.length > 0) {
+          const messages = payload[0];
+          if (!messages || typeof messages !== 'object') {
+            return;
+          }
           if(messages.hasOwnProperty('state')) {
             this.services['Fan'].updateCharacteristic(
               this.platform.Characteristic.Active,

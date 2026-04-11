@@ -39,6 +39,10 @@ class RoborockUiServer {
       "/auth/logout",
       this.logout.bind(this)
     );
+    this.homebridgePluginUiServer.onRequest(
+      "/diagnostics/state",
+      this.getDiagnostics.bind(this)
+    );
 
     this.homebridgePluginUiServer.ready();
   }
@@ -242,6 +246,72 @@ class RoborockUiServer {
     return { ok: true, message: "Logged out. Token cleared." };
   }
 
+  private async getDiagnostics() {
+    try {
+      const storagePath = this.getStoragePath();
+      const homeDataState = this.readJsonFile(
+        path.join(storagePath, "roborock.HomeData")
+      );
+      const userDataState = this.readJsonFile(
+        path.join(storagePath, "roborock.UserData")
+      );
+      const homeData = this.parseStatePayload(homeDataState?.val);
+
+      const products = Array.isArray(homeData?.products) ? homeData.products : [];
+      const devices = this.collectDevices(homeData);
+      const diagnostics = devices.map((device: Record<string, any>) => {
+        const product = products.find((entry: Record<string, any>) => entry.id == device.productId);
+        const deviceModel = this.firstNonEmptyString([
+          device.model,
+          device.productModel,
+          device.productCode,
+          device.modelId,
+        ]);
+        const productModel = this.firstNonEmptyString([
+          product?.model,
+          product?.productModel,
+          product?.productCode,
+          product?.modelId,
+        ]);
+        const resolvedModel = deviceModel || productModel || "unknown";
+        const localKey = this.firstNonEmptyString([device.localKey]);
+
+        return {
+          name: device.name || device.duid || "Unknown device",
+          duid: device.duid || "",
+          productId: device.productId || null,
+          resolvedModel,
+          deviceModel: deviceModel || null,
+          productModel: productModel || null,
+          hasLocalKey: Boolean(localKey),
+          localConnectivityState: localKey
+            ? "Local key available"
+            : "Cloud-only fallback likely",
+          homeDataSource: Array.isArray(homeData?.receivedDevices) &&
+            homeData.receivedDevices.some((entry: Record<string, any>) => entry.duid === device.duid)
+              ? "receivedDevices"
+              : "devices",
+          online: device.online ?? null,
+        };
+      });
+
+      return {
+        ok: true,
+        generatedAt: new Date().toISOString(),
+        storagePath,
+        hasEncryptedToken: Boolean(userDataState?.val),
+        hasHomeData: Boolean(homeData),
+        deviceCount: diagnostics.length,
+        devices: diagnostics,
+      };
+    } catch (error: any) {
+      return {
+        ok: false,
+        message: error?.message || "Failed to load diagnostics.",
+      };
+    }
+  }
+
   private buildNonce(): string {
     return crypto
       .randomBytes(12)
@@ -249,6 +319,52 @@ class RoborockUiServer {
       .substring(0, 16)
       .replace(/\+/g, "X")
       .replace(/\//g, "Y");
+  }
+
+  private readJsonFile(filePath: string): any | null {
+    try {
+      if (!fs.existsSync(filePath)) {
+        return null;
+      }
+
+      return JSON.parse(fs.readFileSync(filePath, "utf8"));
+    } catch {
+      return null;
+    }
+  }
+
+  private parseStatePayload(value: unknown): Record<string, any> | null {
+    if (typeof value !== "string") {
+      return null;
+    }
+
+    try {
+      return JSON.parse(value);
+    } catch {
+      return null;
+    }
+  }
+
+  private collectDevices(homeData: Record<string, any> | null): Record<string, any>[] {
+    if (!homeData) {
+      return [];
+    }
+
+    const devices = Array.isArray(homeData.devices) ? homeData.devices : [];
+    const receivedDevices = Array.isArray(homeData.receivedDevices)
+      ? homeData.receivedDevices
+      : [];
+    return [...devices, ...receivedDevices];
+  }
+
+  private firstNonEmptyString(values: unknown[]): string | null {
+    for (const value of values) {
+      if (typeof value === "string" && value.trim()) {
+        return value.trim();
+      }
+    }
+
+    return null;
   }
 }
 

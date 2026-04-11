@@ -212,8 +212,7 @@ export default class RoborockPlatform implements DynamicPlatformPlugin {
   }
 
   isSupportedDevice(model: string): boolean {
-    //model nust starts with "roborock.vacuum."
-    return model.startsWith("roborock.vacuum.");
+    return typeof model === "string" && model.startsWith("roborock.vacuum.");
   }
 
   /**
@@ -235,7 +234,9 @@ export default class RoborockPlatform implements DynamicPlatformPlugin {
           var model = self.roborockAPI.getProductAttribute(duid, "model");
 
           if (!self.isSupportedDevice(model)) {
-            self.log.info(`Device '${name}' (${duid}) is not supported.`);
+            self.log.info(
+              `Device '${name}' (${duid}) is not supported (model '${model || "unknown"}').`
+            );
 
             return;
           }
