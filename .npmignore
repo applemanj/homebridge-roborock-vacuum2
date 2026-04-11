@@ -28,3 +28,11 @@ jest.config.js
 
 # Docs
 images/
+ROADMAP.md
+
+# Runtime data
+roborockLib/data/
+
+# Local artifacts
+*.log
+*.tgz

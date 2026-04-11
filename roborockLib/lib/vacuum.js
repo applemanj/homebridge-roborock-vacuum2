@@ -248,18 +248,27 @@ class vacuum {
 				const mappedRooms = await this.adapter.messageQueueHandler.sendRequest(duid, "get_room_mapping", []);
 
 				// if no rooms have been named, processing them can't work
-				if (mappedRooms.length < 1) {
-					this.adapter.log.warn(`Failed to map rooms. You need to name your rooms via the mobile app on your phone.`);
+				if (!Array.isArray(mappedRooms) || mappedRooms.length < 1) {
+					this.adapter.log.info(`No room mappings returned for ${duid}. Room-based controls will stay unavailable until the Roborock app exposes named rooms.`);
 				} else {
+					let unnamedRooms = 0;
 					for (const mappedRoom of mappedRooms) {
 						const roomID = mappedRoom[1];
-						const roomName = this.adapter.roomIDs[roomID];
+						const roomName = this.adapter.roomIDs[roomID] || `Room ${roomID}`;
 
-						if (roomName) {
-							this.adapter.log.debug(`Mapped room matched: ${roomID} with name: ${roomName}`);
-							const objectString = `Devices.${duid}.floors.${roomFloor}.${mappedRoom[0]}`;
-							await this.adapter.createStateObjectHelper(objectString, roomName, "boolean", null, true, "value", true, true);
+						if (!this.adapter.roomIDs[roomID]) {
+							unnamedRooms++;
 						}
+
+						this.adapter.log.debug(`Mapped room matched: ${roomID} with name: ${roomName}`);
+						const objectString = `Devices.${duid}.floors.${roomFloor}.${mappedRoom[0]}`;
+						await this.adapter.createStateObjectHelper(objectString, roomName, "boolean", null, true, "value", true, true);
+					}
+
+					if (unnamedRooms > 0) {
+						this.adapter.log.info(
+							`${unnamedRooms} room(s) for ${duid} were missing names from HomeData. Using fallback labels like 'Room <id>' until the Roborock app syncs names.`
+						);
 					}
 				}
 

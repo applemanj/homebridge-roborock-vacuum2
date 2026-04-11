@@ -589,11 +589,11 @@ class Roborock {
           }
           this.log.debug(`RoomIDs debug: ${JSON.stringify(this.roomIDs)}`);
 
-          // reconnect every 3 hours (10800 seconds)
+          // Perform a periodic MQTT health check. Reconnect only if needed.
           this.reconnectIntervall = this.setInterval(async () => {
-            this.log.debug(`Reconnecting after 3 hours!`);
+            this.log.debug(`Running MQTT health check.`);
 
-            await this.rr_mqtt_connector.reconnectClient();
+            await this.rr_mqtt_connector.ensureConnected();
           }, 3600 * 1000);
 
           this.processScene(scene);

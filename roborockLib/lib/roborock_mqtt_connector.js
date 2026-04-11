@@ -427,12 +427,28 @@ class roborock_mqtt_connector {
     return this.connected;
   }
 
-  async reconnectClient() {
+  async ensureConnected() {
+    if (client && this.connected) {
+      this.adapter.log.debug("MQTT health check passed. Reconnect skipped.");
+      return false;
+    }
+
+    await this.reconnectClient(true);
+    return true;
+  }
+
+  async reconnectClient(force = false) {
     if (client) {
       try {
+        if (!force && this.connected) {
+          this.adapter.log.debug("MQTT reconnect skipped because client is already connected.");
+          return false;
+        }
+
         this.adapter.log.info("Reconnecting mqtt client!");
         await client.end();
         client.reconnect();
+        return true;
       } catch (error) {
         this.adapter.catchError(
           `Failed to reconnect with error: ${error}`,
@@ -440,6 +456,8 @@ class roborock_mqtt_connector {
         );
       }
     }
+
+    return false;
   }
 
   md5hex(str) {

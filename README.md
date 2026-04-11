@@ -1,4 +1,4 @@
-# homebridge-roborock-vacuum
+# homebridge-roborock-vacuum2
 
 ![Roborock Vacuum in Home App](https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/40/21/71/40217177-c879-f670-bd01-c93acfabc31e/AppIcon-0-0-1x_U007emarketing-0-8-0-85-220.png/460x0w.webp)
 
@@ -6,13 +6,14 @@ A Homebridge plugin to integrate your Roborock vacuum cleaner with Apple HomeKit
 
 ## Introduction
 
-`homebridge-roborock-vacuum` brings your Roborock vacuum cleaner into Apple HomeKit. Using your Roborock app account credentials, this plugin automatically detects your vacuum, enabling you to control it directly from the Home app on your iPhone, iPad, or Mac, or with Siri voice commands.
+`homebridge-roborock-vacuum2` brings your Roborock vacuum cleaner into Apple HomeKit. Using your Roborock app account credentials, this plugin automatically detects your vacuum, enabling you to control it directly from the Home app on your iPhone, iPad, or Mac, or with Siri voice commands.
 
 This plugin is inspired by and adapted from the [ioBroker.roborock](https://github.com/copystring/ioBroker.roborock) project by copystring.
 
 ## Features
 
 - **Automatic Device Detection**: No need to manually find or enter your vacuum's device ID.
+- **Local Transport Diagnostics**: The plugin UI shows resolved model data, local key availability, discovered local IP, TCP connection state, and whether the plugin is using local or cloud transport.
 - **Start/Stop Cleaning**: Begin or end cleaning sessions.
 
 ## The supported robots are:
@@ -62,4 +63,4 @@ Follow these steps to install the plugin:
 2. **Install the Plugin**:
    - Open a terminal and run:
      ```bash
-     npm install -g homebridge-roborock-vacuum
+     npm install -g homebridge-roborock-vacuum2

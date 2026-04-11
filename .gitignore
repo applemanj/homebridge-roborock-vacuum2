@@ -1,8 +1,10 @@
 Plan.md
 dist
+coverage
 userdata.json
 UserData
 clientID
+roborockLib/data/roborock.*
 test.js
 node_modules
 .DS_Store
