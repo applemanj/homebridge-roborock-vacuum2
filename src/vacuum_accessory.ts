@@ -257,6 +257,7 @@ export default class RoborockVacuumAccessory {
 
     try{
       if(id == 'CloudMessage' || id == 'LocalMessage') {
+        const rootMessage = data && typeof data === 'object' ? data : null;
 
         this.platform.log.debug(`Updating accessory with ${id} data: ` + JSON.stringify(data)); 
 
@@ -304,29 +305,29 @@ export default class RoborockVacuumAccessory {
 
         }
   
-        if(data.hasOwnProperty('dps') && data.dps.hasOwnProperty('121')) {
+        if(rootMessage?.dps && typeof rootMessage.dps === 'object' && Object.prototype.hasOwnProperty.call(rootMessage.dps, '121')) {
           
-          this.platform.log.debug(`${this.platform.roborockAPI.getVacuumDeviceInfo(this.accessory.context, "name")} state update to: ${this.state_code_to_state(data.dps['121'])}`);
+          this.platform.log.debug(`${this.platform.roborockAPI.getVacuumDeviceInfo(this.accessory.context, "name")} state update to: ${this.state_code_to_state(rootMessage.dps['121'])}`);
 
           this.services['Fan'].updateCharacteristic(
             this.platform.Characteristic.Active,
-            this.isCleaningState(data.dps['121']) ? this.platform.Characteristic.Active.ACTIVE : this.platform.Characteristic.Active.INACTIVE
+            this.isCleaningState(rootMessage.dps['121']) ? this.platform.Characteristic.Active.ACTIVE : this.platform.Characteristic.Active.INACTIVE
           );
         }
   
-        if(data.hasOwnProperty('dps') && data.dps.hasOwnProperty('122')) {
+        if(rootMessage?.dps && typeof rootMessage.dps === 'object' && Object.prototype.hasOwnProperty.call(rootMessage.dps, '122')) {
 
-          this.platform.log.debug(`${this.platform.roborockAPI.getVacuumDeviceInfo(this.accessory.context, "name")} battery update to: ${data.dps['122']}`);
+          this.platform.log.debug(`${this.platform.roborockAPI.getVacuumDeviceInfo(this.accessory.context, "name")} battery update to: ${rootMessage.dps['122']}`);
  
           
           this.services['Battery'].updateCharacteristic(
             this.platform.Characteristic.BatteryLevel,
-            data.dps['122']
+            rootMessage.dps['122']
           );
     
           this.services['Battery'].updateCharacteristic(
             this.platform.Characteristic.StatusLowBattery,
-            data.dps['122'] < 20 ? this.platform.Characteristic.StatusLowBattery.BATTERY_LEVEL_LOW : this.platform.Characteristic.StatusLowBattery.BATTERY_LEVEL_NORMAL
+            rootMessage.dps['122'] < 20 ? this.platform.Characteristic.StatusLowBattery.BATTERY_LEVEL_LOW : this.platform.Characteristic.StatusLowBattery.BATTERY_LEVEL_NORMAL
           );
         }
         
