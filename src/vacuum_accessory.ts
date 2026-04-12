@@ -16,6 +16,7 @@ export default class RoborockVacuumAccessory {
   private services: Service[] = [];
   private sceneServices: Map<string, Service> = new Map();
   private currentScenes: any[] = [];
+  private lastKnownBatteryLevel: number | null = null;
 
   constructor(
     private readonly platform: RoborockPlatform,
@@ -63,24 +64,20 @@ export default class RoborockVacuumAccessory {
 
     this.services['Battery'] = this.accessory.getService(this.platform.Service.Battery)
       || this.accessory.addService(this.platform.Service.Battery);
-    
-    this.services['Battery'].setCharacteristic(
-      this.platform.Characteristic.BatteryLevel,
-      this.platform.roborockAPI.getVacuumDeviceStatus(accessory.context, "battery") || 0,
-    );
-
-    this.services['Battery'].setCharacteristic(
-      this.platform.Characteristic.StatusLowBattery,
-      this.platform.roborockAPI.getVacuumDeviceStatus(accessory.context, "battery") < 20 ? this.platform.Characteristic.StatusLowBattery.BATTERY_LEVEL_LOW : this.platform.Characteristic.StatusLowBattery.BATTERY_LEVEL_NORMAL
-    );
-
-    this.services['Battery'].setCharacteristic(
-      this.platform.Characteristic.ChargingState,
-      this.platform.roborockAPI.getVacuumDeviceStatus(accessory.context, "charge_status") == 1 ? this.platform.Characteristic.ChargingState.CHARGING : this.platform.Characteristic.ChargingState.NOT_CHARGING
-    );
 
     // Initialize scene switches
     this.updateSceneSwitches();
+    this.lastKnownBatteryLevel = this.getNormalizedBatteryLevel(
+      this.platform.roborockAPI.getVacuumDeviceStatus(accessory.context, "battery"),
+      this.platform.roborockAPI.getVacuumDeviceStatus(accessory.context, "charge_status"),
+      this.platform.roborockAPI.getVacuumDeviceStatus(accessory.context, "state"),
+    );
+
+    this.updateBatteryCharacteristics(
+      this.lastKnownBatteryLevel,
+      this.platform.roborockAPI.getVacuumDeviceStatus(accessory.context, "charge_status"),
+      this.platform.roborockAPI.getVacuumDeviceStatus(accessory.context, "state"),
+    );
 
    }
 
@@ -95,19 +92,10 @@ export default class RoborockVacuumAccessory {
         this.platform.roborockAPI.isCleaning(this.platform.roborockAPI.getVacuumDeviceStatus(this.accessory.context, "state")) ? this.platform.Characteristic.Active.ACTIVE : this.platform.Characteristic.Active.INACTIVE
       );
 
-      this.services['Battery'].updateCharacteristic(
-        this.platform.Characteristic.BatteryLevel,
-        this.platform.roborockAPI.getVacuumDeviceStatus(this.accessory.context, "battery") || 0
-      );
-
-      this.services['Battery'].updateCharacteristic(
-        this.platform.Characteristic.StatusLowBattery,
-        this.platform.roborockAPI.getVacuumDeviceStatus(this.accessory.context, "battery") < 20 ? this.platform.Characteristic.StatusLowBattery.BATTERY_LEVEL_LOW : this.platform.Characteristic.StatusLowBattery.BATTERY_LEVEL_NORMAL
-      );
-
-      this.services['Battery'].updateCharacteristic(
-        this.platform.Characteristic.ChargingState,
-        this.platform.roborockAPI.getVacuumDeviceStatus(this.accessory.context, "charge_status") != 0 ? this.platform.Characteristic.ChargingState.CHARGING : this.platform.Characteristic.ChargingState.NOT_CHARGING
+      this.updateBatteryCharacteristics(
+        this.platform.roborockAPI.getVacuumDeviceStatus(this.accessory.context, "battery"),
+        this.platform.roborockAPI.getVacuumDeviceStatus(this.accessory.context, "charge_status"),
+        this.platform.roborockAPI.getVacuumDeviceStatus(this.accessory.context, "state"),
       );
 
       this.platform.log.debug("Device state is " + this.state_code_to_state(this.platform.roborockAPI.getVacuumDeviceStatus(this.accessory.context, "state")));
@@ -275,23 +263,19 @@ export default class RoborockVacuumAccessory {
           }
           
           if(messages.hasOwnProperty('battery')) {
-            this.services['Battery'].updateCharacteristic(
-              this.platform.Characteristic.BatteryLevel,
-              messages.battery
-            );
-      
-            this.services['Battery'].updateCharacteristic(
-              this.platform.Characteristic.StatusLowBattery,
-              messages.battery < 20 ? this.platform.Characteristic.StatusLowBattery.BATTERY_LEVEL_LOW : this.platform.Characteristic.StatusLowBattery.BATTERY_LEVEL_NORMAL
+            this.updateBatteryCharacteristics(
+              messages.battery,
+              messages.charge_status,
+              messages.state,
             );
 
           }
 
           if(messages.hasOwnProperty('charge_status')) {
-      
-            this.services['Battery'].updateCharacteristic(
-              this.platform.Characteristic.ChargingState,
-              messages.charge_status != 0 ? this.platform.Characteristic.ChargingState.CHARGING : this.platform.Characteristic.ChargingState.NOT_CHARGING
+            this.updateBatteryCharacteristics(
+              messages.battery,
+              messages.charge_status,
+              messages.state,
             );
           }
 
@@ -319,15 +303,10 @@ export default class RoborockVacuumAccessory {
 
           this.platform.log.debug(`${this.platform.roborockAPI.getVacuumDeviceInfo(this.accessory.context, "name")} battery update to: ${rootMessage.dps['122']}`);
  
-          
-          this.services['Battery'].updateCharacteristic(
-            this.platform.Characteristic.BatteryLevel,
-            rootMessage.dps['122']
-          );
-    
-          this.services['Battery'].updateCharacteristic(
-            this.platform.Characteristic.StatusLowBattery,
-            rootMessage.dps['122'] < 20 ? this.platform.Characteristic.StatusLowBattery.BATTERY_LEVEL_LOW : this.platform.Characteristic.StatusLowBattery.BATTERY_LEVEL_NORMAL
+          this.updateBatteryCharacteristics(
+            rootMessage.dps['122'],
+            rootMessage.dps['123'],
+            rootMessage.dps['121'],
           );
         }
         
@@ -442,6 +421,73 @@ export default class RoborockVacuumAccessory {
 				return false;
 		}
 
+  }
+
+  private updateBatteryCharacteristics(
+    batteryValue: unknown,
+    chargeStatusValue: unknown,
+    stateValue: unknown,
+  ): void {
+    const normalizedBattery = this.getNormalizedBatteryLevel(
+      batteryValue,
+      chargeStatusValue,
+      stateValue,
+    );
+
+    if (normalizedBattery !== null) {
+      this.lastKnownBatteryLevel = normalizedBattery;
+      this.services['Battery'].updateCharacteristic(
+        this.platform.Characteristic.BatteryLevel,
+        normalizedBattery,
+      );
+
+      this.services['Battery'].updateCharacteristic(
+        this.platform.Characteristic.StatusLowBattery,
+        normalizedBattery < 20
+          ? this.platform.Characteristic.StatusLowBattery.BATTERY_LEVEL_LOW
+          : this.platform.Characteristic.StatusLowBattery.BATTERY_LEVEL_NORMAL,
+      );
+    }
+
+    if (typeof chargeStatusValue === 'number') {
+      this.services['Battery'].updateCharacteristic(
+        this.platform.Characteristic.ChargingState,
+        chargeStatusValue != 0
+          ? this.platform.Characteristic.ChargingState.CHARGING
+          : this.platform.Characteristic.ChargingState.NOT_CHARGING,
+      );
+    }
+  }
+
+  private getNormalizedBatteryLevel(
+    batteryValue: unknown,
+    chargeStatusValue: unknown,
+    stateValue: unknown,
+  ): number | null {
+    if (typeof batteryValue !== 'number' || Number.isNaN(batteryValue)) {
+      return this.lastKnownBatteryLevel;
+    }
+
+    if (batteryValue < 0 || batteryValue > 100) {
+      return this.lastKnownBatteryLevel;
+    }
+
+    const isCharging = typeof chargeStatusValue === 'number' && chargeStatusValue !== 0;
+    const isDockedState = stateValue === 8 || stateValue === 100;
+
+    if (
+      batteryValue === 0 &&
+      this.lastKnownBatteryLevel !== null &&
+      this.lastKnownBatteryLevel > 0 &&
+      (isCharging || isDockedState)
+    ) {
+      this.platform.log.debug(
+        `Ignoring transient 0% battery report for ${this.platform.roborockAPI.getVacuumDeviceInfo(this.accessory.context, "name")} while docked/charging; keeping last known value ${this.lastKnownBatteryLevel}%.`,
+      );
+      return this.lastKnownBatteryLevel;
+    }
+
+    return batteryValue;
   }
 
 }
