@@ -30,7 +30,8 @@
     "postpublish": "npm run clean",
     "lint": "prettier --check .",
     "lint:fix": "prettier --write .",
-    "test": "jest"
+    "test": "jest",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.roborockLib.json"
   },
   "dependencies": {
     "@homebridge/plugin-ui-utils": "^2.1.2",

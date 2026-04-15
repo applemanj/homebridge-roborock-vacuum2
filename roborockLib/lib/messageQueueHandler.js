@@ -1,12 +1,81 @@
+// @ts-check
 "use strict";
 
 const requestTimeout = 10000; // 10s
 
+/**
+ * @typedef {Object} PendingRequest
+ * @property {(value: unknown) => void} resolve
+ * @property {(reason?: unknown) => void} reject
+ * @property {ReturnType<typeof setTimeout>} timeout
+ */
+
+/**
+ * @typedef {Object} TransportDiagnosticsUpdate
+ * @property {"cloud" | "local"} [lastTransport]
+ * @property {string} [lastTransportReason]
+ * @property {string} [lastCommandMethod]
+ */
+
+/**
+ * @typedef {Object} MessageBuilder
+ * @property {(duid: string, protocol: number, messageID: number, method: string, params: unknown[], secure: boolean, photo: boolean) => Promise<unknown>} buildPayload
+ * @property {(duid: string, protocol: number, timestamp: number, payload: unknown) => Promise<Buffer | null | undefined>} buildRoborockMessage
+ */
+
+/**
+ * @typedef {Object} LocalConnector
+ * @property {(duid: string) => boolean} isConnected
+ * @property {(duid: string, message: Buffer) => void} sendMessage
+ * @property {(duid: string) => void} clearChunkBuffer
+ * @property {(duid: string) => Promise<void>} [ensureL01Handshake]
+ */
+
+/**
+ * @typedef {Object} MqttConnector
+ * @property {() => boolean} isConnected
+ * @property {(duid: string, message: Buffer) => void} sendMessage
+ */
+
+/**
+ * @typedef {Object} LoggerLike
+ * @property {(message: string) => void} debug
+ * @property {(message: string) => void} info
+ */
+
+/**
+ * @typedef {Object} MessageQueueAdapter
+ * @property {(duid: string) => Promise<boolean>} isRemoteDevice
+ * @property {(duid: string) => Promise<string>} getRobotVersion
+ * @property {(duid: string) => Promise<boolean>} onlineChecker
+ * @property {MqttConnector} rr_mqtt_connector
+ * @property {LocalConnector} localConnector
+ * @property {MessageBuilder} message
+ * @property {() => number} getRequestId
+ * @property {Map<number, PendingRequest>} pendingRequests
+ * @property {(callback: () => void, timeout: number) => ReturnType<typeof setTimeout>} setTimeout
+ * @property {(timeout: ReturnType<typeof setTimeout>) => void} clearTimeout
+ * @property {LoggerLike} log
+ * @property {(duid: string, update: TransportDiagnosticsUpdate) => Promise<void>} updateTransportDiagnostics
+ * @property {(message: string, location: string, duid?: string) => void} catchError
+ */
+
 class messageQueueHandler {
+	/**
+	 * @param {MessageQueueAdapter} adapter
+	 */
 	constructor(adapter) {
 		this.adapter = adapter;
 	}
 
+	/**
+	 * @param {string} duid
+	 * @param {string} method
+	 * @param {unknown[]} params
+	 * @param {boolean} [secure=false]
+	 * @param {boolean} [photo=false]
+	 * @returns {Promise<unknown | undefined>}
+	 */
 	async sendRequest(duid, method, params, secure = false, photo = false) {
 		const remoteConnection = await this.adapter.isRemoteDevice(duid);
 		const version = await this.adapter.getRobotVersion(duid);
@@ -28,9 +97,12 @@ class messageQueueHandler {
 
 		if (!useCloudConnection && version == "L01") {
 			try {
-				await this.adapter.localConnector.ensureL01Handshake(duid);
+				if (this.adapter.localConnector.ensureL01Handshake) {
+					await this.adapter.localConnector.ensureL01Handshake(duid);
+				}
 			} catch (error) {
-				this.adapter.log.debug(`L01 handshake before request failed for ${duid}: ${error.message}`);
+				const errorMessage = error instanceof Error ? error.message : String(error);
+				this.adapter.log.debug(`L01 handshake before request failed for ${duid}: ${errorMessage}`);
 			}
 		}
 
