@@ -12,7 +12,9 @@ node_modules
 .idea
 openspec/
 .opencode/
-.github/
+.github/*
+!.github/workflows/
+!.github/workflows/**
 .gemini/
 AGENTS.md
 
