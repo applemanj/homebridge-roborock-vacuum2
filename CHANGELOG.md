@@ -2,6 +2,7 @@
 
 ## 1.4.13
 - Adjusted `package.json` repository metadata to match the fork URL exactly for npm Trusted Publishing compatibility.
+- Updated the npm publish workflow to use Node 24 and the latest npm CLI for Trusted Publishing compatibility.
 
 ## 1.4.12
 - Improved model resolution and startup hardening for newer Roborock metadata layouts.

@@ -11,7 +11,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/applemanj/homebridge-roborock-vacuum2"
+    "url": "git+https://github.com/applemanj/homebridge-roborock-vacuum2.git"
   },
   "bugs": {
     "url": "https://github.com/applemanj/homebridge-roborock-vacuum2/issues"
