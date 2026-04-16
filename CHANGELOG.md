@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.4.13
+- Adjusted `package.json` repository metadata to match the fork URL exactly for npm Trusted Publishing compatibility.
+
 ## 1.4.12
 - Improved model resolution and startup hardening for newer Roborock metadata layouts.
 - Added diagnostics in the Homebridge UI for model detection, local key availability, discovery state, local IP, TCP connection state, and last transport used.
