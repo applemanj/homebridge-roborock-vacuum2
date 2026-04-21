@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.15
+- Tightened obstacle photo handling in the map UI to accept only base64-encoded image data and render it through browser-generated blob URLs.
+- Added blob URL cleanup when closing or replacing obstacle photos to avoid leaking browser-side object URLs.
+
 ## 1.4.14
 - Hardened region detection by parsing the configured Roborock host instead of using substring matches.
 - Sanitized map obstacle image URLs before assigning them in the browser UI to reduce XSS and client-side redirect risk.

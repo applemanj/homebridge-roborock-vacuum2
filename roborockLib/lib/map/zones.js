@@ -41,8 +41,16 @@ window.onload = function () {
 	var triangle = document.getElementById("triangle");
 	var largePhoto = document.getElementById("largePhoto");
 	var largePhotoImage = document.getElementById("largePhoto-image");
+	var dataImagePattern = /^data:(image\/[a-z0-9.+-]+);base64,([a-z0-9+/=\s]+)$/i;
 
-	function getSafeImageSource(rawValue) {
+	function revokeObjectURL(imageElement) {
+		if (imageElement.dataset.objectUrl) {
+			URL.revokeObjectURL(imageElement.dataset.objectUrl);
+			delete imageElement.dataset.objectUrl;
+		}
+	}
+
+	function decodeImageData(rawValue) {
 		if (typeof rawValue !== "string") {
 			return null;
 		}
@@ -52,31 +60,42 @@ window.onload = function () {
 			return null;
 		}
 
-		if (/^data:image\//i.test(value) || value.startsWith("blob:")) {
-			return value;
+		const match = value.match(dataImagePattern);
+		if (!match) {
+			return null;
 		}
 
+		const mimeType = match[1].toLowerCase();
+		const base64Payload = match[2].replace(/\s+/g, "");
+
 		try {
-			const imageURL = new URL(value, window.location.origin);
-			if (!["http:", "https:"].includes(imageURL.protocol)) {
-				return null;
+			const binary = atob(base64Payload);
+			const bytes = new Uint8Array(binary.length);
+			for (let index = 0; index < binary.length; index++) {
+				bytes[index] = binary.charCodeAt(index);
 			}
-			if (imageURL.hostname !== window.location.hostname) {
-				return null;
-			}
-			return imageURL.toString();
+			return new Blob([bytes], { type: mimeType });
 		} catch {
 			return null;
 		}
 	}
 
+	function clearImageSource(imageElement) {
+		revokeObjectURL(imageElement);
+		imageElement.removeAttribute("src");
+	}
+
 	function applySafeImageSource(imageElement, rawValue) {
-		const safeImageSource = getSafeImageSource(rawValue);
-		if (!safeImageSource) {
+		const imageBlob = decodeImageData(rawValue);
+		if (!imageBlob) {
 			console.warn("Ignoring unsafe obstacle image source");
 			return false;
 		}
-		imageElement.src = safeImageSource;
+
+		revokeObjectURL(imageElement);
+		const objectUrl = URL.createObjectURL(imageBlob);
+		imageElement.dataset.objectUrl = objectUrl;
+		imageElement.src = objectUrl;
 		return true;
 	}
 
@@ -319,7 +338,7 @@ window.onload = function () {
 						},
 					};
 
-					if (popupImage.src) popupImage.src = "";
+					clearImageSource(popupImage);
 
 					triangle.style.left = "45px";
 					triangle.style.top = "100px";
@@ -351,9 +370,11 @@ window.onload = function () {
 
 									if (serverData.image && applySafeImageSource(largePhotoImage, serverData.image)) {
 										popup.style.display = "none";
+										clearImageSource(popupImage);
 										largePhoto.style.display = "block";
 
 										largePhotoImage.onclick = function () {
+											clearImageSource(largePhotoImage);
 											largePhoto.style.display = "none";
 										};
 										socket.onmessage = null;
@@ -361,6 +382,7 @@ window.onload = function () {
 								};
 
 								setTimeout(() => {
+									clearImageSource(largePhotoImage);
 									largePhoto.style.display = "none";
 								}, 10000);
 							});
@@ -371,6 +393,7 @@ window.onload = function () {
 					timeoutStart = Date.now();
 					popupTimeout = setTimeout(() => {
 						popup.style.display = "none";
+						clearImageSource(popupImage);
 						socket.onmessage = null;
 						popupTimeout = null;
 						selectedObstacleID = null;
