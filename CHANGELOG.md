@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.14
+- Hardened region detection by parsing the configured Roborock host instead of using substring matches.
+- Sanitized map obstacle image URLs before assigning them in the browser UI to reduce XSS and client-side redirect risk.
+- Added explicit read-only permissions to the CI workflow, upgraded GitHub Actions versions, and moved Codecov uploads to a repository secret.
+
 ## 1.4.13
 - Adjusted `package.json` repository metadata to match the fork URL exactly for npm Trusted Publishing compatibility.
 - Updated the npm publish workflow to use Node 24 and the latest npm CLI for Trusted Publishing compatibility.

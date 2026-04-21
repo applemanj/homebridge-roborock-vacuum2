@@ -42,6 +42,44 @@ window.onload = function () {
 	var largePhoto = document.getElementById("largePhoto");
 	var largePhotoImage = document.getElementById("largePhoto-image");
 
+	function getSafeImageSource(rawValue) {
+		if (typeof rawValue !== "string") {
+			return null;
+		}
+
+		const value = rawValue.trim();
+		if (!value) {
+			return null;
+		}
+
+		if (/^data:image\//i.test(value) || value.startsWith("blob:")) {
+			return value;
+		}
+
+		try {
+			const imageURL = new URL(value, window.location.origin);
+			if (!["http:", "https:"].includes(imageURL.protocol)) {
+				return null;
+			}
+			if (imageURL.hostname !== window.location.hostname) {
+				return null;
+			}
+			return imageURL.toString();
+		} catch {
+			return null;
+		}
+	}
+
+	function applySafeImageSource(imageElement, rawValue) {
+		const safeImageSource = getSafeImageSource(rawValue);
+		if (!safeImageSource) {
+			console.warn("Ignoring unsafe obstacle image source");
+			return false;
+		}
+		imageElement.src = safeImageSource;
+		return true;
+	}
+
 	var socket = new WebSocket("ws://" + window.location.hostname + ":7906");
 
 	socket.onopen = () => {
@@ -292,8 +330,7 @@ window.onload = function () {
 					socket.onmessage = function (event) {
 						const serverData = JSON.parse(event.data);
 
-						if (serverData.image) {
-							popupImage.src = serverData.image;
+						if (serverData.image && applySafeImageSource(popupImage, serverData.image)) {
 							socket.onmessage = null;
 
 							popupImage.addEventListener("click", function () {
@@ -312,10 +349,9 @@ window.onload = function () {
 								socket.onmessage = function (event) {
 									const serverData = JSON.parse(event.data);
 
-									if (serverData.image) {
+									if (serverData.image && applySafeImageSource(largePhotoImage, serverData.image)) {
 										popup.style.display = "none";
 										largePhoto.style.display = "block";
-										largePhotoImage.src = serverData.image;
 
 										largePhotoImage.onclick = function () {
 											largePhoto.style.display = "none";

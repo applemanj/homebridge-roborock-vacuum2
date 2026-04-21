@@ -22,18 +22,27 @@ function normalizeBaseURL(baseURL) {
 	return baseURL.replace(/^https?:\/\//i, "").replace(/\/+$/, "");
 }
 
+function parseHostname(baseURL) {
+	try {
+		return new URL(`https://${normalizeBaseURL(baseURL)}`).hostname.toLowerCase();
+	} catch {
+		return normalizeBaseURL(baseURL).split("/")[0].split(":")[0].toLowerCase();
+	}
+}
+
 function getRegionConfig(baseURL) {
-	const lower = normalizeBaseURL(baseURL).toLowerCase();
-	if (lower.includes("euiot")) {
+	const hostname = parseHostname(baseURL);
+	const labels = hostname.split(".").filter(Boolean);
+	if (labels.includes("euiot")) {
 		return { country: "DE", countryCode: "49" };
 	}
-	if (lower.includes("usiot")) {
+	if (labels.includes("usiot")) {
 		return { country: "US", countryCode: "1" };
 	}
-	if (lower.includes("cniot")) {
+	if (labels.includes("cniot")) {
 		return { country: "CN", countryCode: "86" };
 	}
-	if (lower.includes("api.roborock.com")) {
+	if (hostname === "api.roborock.com") {
 		return { country: "SG", countryCode: "65" };
 	}
 	return { country: "US", countryCode: "1" };
