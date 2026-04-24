@@ -11,33 +11,47 @@
         "title": "Email",
         "type": "string",
         "format": "email",
-        "description": "Roborock account email"
+        "description": "Email address for the Roborock account that owns or has access to the vacuum."
       },
       "password": {
         "title": "Password",
         "type": "string",
+        "format": "password",
         "placeholder": "Password",
-        "description": "Roborock account password"
+        "description": "Roborock account password. Used for password login or as a fallback when no encrypted token is available."
       },
       "encryptedToken": {
         "title": "Encrypted Token",
         "type": "string",
-        "description": "Encrypted Roborock session data (managed by the UI)",
+        "description": "Encrypted Roborock session data. This is created and managed by the plugin UI after a successful login.",
         "readOnly": true
       },
       "skipDevices": {
         "title": "Skip Devices",
         "type": "string",
-        "description": "Comma-separated device IDs to skip"
+        "description": "Comma-separated Roborock serial numbers or DUIDs to ignore during discovery."
       },
       "baseURL": {
+        "title": "Region",
         "type": "string",
         "default": "https://usiot.roborock.com",
-        "description": "Roborock API endpoint: https://usiot.roborock.com (US), https://euiot.roborock.com (EU), https://cniot.roborock.com (CN), https://api.roborock.com (Asia)"
+        "enum": [
+          "https://usiot.roborock.com",
+          "https://euiot.roborock.com",
+          "https://cniot.roborock.com",
+          "https://api.roborock.com"
+        ],
+        "enumNames": [
+          "US (usiot.roborock.com)",
+          "EU (euiot.roborock.com)",
+          "CN (cniot.roborock.com)",
+          "Asia (api.roborock.com)"
+        ],
+        "description": "Roborock cloud region endpoint. Choose the region used by your Roborock account."
       },
       "debugMode": {
         "title": "Debug Mode",
-        "description": "When enabled, debug messages will be written to the log.",
+        "description": "Write verbose Roborock API, discovery, and transport diagnostics to the Homebridge log.",
         "type": "boolean",
         "default": false
       }

@@ -6,4 +6,5 @@ export interface RoborockPlatformConfig extends PlatformConfig {
   debugMode: boolean;
   baseURL?: string;
   encryptedToken?: string;
+  skipDevices?: string;
 }

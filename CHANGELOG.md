@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.16
+
+- Improved the Homebridge admin UI for readability with clearer section layout, status messaging, help text, and explicit settings save behavior.
+- Documented all plugin settings in the Homebridge schema and README, including region selection, encrypted tokens, password fallback, debug logging, and skipped devices.
+- Added serial numbers to UI diagnostics so ignored device values are easier to copy from the admin panel.
+- Fixed `skipDevices` so Homebridge config values are passed into discovery and can match either Roborock serial numbers or DUIDs.
+
 ## 1.4.15
 
 - Tightened obstacle photo handling in the map UI to accept only base64-encoded image data and render it through browser-generated blob URLs.

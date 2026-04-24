@@ -322,6 +322,16 @@ class Roborock {
     return [];
   }
 
+  shouldSkipDevice(device, ignoredSet) {
+    if (!device || !ignoredSet) {
+      return false;
+    }
+
+    return [device.sn, device.duid]
+      .filter((value) => value !== undefined && value !== null)
+      .some((value) => ignoredSet.has(`${value}`.trim()));
+  }
+
   normalizeArray(value) {
     return Array.isArray(value) ? value : [];
   }
@@ -539,7 +549,7 @@ class Roborock {
             ack: true,
           });
 
-          // skip devices that sn in ignoredDevices or skipDevices
+          // Skip devices matching either their serial number or Roborock DUID.
           const ignoredDevices = this.config.ignoredDevices || [];
           const skipDevices = this.parseSkipDevices(this.config.skipDevices);
           const ignoredSet = new Set([...ignoredDevices, ...skipDevices]);
@@ -547,7 +557,7 @@ class Roborock {
           this.products = homedataResult.products;
           this.devices = homedataResult.devices || [];
           this.devices = this.devices.filter(
-            (device) => !ignoredSet.has(device.sn)
+            (device) => !this.shouldSkipDevice(device, ignoredSet)
           );
 
           const allManagedDevices = (homedataResult.devices || []).concat(

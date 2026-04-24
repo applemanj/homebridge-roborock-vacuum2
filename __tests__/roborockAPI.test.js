@@ -64,4 +64,19 @@ describe("Roborock API model and diagnostics helpers", () => {
       }),
     });
   });
+
+  test("skip device helper matches serial numbers and DUIDs", () => {
+    const api = new Roborock({ log: createLog() });
+    const ignoredSet = new Set(api.parseSkipDevices("serial-1, duid-2"));
+
+    expect(
+      api.shouldSkipDevice({ sn: "serial-1", duid: "duid-1" }, ignoredSet)
+    ).toBe(true);
+    expect(
+      api.shouldSkipDevice({ sn: "serial-2", duid: "duid-2" }, ignoredSet)
+    ).toBe(true);
+    expect(
+      api.shouldSkipDevice({ sn: "serial-3", duid: "duid-3" }, ignoredSet)
+    ).toBe(false);
+  });
 });

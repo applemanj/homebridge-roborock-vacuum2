@@ -295,6 +295,7 @@ class RoborockUiServer {
         return {
           name: device.name || device.duid || "Unknown device",
           duid: device.duid || "",
+          serialNumber: device.sn || null,
           productId: device.productId || null,
           resolvedModel,
           deviceModel: deviceModel || null,

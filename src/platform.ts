@@ -119,6 +119,7 @@ export default class RoborockPlatform implements DynamicPlatformPlugin {
       password: password,
       debug: debugMode,
       baseURL: baseURL,
+      skipDevices: this.platformConfig.skipDevices,
       log: this.log,
       userData: decryptedSession,
       storagePath: storagePath,

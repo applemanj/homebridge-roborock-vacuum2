@@ -6,16 +6,23 @@ const elements = {
   skipDevices: document.getElementById("skip-devices"),
   debugMode: document.getElementById("debug-mode"),
   code: document.getElementById("two-factor-code"),
+  saveSettings: document.getElementById("save-settings"),
   login: document.getElementById("login"),
   logout: document.getElementById("logout"),
   send2fa: document.getElementById("send-2fa"),
   verify2fa: document.getElementById("verify-2fa"),
   twoFactorSection: document.getElementById("two-factor-section"),
+  authStatus: document.getElementById("auth-status"),
   toastContainer: document.getElementById("toast-container"),
   refreshDiagnostics: document.getElementById("refresh-diagnostics"),
   diagnosticsSummary: document.getElementById("diagnostics-summary"),
   diagnosticsEmpty: document.getElementById("diagnostics-empty"),
   diagnosticsList: document.getElementById("diagnostics-list"),
+};
+
+const state = {
+  hasEncryptedToken: false,
+  hasPassword: false,
 };
 
 function showToast(type, message) {
@@ -51,6 +58,7 @@ async function loadConfig() {
     !window.homebridge ||
     typeof window.homebridge.getPluginConfig !== "function"
   ) {
+    updateAuthStatus(false, false);
     return;
   }
 
@@ -59,6 +67,7 @@ async function loadConfig() {
     (entry) => entry.platform === "RoborockVacuumPlatform"
   );
   if (!config) {
+    updateAuthStatus(false, false);
     return;
   }
 
@@ -73,7 +82,9 @@ async function loadConfig() {
   }
   elements.debugMode.checked = Boolean(config.debugMode);
 
-  setLoggedInState(Boolean(config.encryptedToken));
+  state.hasEncryptedToken = Boolean(config.encryptedToken);
+  state.hasPassword = Boolean(config.password);
+  setLoggedInState(state.hasEncryptedToken, state.hasPassword);
   await loadDiagnostics();
 }
 
@@ -101,8 +112,9 @@ function getCode() {
   return elements.code.value.trim();
 }
 
-async function saveCredentials() {
+async function saveCredentials(showSuccess = false) {
   const email = getEmail();
+  const password = getPassword();
   const baseURL = getBaseUrl();
   const skipDevices = getSkipDevices();
   const debugMode = getDebugMode();
@@ -111,18 +123,42 @@ async function saveCredentials() {
     return;
   }
 
-  await updatePluginConfig({
+  const patch = {
     email,
     baseURL,
     skipDevices,
     debugMode,
-  });
+  };
+
+  if (password) {
+    patch.password = password;
+  }
+
+  await updatePluginConfig(patch);
+
+  if (password) {
+    state.hasPassword = true;
+  }
+
+  if (showSuccess) {
+    showToast("success", "Settings saved.");
+  }
+
+  updateAuthStatus(state.hasEncryptedToken, state.hasPassword);
 }
 
 async function login() {
   const email = getEmail();
   const password = getPassword();
   const baseURL = getBaseUrl();
+  const skipDevices = getSkipDevices();
+  const debugMode = getDebugMode();
+
+  if (!email || !password) {
+    showToast("error", "Email and password are required.");
+    return;
+  }
+
   const result = await request("/auth/login", { email, password, baseURL });
 
   if (result.ok) {
@@ -130,18 +166,24 @@ async function login() {
       email,
       password,
       baseURL,
+      skipDevices,
+      debugMode,
       encryptedToken: result.encryptedToken,
     });
     showToast("success", result.message || "Login successful.");
-    setLoggedInState(true);
+    state.hasEncryptedToken = true;
+    state.hasPassword = true;
+    setLoggedInState(true, true);
     return;
   }
 
   if (result.twoFactorRequired) {
+    setTwoFactorVisible(true);
     showToast(
       "warning",
       result.message || "Two-factor authentication required."
     );
+    elements.code.focus();
     return;
   }
 
@@ -168,6 +210,8 @@ async function verifyTwoFactorCode() {
   const email = getEmail();
   const code = getCode();
   const baseURL = getBaseUrl();
+  const skipDevices = getSkipDevices();
+  const debugMode = getDebugMode();
   if (!email) {
     showToast("error", "Email is required.");
     return;
@@ -186,10 +230,13 @@ async function verifyTwoFactorCode() {
     await updatePluginConfig({
       email,
       baseURL,
+      skipDevices,
+      debugMode,
       encryptedToken: result.encryptedToken,
     });
     showToast("success", result.message || "Verification successful.");
-    setLoggedInState(true);
+    state.hasEncryptedToken = true;
+    setLoggedInState(true, state.hasPassword);
   } else {
     showToast("error", result.message || "Verification failed.");
   }
@@ -200,7 +247,8 @@ async function logout() {
   if (result.ok) {
     await updatePluginConfig({ encryptedToken: undefined });
     showToast("success", result.message || "Logged out.");
-    setLoggedInState(false);
+    state.hasEncryptedToken = false;
+    setLoggedInState(false, state.hasPassword);
     renderDiagnostics(null);
   } else {
     showToast("error", result.message || "Logout failed.");
@@ -262,6 +310,7 @@ function renderDiagnostics(result, errorMessage) {
       </div>
       <dl>
         <div><dt>DUID</dt><dd>${escapeHtml(device.duid || "unknown")}</dd></div>
+        <div><dt>Serial Number</dt><dd>${escapeHtml(device.serialNumber || "n/a")}</dd></div>
         <div><dt>Resolved Model</dt><dd>${escapeHtml(device.resolvedModel || "unknown")}</dd></div>
         <div><dt>Device Model</dt><dd>${escapeHtml(device.deviceModel || "n/a")}</dd></div>
         <div><dt>Product Model</dt><dd>${escapeHtml(device.productModel || "n/a")}</dd></div>
@@ -314,15 +363,38 @@ function normalizeBaseUrl(value) {
   return `https://${value.replace(/\/+$/, "")}`;
 }
 
-function setLoggedInState(isLoggedIn) {
+function updateAuthStatus(hasToken, hasPassword = false) {
+  elements.authStatus.classList.remove("good", "warn");
+  if (hasToken) {
+    elements.authStatus.textContent = "Token saved";
+    elements.authStatus.classList.add("good");
+    return;
+  }
+
+  if (hasPassword) {
+    elements.authStatus.textContent = "Password fallback";
+    elements.authStatus.classList.add("warn");
+    return;
+  }
+
+  elements.authStatus.textContent = "Login needed";
+  elements.authStatus.classList.add("warn");
+}
+
+function setTwoFactorVisible(isVisible) {
+  elements.twoFactorSection.classList.toggle("hidden", !isVisible);
+}
+
+function setLoggedInState(isLoggedIn, hasPassword = false) {
   elements.logout.classList.toggle("hidden", !isLoggedIn);
   elements.login.classList.toggle("hidden", isLoggedIn);
   elements.passwordRow.classList.toggle("hidden", isLoggedIn);
-  elements.twoFactorSection.classList.toggle("hidden", isLoggedIn);
+  setTwoFactorVisible(false);
   elements.email.readOnly = isLoggedIn;
   elements.email.parentElement.classList.toggle("readonly", isLoggedIn);
   elements.baseUrl.disabled = isLoggedIn;
   elements.baseUrl.parentElement.classList.toggle("readonly", isLoggedIn);
+  updateAuthStatus(isLoggedIn, hasPassword);
 }
 
 async function updatePluginConfig(patch) {
@@ -359,14 +431,15 @@ function init() {
   loadConfig().catch(() => {
     showToast("error", "Failed to load current config.");
   });
+  elements.saveSettings.addEventListener("click", () => saveCredentials(true));
   elements.login.addEventListener("click", login);
   elements.send2fa.addEventListener("click", sendTwoFactorEmail);
   elements.verify2fa.addEventListener("click", verifyTwoFactorCode);
   elements.logout.addEventListener("click", logout);
-  elements.baseUrl.addEventListener("change", saveCredentials);
-  elements.skipDevices.addEventListener("change", saveCredentials);
-  elements.debugMode.addEventListener("change", saveCredentials);
-  elements.email.addEventListener("change", saveCredentials);
+  elements.baseUrl.addEventListener("change", () => saveCredentials(false));
+  elements.skipDevices.addEventListener("change", () => saveCredentials(false));
+  elements.debugMode.addEventListener("change", () => saveCredentials(false));
+  elements.email.addEventListener("change", () => saveCredentials(false));
   elements.refreshDiagnostics.addEventListener("click", () => {
     loadDiagnostics().catch(() => {
       showToast("error", "Failed to load diagnostics.");
