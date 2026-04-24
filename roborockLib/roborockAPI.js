@@ -176,11 +176,7 @@ class Roborock {
         this.deviceNotify(id, state);
       }
     } catch (error) {
-      if (
-        PERSISTED_STATE_IDS.has(id) &&
-        error &&
-        error.code == "EACCES"
-      ) {
+      if (PERSISTED_STATE_IDS.has(id) && error && error.code == "EACCES") {
         try {
           const fallbackPath = path.join(
             this.forceTemporaryPersistPath(),

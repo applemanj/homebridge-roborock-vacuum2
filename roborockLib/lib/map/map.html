@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html>
   <head>
     <script src="zones.js"></script>
@@ -10,13 +10,14 @@
       }
 
       #myCanvas {
-        border: 2px solid #4F4F4F;
+        border: 2px solid #4f4f4f;
         box-shadow: 0px 0px 10px #333;
         border-radius: 15px;
         /* image-rendering: pixelated; */
       }
 
-      #addButton, #deleteButton {
+      #addButton,
+      #deleteButton {
         display: inline-block;
         width: 100px;
       }
@@ -27,33 +28,38 @@
         margin-left: 0px;
       }
 
-      #startButton, #stopButton, #pauseButton {
+      #startButton,
+      #stopButton,
+      #pauseButton {
         display: inline-block;
         width: 100px;
       }
-      #startButton, #pauseButton {
+      #startButton,
+      #pauseButton {
         margin-right: 0px;
       }
       #stopButton {
         margin-left: 0px;
       }
 
-      button, select {
+      button,
+      select {
         margin: 10px 20px;
         padding: 10px 20px;
         border-radius: 10px;
-        background-color: #2D9CDB;
-        color: #F0F0F0;
+        background-color: #2d9cdb;
+        color: #f0f0f0;
         cursor: pointer;
         transition: background-color 0.2s ease-in-out;
         font-size: 16px;
         font-weight: bold;
-        border: 1px solid #4F4F4F;
+        border: 1px solid #4f4f4f;
         width: 200px;
       }
 
-      button:hover, select:hover {
-        background-color: #47A9DC;
+      button:hover,
+      select:hover {
+        background-color: #47a9dc;
       }
 
       button:disabled {
@@ -63,7 +69,7 @@
       }
 
       .hovered-option {
-        background-color: #47A9DC !important;
+        background-color: #47a9dc !important;
       }
     </style>
   </head>
@@ -71,20 +77,42 @@
     <canvas id="myCanvas" width="450" height="450"></canvas>
 
     <div id="popup" style="display: none; position: absolute">
-      <div id="triangle" style="position: absolute; width: 0; height: 0; border-style: solid; border-width: 10px 5px 0 5px; border-color: #ffffff transparent transparent transparent; transform: translateY(1px);"></div>
+      <div
+        id="triangle"
+        style="
+          position: absolute;
+          width: 0;
+          height: 0;
+          border-style: solid;
+          border-width: 10px 5px 0 5px;
+          border-color: #ffffff transparent transparent transparent;
+          transform: translateY(1px);
+        "
+      ></div>
 
-      <img id="popup-image" src="" style="width: 100px; height: 100px; border: 1px solid white;" />
+      <img
+        id="popup-image"
+        src=""
+        style="width: 100px; height: 100px; border: 1px solid white"
+      />
     </div>
 
-    <div id="largePhoto" style="top: 25px; left: 25px; display: none; position: absolute">
-      <img id="largePhoto-image" src="" style="width: 415px; height: 415px; border: 1px solid white;" />
+    <div
+      id="largePhoto"
+      style="top: 25px; left: 25px; display: none; position: absolute"
+    >
+      <img
+        id="largePhoto-image"
+        src=""
+        style="width: 415px; height: 415px; border: 1px solid white"
+      />
     </div>
 
-    <div style="display: flex; flex-direction: column; align-items: center;">
-      <div style="margin-left: auto;">
+    <div style="display: flex; flex-direction: column; align-items: center">
+      <div style="margin-left: auto">
         <select id="robotSelect"></select>
       </div>
-      <div style="margin-left: auto;">
+      <div style="margin-left: auto">
         <select id="cleanCount">
           <option value="1">1 Time</option>
           <option value="2">2 Times</option>
@@ -92,12 +120,12 @@
         </select>
       </div>
 
-      <div style="display: flex;" id="zoneButtons">
+      <div style="display: flex" id="zoneButtons">
         <button id="addButton">+ Zone</button>
         <button disabled id="deleteButton">- Zone</button>
       </div>
-      <div style="display: flex;" id="robotButtons">
-        <button id="pauseButton" style="display: none;">Pause</button>
+      <div style="display: flex" id="robotButtons">
+        <button id="pauseButton" style="display: none">Pause</button>
         <button id="startButton">Start</button>
         <button id="stopButton">Stop</button>
       </div>
@@ -105,6 +133,5 @@
       <button id="goToButton">Go to</button>
       <button id="resetZoomButton">Reset zoom</button>
     </div>
-
   </body>
 </html>

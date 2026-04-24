@@ -262,10 +262,14 @@ class RoborockUiServer {
       const transportDiagnostics =
         this.parseStatePayload(transportDiagnosticsState?.val) || {};
 
-      const products = Array.isArray(homeData?.products) ? homeData.products : [];
+      const products = Array.isArray(homeData?.products)
+        ? homeData.products
+        : [];
       const devices = this.collectDevices(homeData);
       const diagnostics = devices.map((device: Record<string, any>) => {
-        const product = products.find((entry: Record<string, any>) => entry.id == device.productId);
+        const product = products.find(
+          (entry: Record<string, any>) => entry.id == device.productId
+        );
         const deviceModel = this.firstNonEmptyString([
           device.model,
           device.productModel,
@@ -285,8 +289,8 @@ class RoborockUiServer {
           transport.tcpConnectionState === "connected"
             ? "Local TCP connected"
             : localKey
-            ? "Local key available"
-            : "Cloud-only fallback likely";
+              ? "Local key available"
+              : "Cloud-only fallback likely";
 
         return {
           name: device.name || device.duid || "Unknown device",
@@ -306,8 +310,11 @@ class RoborockUiServer {
           lastTransportReason: transport.lastTransportReason || null,
           lastCommandMethod: transport.lastCommandMethod || null,
           transportUpdatedAt: transport.updatedAt || null,
-          homeDataSource: Array.isArray(homeData?.receivedDevices) &&
-            homeData.receivedDevices.some((entry: Record<string, any>) => entry.duid === device.duid)
+          homeDataSource:
+            Array.isArray(homeData?.receivedDevices) &&
+            homeData.receivedDevices.some(
+              (entry: Record<string, any>) => entry.duid === device.duid
+            )
               ? "receivedDevices"
               : "devices",
           online: device.online ?? null,
@@ -364,7 +371,9 @@ class RoborockUiServer {
     }
   }
 
-  private collectDevices(homeData: Record<string, any> | null): Record<string, any>[] {
+  private collectDevices(
+    homeData: Record<string, any> | null
+  ): Record<string, any>[] {
     if (!homeData) {
       return [];
     }
@@ -388,7 +397,7 @@ class RoborockUiServer {
 }
 
 // IMPORTANT: Use Function constructor to create a dynamic import that TypeScript won't transform
-// 
+//
 // Background: @homebridge/plugin-ui-utils v2+ is a pure ES module that cannot be loaded with require()
 // in Node.js 18+. Normally we would use `await import('@homebridge/plugin-ui-utils')`, but because
 // this project uses TypeScript with "module": "commonjs" in tsconfig.json, TypeScript transforms

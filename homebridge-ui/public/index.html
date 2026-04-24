@@ -3,7 +3,9 @@
 <main class="container">
   <header>
     <h1>Roborock Vacuum</h1>
-    <p class="subtitle">Manage login and two-factor authentication for your Roborock account.</p>
+    <p class="subtitle">
+      Manage login and two-factor authentication for your Roborock account.
+    </p>
   </header>
 
   <section class="card">
@@ -20,15 +22,27 @@
     <label>
       Region
       <select id="base-url">
-        <option value="https://usiot.roborock.com">US (usiot.roborock.com)</option>
-        <option value="https://euiot.roborock.com">EU (euiot.roborock.com)</option>
-        <option value="https://cniot.roborock.com">CN (cniot.roborock.com)</option>
-        <option value="https://api.roborock.com">Asia (api.roborock.com)</option>
+        <option value="https://usiot.roborock.com">
+          US (usiot.roborock.com)
+        </option>
+        <option value="https://euiot.roborock.com">
+          EU (euiot.roborock.com)
+        </option>
+        <option value="https://cniot.roborock.com">
+          CN (cniot.roborock.com)
+        </option>
+        <option value="https://api.roborock.com">
+          Asia (api.roborock.com)
+        </option>
       </select>
     </label>
     <label>
       Skip Devices
-      <input id="skip-devices" type="text" placeholder="Comma-separated device IDs" />
+      <input
+        id="skip-devices"
+        type="text"
+        placeholder="Comma-separated device IDs"
+      />
     </label>
     <label class="checkbox">
       <input id="debug-mode" type="checkbox" />
@@ -42,7 +56,10 @@
 
   <section class="card" id="two-factor-section">
     <h2>Two-Factor Authentication</h2>
-    <p class="help">If your account requires 2FA, send a verification email and enter the code below.</p>
+    <p class="help">
+      If your account requires 2FA, send a verification email and enter the code
+      below.
+    </p>
     <label id="code-row">
       Verification Code
       <input id="two-factor-code" type="text" placeholder="6-digit code" />
@@ -57,12 +74,20 @@
     <div class="section-header">
       <div>
         <h2>Diagnostics</h2>
-        <p class="help">Inspect cached discovery data, model resolution, and whether local connectivity is likely available.</p>
+        <p class="help">
+          Inspect cached discovery data, model resolution, and whether local
+          connectivity is likely available.
+        </p>
       </div>
       <button id="refresh-diagnostics" class="secondary">Refresh</button>
     </div>
-    <div id="diagnostics-summary" class="diagnostics-summary muted">No diagnostics loaded yet.</div>
-    <div id="diagnostics-empty" class="help">Run a successful plugin startup, then refresh to inspect the latest cached HomeData.</div>
+    <div id="diagnostics-summary" class="diagnostics-summary muted">
+      No diagnostics loaded yet.
+    </div>
+    <div id="diagnostics-empty" class="help">
+      Run a successful plugin startup, then refresh to inspect the latest cached
+      HomeData.
+    </div>
     <div id="diagnostics-list" class="diagnostics-list"></div>
   </section>
 </main>

@@ -43,7 +43,6 @@ Roborock (roborock.vacuum.a95)
 Roborock (roborock.vacuum.a159)
 Roborock (roborock.vacuum.ss07)
 
-
 ## Requirements
 
 Before installing, ensure you have:
@@ -58,9 +57,11 @@ Before installing, ensure you have:
 Follow these steps to install the plugin:
 
 1. **Install Homebridge** (if not already installed):
+
    - Refer to the official [Homebridge installation guide](https://github.com/homebridge/homebridge#installation).
 
 2. **Install the Plugin**:
    - Open a terminal and run:
      ```bash
      npm install -g homebridge-roborock-vacuum2
+     ```

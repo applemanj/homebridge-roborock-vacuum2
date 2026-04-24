@@ -18,9 +18,7 @@ function createAdapter(overrides = {}) {
     },
     message: {
       buildPayload: jest.fn().mockResolvedValue("payload"),
-      buildRoborockMessage: jest
-        .fn()
-        .mockResolvedValue(Buffer.from("message")),
+      buildRoborockMessage: jest.fn().mockResolvedValue(Buffer.from("message")),
     },
     getRequestId: jest.fn().mockReturnValue(42),
     pendingRequests: new Map(),

@@ -441,7 +441,9 @@ class roborock_mqtt_connector {
     if (client) {
       try {
         if (!force && this.connected) {
-          this.adapter.log.debug("MQTT reconnect skipped because client is already connected.");
+          this.adapter.log.debug(
+            "MQTT reconnect skipped because client is already connected."
+          );
           return false;
         }
 
