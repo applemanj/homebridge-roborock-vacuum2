@@ -25,7 +25,12 @@ const state = {
   hasEncryptedToken: false,
   hasPassword: false,
   lastDiagnostics: null,
+  diagnosticsRefreshTimer: null,
+  diagnosticsAutoRefreshAttempts: 0,
 };
+
+const DIAGNOSTICS_AUTO_REFRESH_DELAY_MS = 3000;
+const DIAGNOSTICS_AUTO_REFRESH_LIMIT = 2;
 
 function showToast(type, message) {
   if (
@@ -87,7 +92,7 @@ async function loadConfig() {
   state.hasEncryptedToken = Boolean(config.encryptedToken);
   state.hasPassword = Boolean(config.password);
   setLoggedInState(state.hasEncryptedToken, state.hasPassword);
-  await loadDiagnostics();
+  await loadDiagnostics({ scheduleFollowUp: true });
 }
 
 function getEmail() {
@@ -251,13 +256,14 @@ async function logout() {
     showToast("success", result.message || "Logged out.");
     state.hasEncryptedToken = false;
     setLoggedInState(false, state.hasPassword);
+    resetDiagnosticsAutoRefresh();
     renderDiagnostics(null);
   } else {
     showToast("error", result.message || "Logout failed.");
   }
 }
 
-async function loadDiagnostics() {
+async function loadDiagnostics({ scheduleFollowUp = false } = {}) {
   const result = await request("/diagnostics/state", {});
   if (!result.ok) {
     renderDiagnostics(null, result.message || "Failed to load diagnostics.");
@@ -265,7 +271,55 @@ async function loadDiagnostics() {
   }
 
   renderDiagnostics(result);
+  if (scheduleFollowUp) {
+    maybeScheduleDiagnosticsRefresh(result);
+  }
+
   return result;
+}
+
+function maybeScheduleDiagnosticsRefresh(result) {
+  if (!shouldAutoRefreshDiagnostics(result)) {
+    resetDiagnosticsAutoRefresh();
+    return;
+  }
+
+  if (
+    state.diagnosticsAutoRefreshAttempts >= DIAGNOSTICS_AUTO_REFRESH_LIMIT ||
+    state.diagnosticsRefreshTimer
+  ) {
+    return;
+  }
+
+  state.diagnosticsAutoRefreshAttempts += 1;
+  state.diagnosticsRefreshTimer = setTimeout(() => {
+    state.diagnosticsRefreshTimer = null;
+    loadDiagnostics({ scheduleFollowUp: true }).catch(() => {
+      showToast("error", "Failed to refresh diagnostics.");
+    });
+  }, DIAGNOSTICS_AUTO_REFRESH_DELAY_MS);
+}
+
+function shouldAutoRefreshDiagnostics(result) {
+  if (!result || !result.hasHomeData || !Array.isArray(result.devices)) {
+    return false;
+  }
+
+  return result.devices.some((device) => {
+    const status = device.connectionStatus || device.localConnectivityState;
+    return (
+      status !== "Local connected" || device.tcpConnectionState !== "connected"
+    );
+  });
+}
+
+function resetDiagnosticsAutoRefresh() {
+  if (state.diagnosticsRefreshTimer) {
+    clearTimeout(state.diagnosticsRefreshTimer);
+    state.diagnosticsRefreshTimer = null;
+  }
+
+  state.diagnosticsAutoRefreshAttempts = 0;
 }
 
 function renderDiagnostics(result, errorMessage) {
@@ -324,6 +378,7 @@ function renderDiagnostics(result, errorMessage) {
         <div><dt>Last Transport</dt><dd>${escapeHtml(device.lastTransport || "n/a")}</dd></div>
         <div><dt>Last Reason</dt><dd>${escapeHtml(device.lastTransportReason || "n/a")}</dd></div>
         <div><dt>Last Method</dt><dd>${escapeHtml(device.lastCommandMethod || "n/a")}</dd></div>
+        <div><dt>Transport Updated</dt><dd>${escapeHtml(device.transportUpdatedAt ? formatTimestamp(device.transportUpdatedAt) : "n/a")}</dd></div>
       </dl>
     `;
     elements.diagnosticsList.appendChild(card);
@@ -379,6 +434,7 @@ function buildDiagnosticsReport(result) {
     lines.push(`  lastTransport: ${device.lastTransport || "n/a"}`);
     lines.push(`  lastReason: ${device.lastTransportReason || "n/a"}`);
     lines.push(`  lastMethod: ${device.lastCommandMethod || "n/a"}`);
+    lines.push(`  transportUpdatedAt: ${device.transportUpdatedAt || "n/a"}`);
     lines.push("");
   });
 
@@ -551,6 +607,7 @@ function init() {
   elements.debugMode.addEventListener("change", () => saveCredentials(false));
   elements.email.addEventListener("change", () => saveCredentials(false));
   elements.refreshDiagnostics.addEventListener("click", () => {
+    resetDiagnosticsAutoRefresh();
     loadDiagnostics().catch(() => {
       showToast("error", "Failed to load diagnostics.");
     });

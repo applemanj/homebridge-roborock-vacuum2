@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.19
+
+- Added a short diagnostics auto-refresh after admin UI startup when the first snapshot is not locally connected.
+- Added transport freshness timestamps to diagnostic cards and copied diagnostic reports.
+
 ## 1.4.18
 
 - Updated the roadmap to reflect completed diagnostics, Homebridge compatibility, CI, release automation, and security work.

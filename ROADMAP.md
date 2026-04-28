@@ -10,11 +10,12 @@
 - Improved npm trusted publishing, GitHub release automation, and CodeQL security hygiene.
 - Improved the Homebridge admin UI layout, setting descriptions, and diagnostics readability.
 - Added GitHub Issue templates for bug reports, feature requests, and model support reports.
+- Added plain-language per-device connection diagnostics and a redacted diagnostics report for GitHub Issues.
 
 ## In Progress
 
-- Make per-device diagnostics explain connection state in plain language instead of exposing implementation terms such as `localKey`.
-- Add a redacted diagnostics report users can copy into GitHub Issues without leaking tokens or local keys.
+- Make startup diagnostics less stale by auto-refreshing shortly after the admin UI opens when the first snapshot is not locally connected.
+- Show transport freshness in diagnostics so users can tell whether an offline or cloud-fallback state is current.
 
 ## Worth Doing Next
 
