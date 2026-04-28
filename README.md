@@ -83,4 +83,6 @@ The plugin needs either a valid `encryptedToken` or a `password` to start. A sav
 
 ## Diagnostics
 
-The plugin UI includes a Diagnostics section that reads cached HomeData and transport state from the Homebridge storage directory. It shows each discovered device's name, DUID, serial number, resolved model, local IP, local TCP state, cloud fallback state, and the last command transport. Use this section to confirm whether the plugin is using local TCP or falling back to Roborock cloud transport.
+The plugin UI includes a Diagnostics section that reads cached HomeData and transport state from the Homebridge storage directory. It shows each discovered device's name, DUID, serial number, resolved model, local IP, local TCP state, cloud fallback state, and the last command transport. Use this section to confirm whether the plugin is using local TCP, ready for local control, falling back to Roborock cloud transport, or seeing the vacuum as offline.
+
+Use **Copy Diagnostic Report** when opening GitHub Issues. The copied report redacts tokens, local keys, full DUIDs, serial numbers, and the final local IP address octet while preserving the connection state needed for troubleshooting.

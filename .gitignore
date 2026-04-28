@@ -15,6 +15,8 @@ openspec/
 .github/*
 !.github/workflows/
 !.github/workflows/**
+!.github/ISSUE_TEMPLATE/
+!.github/ISSUE_TEMPLATE/**
 .gemini/
 AGENTS.md
 

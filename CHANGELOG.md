@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.18
+
+- Updated the roadmap to reflect completed diagnostics, Homebridge compatibility, CI, release automation, and security work.
+- Improved diagnostics wording so local credentials, local TCP connectivity, cloud fallback, and offline states are easier to understand.
+- Added a redacted "Copy Diagnostic Report" action for future GitHub Issues.
+- Added GitHub Issue templates for bug reports, feature requests, and model support reports.
+
 ## 1.4.17
 
 - Maintenance release to verify the trusted publishing and GitHub release automation after the admin UI and diagnostics updates.

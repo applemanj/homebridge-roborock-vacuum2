@@ -156,6 +156,13 @@ input::placeholder {
   margin-top: 20px;
 }
 
+.diagnostics-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
 button {
   border: none;
   border-radius: 7px;
@@ -243,6 +250,13 @@ button:hover {
 .device-header h3 {
   margin: 0;
   font-size: 1.05rem;
+}
+
+.connection-hint {
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.45;
+  margin: 0 0 14px;
 }
 
 .pill {
@@ -335,5 +349,13 @@ button:hover {
   .device-header {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .diagnostics-actions {
+    justify-content: stretch;
+  }
+
+  .diagnostics-actions button {
+    flex: 1 1 100%;
   }
 }

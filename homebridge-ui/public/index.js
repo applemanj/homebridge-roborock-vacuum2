@@ -14,6 +14,7 @@ const elements = {
   twoFactorSection: document.getElementById("two-factor-section"),
   authStatus: document.getElementById("auth-status"),
   toastContainer: document.getElementById("toast-container"),
+  copyDiagnostics: document.getElementById("copy-diagnostics"),
   refreshDiagnostics: document.getElementById("refresh-diagnostics"),
   diagnosticsSummary: document.getElementById("diagnostics-summary"),
   diagnosticsEmpty: document.getElementById("diagnostics-empty"),
@@ -23,6 +24,7 @@ const elements = {
 const state = {
   hasEncryptedToken: false,
   hasPassword: false,
+  lastDiagnostics: null,
 };
 
 function showToast(type, message) {
@@ -259,14 +261,16 @@ async function loadDiagnostics() {
   const result = await request("/diagnostics/state", {});
   if (!result.ok) {
     renderDiagnostics(null, result.message || "Failed to load diagnostics.");
-    return;
+    return null;
   }
 
   renderDiagnostics(result);
+  return result;
 }
 
 function renderDiagnostics(result, errorMessage) {
   elements.diagnosticsList.innerHTML = "";
+  state.lastDiagnostics = result || null;
 
   if (errorMessage) {
     elements.diagnosticsSummary.textContent = errorMessage;
@@ -280,9 +284,8 @@ function renderDiagnostics(result, errorMessage) {
     return;
   }
 
-  const tokenSummary = result.hasEncryptedToken
-    ? "token saved"
-    : "no saved token";
+  const hasToken = Boolean(result.hasEncryptedToken || state.hasEncryptedToken);
+  const tokenSummary = hasToken ? "token saved" : "no saved token";
   elements.diagnosticsSummary.textContent = `${result.deviceCount} device(s), ${tokenSummary}, last snapshot ${formatTimestamp(result.generatedAt)}.`;
 
   if (!result.devices || result.devices.length === 0) {
@@ -295,19 +298,15 @@ function renderDiagnostics(result, errorMessage) {
   result.devices.forEach((device) => {
     const card = document.createElement("article");
     card.className = "diagnostic-device";
-    const localClass =
-      device.tcpConnectionState === "connected"
-        ? "good"
-        : device.hasLocalKey
-          ? "warn"
-          : "warn";
+    const localClass = device.connectionHealth || "warn";
     const onlineText =
       device.online === null ? "unknown" : String(device.online);
     card.innerHTML = `
       <div class="device-header">
         <h3>${escapeHtml(device.name || "Unknown device")}</h3>
-        <span class="pill ${localClass}">${escapeHtml(device.localConnectivityState)}</span>
+        <span class="pill ${localClass}">${escapeHtml(device.connectionStatus || device.localConnectivityState || "Unknown")}</span>
       </div>
+      <p class="connection-hint">${escapeHtml(device.connectionHint || "No additional transport details are available yet.")}</p>
       <dl>
         <div><dt>DUID</dt><dd>${escapeHtml(device.duid || "unknown")}</dd></div>
         <div><dt>Serial Number</dt><dd>${escapeHtml(device.serialNumber || "n/a")}</dd></div>
@@ -329,6 +328,112 @@ function renderDiagnostics(result, errorMessage) {
     `;
     elements.diagnosticsList.appendChild(card);
   });
+}
+
+async function copyDiagnosticsReport() {
+  let diagnostics = state.lastDiagnostics;
+  if (!diagnostics) {
+    diagnostics = await loadDiagnostics();
+  }
+
+  if (!diagnostics || !diagnostics.hasHomeData) {
+    showToast("warning", "No diagnostics are available to copy yet.");
+    return;
+  }
+
+  await writeClipboard(buildDiagnosticsReport(diagnostics));
+  showToast("success", "Redacted diagnostic report copied.");
+}
+
+function buildDiagnosticsReport(result) {
+  const hasToken = Boolean(result.hasEncryptedToken || state.hasEncryptedToken);
+  const lines = [
+    "homebridge-roborock-vacuum2 diagnostic report",
+    `generatedAt: ${result.generatedAt || "unknown"}`,
+    `pluginVersion: ${result.pluginVersion || "unknown"}`,
+    `nodeVersion: ${result.nodeVersion || "unknown"}`,
+    `token: ${hasToken ? "present" : "missing"}`,
+    `homeData: ${result.hasHomeData ? "present" : "missing"}`,
+    `deviceCount: ${result.deviceCount ?? "unknown"}`,
+    "",
+  ];
+
+  (result.devices || []).forEach((device, index) => {
+    lines.push(`device ${index + 1}: ${device.name || "Unknown device"}`);
+    lines.push(`  duid: ${maskIdentifier(device.duid)}`);
+    lines.push(`  serialNumber: ${maskIdentifier(device.serialNumber)}`);
+    lines.push(`  resolvedModel: ${device.resolvedModel || "unknown"}`);
+    lines.push(`  productId: ${device.productId || "n/a"}`);
+    lines.push(
+      `  online: ${device.online === null ? "unknown" : String(device.online)}`
+    );
+    lines.push(`  connectionStatus: ${device.connectionStatus || "unknown"}`);
+    lines.push(`  connectionHint: ${device.connectionHint || "n/a"}`);
+    lines.push(`  localIp: ${maskLocalIp(device.localIp)}`);
+    lines.push(`  discovery: ${device.localDiscoveryState || "n/a"}`);
+    lines.push(`  tcpState: ${device.tcpConnectionState || "n/a"}`);
+    lines.push(
+      `  markedRemote: ${device.isRemote === null ? "unknown" : String(device.isRemote)}`
+    );
+    lines.push(`  remoteReason: ${device.remoteReason || "n/a"}`);
+    lines.push(`  lastTransport: ${device.lastTransport || "n/a"}`);
+    lines.push(`  lastReason: ${device.lastTransportReason || "n/a"}`);
+    lines.push(`  lastMethod: ${device.lastCommandMethod || "n/a"}`);
+    lines.push("");
+  });
+
+  return lines.join("\n").trim();
+}
+
+async function writeClipboard(text) {
+  if (
+    navigator.clipboard &&
+    typeof navigator.clipboard.writeText === "function"
+  ) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // Fall back to the textarea copy path below.
+    }
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.top = "-9999px";
+  document.body.appendChild(textarea);
+  textarea.select();
+  document.execCommand("copy");
+  textarea.remove();
+}
+
+function maskIdentifier(value) {
+  if (!value) {
+    return "n/a";
+  }
+
+  const normalized = String(value);
+  if (normalized.length <= 8) {
+    return "[redacted]";
+  }
+
+  return `${normalized.slice(0, 4)}...${normalized.slice(-4)}`;
+}
+
+function maskLocalIp(value) {
+  if (!value) {
+    return "n/a";
+  }
+
+  const normalized = String(value);
+  const ipv4Parts = normalized.split(".");
+  if (ipv4Parts.length === 4) {
+    return `${ipv4Parts.slice(0, 3).join(".")}.x`;
+  }
+
+  return "present (redacted)";
 }
 
 function formatTimestamp(value) {
@@ -436,6 +541,11 @@ function init() {
   elements.send2fa.addEventListener("click", sendTwoFactorEmail);
   elements.verify2fa.addEventListener("click", verifyTwoFactorCode);
   elements.logout.addEventListener("click", logout);
+  elements.copyDiagnostics.addEventListener("click", () => {
+    copyDiagnosticsReport().catch(() => {
+      showToast("error", "Failed to copy diagnostics.");
+    });
+  });
   elements.baseUrl.addEventListener("change", () => saveCredentials(false));
   elements.skipDevices.addEventListener("change", () => saveCredentials(false));
   elements.debugMode.addEventListener("change", () => saveCredentials(false));

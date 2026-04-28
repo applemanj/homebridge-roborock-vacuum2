@@ -285,12 +285,11 @@ class RoborockUiServer {
         const resolvedModel = deviceModel || productModel || "unknown";
         const localKey = this.firstNonEmptyString([device.localKey]);
         const transport = transportDiagnostics[device.duid] || {};
-        const localConnectivityState =
-          transport.tcpConnectionState === "connected"
-            ? "Local TCP connected"
-            : localKey
-              ? "Local key available"
-              : "Cloud-only fallback likely";
+        const connection = this.describeConnectionState(
+          device,
+          transport,
+          Boolean(localKey)
+        );
 
         return {
           name: device.name || device.duid || "Unknown device",
@@ -301,7 +300,10 @@ class RoborockUiServer {
           deviceModel: deviceModel || null,
           productModel: productModel || null,
           hasLocalKey: Boolean(localKey),
-          localConnectivityState,
+          connectionStatus: connection.status,
+          connectionHealth: connection.health,
+          connectionHint: connection.hint,
+          localConnectivityState: connection.status,
           localIp: transport.localIp || null,
           localDiscoveryState: transport.localDiscoveryState || null,
           tcpConnectionState: transport.tcpConnectionState || null,
@@ -325,6 +327,8 @@ class RoborockUiServer {
       return {
         ok: true,
         generatedAt: new Date().toISOString(),
+        pluginVersion: this.getPackageVersion(),
+        nodeVersion: process.version,
         storagePath,
         hasEncryptedToken: Boolean(userDataState?.val),
         hasHomeData: Boolean(homeData),
@@ -394,6 +398,78 @@ class RoborockUiServer {
     }
 
     return null;
+  }
+
+  private describeConnectionState(
+    device: Record<string, any>,
+    transport: Record<string, any>,
+    hasLocalCredentials: boolean
+  ): { status: string; health: "good" | "warn"; hint: string } {
+    const tcpState = transport.tcpConnectionState;
+    const lastTransportReason =
+      transport.lastTransportReason || transport.remoteReason || null;
+    const hasLocalIp = Boolean(transport.localIp);
+
+    if (tcpState === "connected") {
+      return {
+        status: "Local connected",
+        health: "good",
+        hint: "The plugin has an active LAN TCP connection to this vacuum.",
+      };
+    }
+
+    if (device.online === false || lastTransportReason === "device-offline") {
+      return {
+        status: "Device offline",
+        health: "warn",
+        hint: hasLocalCredentials
+          ? "Roborock currently reports this vacuum offline. Local credentials are available, but the plugin cannot use them until the vacuum wakes up and rejoins Wi-Fi."
+          : "Roborock currently reports this vacuum offline, and no local credentials were found for LAN control.",
+      };
+    }
+
+    if (transport.lastTransport === "cloud") {
+      return {
+        status: "Cloud fallback",
+        health: "warn",
+        hint: hasLocalCredentials
+          ? "The plugin has local credentials but the last command used Roborock cloud transport, usually because LAN TCP was not connected at that moment."
+          : "The last command used Roborock cloud transport because local LAN credentials are not available.",
+      };
+    }
+
+    if (hasLocalCredentials && hasLocalIp) {
+      return {
+        status: "Ready for local connection",
+        health: "warn",
+        hint: "The plugin has local credentials and a discovered IP address, but no active LAN TCP connection is currently cached.",
+      };
+    }
+
+    if (hasLocalCredentials) {
+      return {
+        status: "Local credentials available",
+        health: "warn",
+        hint: "The plugin has the credential needed for LAN control, but it has not discovered or connected to the vacuum locally yet.",
+      };
+    }
+
+    return {
+      status: "Cloud-only fallback likely",
+      health: "warn",
+      hint: "No local LAN credential was found for this vacuum, so the plugin will likely rely on Roborock cloud transport.",
+    };
+  }
+
+  private getPackageVersion(): string {
+    try {
+      const packageJson = JSON.parse(
+        fs.readFileSync(path.join(__dirname, "../../package.json"), "utf8")
+      );
+      return packageJson.version || "unknown";
+    } catch {
+      return "unknown";
+    }
   }
 }
 
