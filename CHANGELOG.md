@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.17
+
+- Maintenance release to verify the trusted publishing and GitHub release automation after the admin UI and diagnostics updates.
+- No runtime behavior changes from `1.4.16`.
+
 ## 1.4.16
 
 - Improved the Homebridge admin UI for readability with clearer section layout, status messaging, help text, and explicit settings save behavior.
