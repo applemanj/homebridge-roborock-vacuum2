@@ -14,10 +14,12 @@ const elements = {
   twoFactorSection: document.getElementById("two-factor-section"),
   authStatus: document.getElementById("auth-status"),
   toastContainer: document.getElementById("toast-container"),
+  testLocal: document.getElementById("test-local"),
   copyDiagnostics: document.getElementById("copy-diagnostics"),
   refreshDiagnostics: document.getElementById("refresh-diagnostics"),
   diagnosticsSummary: document.getElementById("diagnostics-summary"),
   diagnosticsEmpty: document.getElementById("diagnostics-empty"),
+  localTestResults: document.getElementById("local-test-results"),
   diagnosticsList: document.getElementById("diagnostics-list"),
 };
 
@@ -25,6 +27,7 @@ const state = {
   hasEncryptedToken: false,
   hasPassword: false,
   lastDiagnostics: null,
+  lastLocalTest: null,
   diagnosticsRefreshTimer: null,
   diagnosticsAutoRefreshAttempts: 0,
 };
@@ -257,6 +260,7 @@ async function logout() {
     state.hasEncryptedToken = false;
     setLoggedInState(false, state.hasPassword);
     resetDiagnosticsAutoRefresh();
+    renderLocalTestResults(null);
     renderDiagnostics(null);
   } else {
     showToast("error", result.message || "Logout failed.");
@@ -385,6 +389,111 @@ function renderDiagnostics(result, errorMessage) {
   });
 }
 
+async function testLocalConnections() {
+  resetDiagnosticsAutoRefresh();
+  elements.testLocal.disabled = true;
+  const previousLabel = elements.testLocal.textContent;
+  elements.testLocal.textContent = "Testing...";
+
+  try {
+    const result = await request("/diagnostics/test-local", {});
+    if (!result.ok) {
+      renderLocalTestResults(null, result.message || "Local test failed.");
+      showToast("error", result.message || "Local test failed.");
+      return null;
+    }
+
+    renderLocalTestResults(result);
+    const failedCount = (result.devices || []).filter(
+      (device) => device.status === "failed"
+    ).length;
+    const skippedCount = (result.devices || []).filter(
+      (device) => device.status === "skipped"
+    ).length;
+    if (failedCount > 0) {
+      showToast("warning", "Local connection test found a TCP problem.");
+    } else if (skippedCount > 0) {
+      showToast("warning", "Local connection test was skipped for a device.");
+    } else {
+      showToast("success", "Local connection test passed.");
+    }
+
+    return result;
+  } finally {
+    elements.testLocal.disabled = false;
+    elements.testLocal.textContent = previousLabel;
+  }
+}
+
+function renderLocalTestResults(result, errorMessage) {
+  state.lastLocalTest = result || null;
+  elements.localTestResults.innerHTML = "";
+
+  if (errorMessage) {
+    elements.localTestResults.classList.remove("hidden");
+    elements.localTestResults.innerHTML = `
+      <article class="local-test-card warn">
+        <div class="device-header">
+          <h3>Local Connection Test</h3>
+          <span class="pill warn">Failed</span>
+        </div>
+        <p class="connection-hint">${escapeHtml(errorMessage)}</p>
+      </article>
+    `;
+    return;
+  }
+
+  if (
+    !result ||
+    !Array.isArray(result.devices) ||
+    result.devices.length === 0
+  ) {
+    elements.localTestResults.classList.add("hidden");
+    return;
+  }
+
+  elements.localTestResults.classList.remove("hidden");
+  const testedAt = formatTimestamp(result.generatedAt);
+  const deviceCards = result.devices
+    .map((device) => {
+      const health = device.health || "warn";
+      const status = device.status || "unknown";
+      const latencyText =
+        device.latencyMs === null || device.latencyMs === undefined
+          ? "n/a"
+          : `${device.latencyMs} ms`;
+      return `
+        <article class="local-test-card ${health}">
+          <div class="device-header">
+            <h3>${escapeHtml(device.name || "Unknown device")}</h3>
+            <span class="pill ${health}">${escapeHtml(status)}</span>
+          </div>
+          <p class="connection-hint">${escapeHtml(device.message || "No local test details were returned.")}</p>
+          <dl>
+            <div><dt>Latency</dt><dd>${escapeHtml(latencyText)}</dd></div>
+            <div><dt>Local IP</dt><dd>${escapeHtml(device.localIp || "n/a")}</dd></div>
+            <div><dt>Port</dt><dd>${escapeHtml(device.port || "n/a")}</dd></div>
+            <div><dt>Cached Status</dt><dd>${escapeHtml(device.cachedConnectionStatus || "unknown")}</dd></div>
+            <div><dt>Cached TCP State</dt><dd>${escapeHtml(device.cachedTcpState || "n/a")}</dd></div>
+            <div><dt>Cached Transport</dt><dd>${escapeHtml(device.cachedLastTransport || "n/a")}</dd></div>
+            <div><dt>Cached Reason</dt><dd>${escapeHtml(device.cachedLastReason || "n/a")}</dd></div>
+            <div><dt>Cloud Fallback Likely</dt><dd>${escapeHtml(String(Boolean(device.cloudFallbackLikely)))}</dd></div>
+            <div><dt>Transport Updated</dt><dd>${escapeHtml(device.cachedTransportUpdatedAt ? formatTimestamp(device.cachedTransportUpdatedAt) : "n/a")}</dd></div>
+          </dl>
+        </article>
+      `;
+    })
+    .join("");
+
+  elements.localTestResults.innerHTML = `
+    <div class="local-test-heading">
+      <h3>Local Connection Test</h3>
+      <span class="muted">Tested ${escapeHtml(testedAt)} in ${escapeHtml(String(result.durationMs ?? "n/a"))} ms.</span>
+    </div>
+    ${deviceCards}
+  `;
+}
+
 async function copyDiagnosticsReport() {
   let diagnostics = state.lastDiagnostics;
   if (!diagnostics) {
@@ -438,7 +547,49 @@ function buildDiagnosticsReport(result) {
     lines.push("");
   });
 
+  appendLocalTestReport(lines);
+
   return lines.join("\n").trim();
+}
+
+function appendLocalTestReport(lines) {
+  const result = state.lastLocalTest;
+  if (
+    !result ||
+    !Array.isArray(result.devices) ||
+    result.devices.length === 0
+  ) {
+    return;
+  }
+
+  lines.push("latestLocalConnectionTest:");
+  lines.push(`  generatedAt: ${result.generatedAt || "unknown"}`);
+  lines.push(`  durationMs: ${result.durationMs ?? "unknown"}`);
+
+  result.devices.forEach((device, index) => {
+    lines.push(`  device ${index + 1}: ${device.name || "Unknown device"}`);
+    lines.push(`    duid: ${maskIdentifier(device.duid)}`);
+    lines.push(`    status: ${device.status || "unknown"}`);
+    lines.push(`    message: ${maskLocalIpsInText(device.message || "n/a")}`);
+    lines.push(`    latencyMs: ${device.latencyMs ?? "n/a"}`);
+    lines.push(`    localIp: ${maskLocalIp(device.localIp)}`);
+    lines.push(
+      `    cachedStatus: ${device.cachedConnectionStatus || "unknown"}`
+    );
+    lines.push(`    cachedTcpState: ${device.cachedTcpState || "n/a"}`);
+    lines.push(
+      `    cachedLastTransport: ${device.cachedLastTransport || "n/a"}`
+    );
+    lines.push(`    cachedLastReason: ${device.cachedLastReason || "n/a"}`);
+    lines.push(
+      `    cloudFallbackLikely: ${String(Boolean(device.cloudFallbackLikely))}`
+    );
+    lines.push(
+      `    cachedTransportUpdatedAt: ${device.cachedTransportUpdatedAt || "n/a"}`
+    );
+  });
+
+  lines.push("");
 }
 
 async function writeClipboard(text) {
@@ -476,6 +627,13 @@ function maskIdentifier(value) {
   }
 
   return `${normalized.slice(0, 4)}...${normalized.slice(-4)}`;
+}
+
+function maskLocalIpsInText(value) {
+  return String(value).replace(
+    /\b(\d{1,3}\.\d{1,3}\.\d{1,3})\.\d{1,3}\b/g,
+    "$1.x"
+  );
 }
 
 function maskLocalIp(value) {
@@ -597,6 +755,11 @@ function init() {
   elements.send2fa.addEventListener("click", sendTwoFactorEmail);
   elements.verify2fa.addEventListener("click", verifyTwoFactorCode);
   elements.logout.addEventListener("click", logout);
+  elements.testLocal.addEventListener("click", () => {
+    testLocalConnections().catch(() => {
+      showToast("error", "Failed to run local connection test.");
+    });
+  });
   elements.copyDiagnostics.addEventListener("click", () => {
     copyDiagnosticsReport().catch(() => {
       showToast("error", "Failed to copy diagnostics.");

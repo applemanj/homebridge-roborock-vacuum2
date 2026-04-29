@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import path from "path";
 import fs from "fs";
+import net from "net";
 import { encryptSession } from "../crypto";
 
 const roborockAuth = require("../../roborockLib/lib/roborockAuth");
@@ -42,6 +43,10 @@ class RoborockUiServer {
     this.homebridgePluginUiServer.onRequest(
       "/diagnostics/state",
       this.getDiagnostics.bind(this)
+    );
+    this.homebridgePluginUiServer.onRequest(
+      "/diagnostics/test-local",
+      this.testLocalConnections.bind(this)
     );
 
     this.homebridgePluginUiServer.ready();
@@ -341,6 +346,156 @@ class RoborockUiServer {
         message: error?.message || "Failed to load diagnostics.",
       };
     }
+  }
+
+  private async testLocalConnections(payload?: { duid?: string }) {
+    const startedAt = Date.now();
+    const diagnostics = await this.getDiagnostics();
+
+    if (!diagnostics.ok) {
+      return diagnostics;
+    }
+
+    const devices = Array.isArray(diagnostics.devices)
+      ? diagnostics.devices.filter((device: Record<string, any>) => {
+          return !payload?.duid || device.duid === payload.duid;
+        })
+      : [];
+
+    if (payload?.duid && devices.length === 0) {
+      return {
+        ok: false,
+        message: "No matching device was found in cached HomeData.",
+      };
+    }
+
+    const results = await Promise.all(
+      devices.map((device: Record<string, any>) =>
+        this.testLocalConnection(device)
+      )
+    );
+
+    return {
+      ok: true,
+      generatedAt: new Date().toISOString(),
+      durationMs: Date.now() - startedAt,
+      deviceCount: results.length,
+      devices: results,
+    };
+  }
+
+  private async testLocalConnection(device: Record<string, any>) {
+    const localIp = device.localIp;
+    const port = 58867;
+    const cloudFallbackLikely =
+      device.lastTransport === "cloud" ||
+      device.connectionStatus === "Cloud fallback";
+    const baseResult = {
+      name: device.name || device.duid || "Unknown device",
+      duid: device.duid || "",
+      localIp: localIp || null,
+      port,
+      checkedAt: new Date().toISOString(),
+      cloudFallbackLikely,
+      cachedConnectionStatus: device.connectionStatus || "unknown",
+      cachedTcpState: device.tcpConnectionState || "n/a",
+      cachedLastTransport: device.lastTransport || "n/a",
+      cachedLastReason: device.lastTransportReason || "n/a",
+      cachedTransportUpdatedAt: device.transportUpdatedAt || null,
+      latencyMs: null as number | null,
+    };
+
+    if (!device.hasLocalKey) {
+      return {
+        ...baseResult,
+        status: "skipped",
+        health: "warn",
+        message:
+          "No local credential is cached for this vacuum, so a LAN control test cannot run yet.",
+      };
+    }
+
+    if (device.online === false) {
+      return {
+        ...baseResult,
+        status: "skipped",
+        health: "warn",
+        message:
+          "Roborock currently reports this vacuum offline. Wake the vacuum or place it on the dock, then test again.",
+      };
+    }
+
+    if (!localIp) {
+      return {
+        ...baseResult,
+        status: "skipped",
+        health: "warn",
+        message:
+          "No local IP address is cached yet. Let the plugin complete startup or press Refresh after the vacuum wakes up.",
+      };
+    }
+
+    try {
+      const probe = await this.probeTcp(localIp, port, 3500);
+      return {
+        ...baseResult,
+        status: "passed",
+        health: "good",
+        latencyMs: probe.latencyMs,
+        message: `TCP probe reached ${localIp}:${port} in ${probe.latencyMs} ms.`,
+      };
+    } catch (error: any) {
+      return {
+        ...baseResult,
+        status: "failed",
+        health: "warn",
+        message: `Could not open a TCP connection to ${localIp}:${port}. ${this.formatProbeError(error)}`,
+      };
+    }
+  }
+
+  private probeTcp(
+    host: string,
+    port: number,
+    timeoutMs: number
+  ): Promise<{ latencyMs: number }> {
+    return new Promise((resolve, reject) => {
+      const startedAt = Date.now();
+      const socket = new net.Socket();
+      let settled = false;
+
+      const finish = (error?: Error) => {
+        if (settled) {
+          return;
+        }
+
+        settled = true;
+        clearTimeout(timer);
+        socket.removeAllListeners();
+        socket.destroy();
+
+        if (error) {
+          reject(error);
+          return;
+        }
+
+        resolve({ latencyMs: Date.now() - startedAt });
+      };
+
+      const timer = setTimeout(() => {
+        finish(new Error(`Timed out after ${timeoutMs} ms.`));
+      }, timeoutMs);
+
+      socket.once("connect", () => finish());
+      socket.once("error", (error) => finish(error));
+      socket.connect(port, host);
+    });
+  }
+
+  private formatProbeError(error: any): string {
+    const code = error?.code ? `${error.code}: ` : "";
+    const message = error?.message || String(error);
+    return `${code}${message}`;
   }
 
   private buildNonce(): string {

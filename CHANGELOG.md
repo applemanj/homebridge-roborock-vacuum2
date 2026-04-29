@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.20
+
+- Added a "Test Local Connection" action in the admin UI that performs a live LAN TCP probe for each cached vacuum.
+- Included local test results in copied diagnostic reports with DUIDs and local IPs still redacted.
+
 ## 1.4.19
 
 - Added a short diagnostics auto-refresh after admin UI startup when the first snapshot is not locally connected.

@@ -13,7 +13,7 @@ This plugin is inspired by and adapted from the [ioBroker.roborock](https://gith
 ## Features
 
 - **Automatic Device Detection**: No need to manually find or enter your vacuum's device ID.
-- **Local Transport Diagnostics**: The plugin UI shows resolved model data, local key availability, discovered local IP, TCP connection state, and whether the plugin is using local or cloud transport.
+- **Local Transport Diagnostics**: The plugin UI shows resolved model data, local key availability, discovered local IP, TCP connection state, whether the plugin is using local or cloud transport, and a live local TCP probe.
 - **Start/Stop Cleaning**: Begin or end cleaning sessions.
 
 ## The supported robots are:
@@ -85,4 +85,6 @@ The plugin needs either a valid `encryptedToken` or a `password` to start. A sav
 
 The plugin UI includes a Diagnostics section that reads cached HomeData and transport state from the Homebridge storage directory. It shows each discovered device's name, DUID, serial number, resolved model, local IP, local TCP state, cloud fallback state, and the last command transport. Use this section to confirm whether the plugin is using local TCP, ready for local control, falling back to Roborock cloud transport, or seeing the vacuum as offline.
 
-Use **Copy Diagnostic Report** when opening GitHub Issues. The copied report redacts tokens, local keys, full DUIDs, serial numbers, and the final local IP address octet while preserving the connection state needed for troubleshooting.
+Use **Test Local Connection** to run a live LAN TCP probe from the Homebridge environment to each cached vacuum's local IP on the Roborock local port. This does not send a cleaning command; it only confirms whether the local socket can be reached and reports latency, cached transport state, and whether cloud fallback is likely.
+
+Use **Copy Diagnostic Report** when opening GitHub Issues. The copied report redacts tokens, local keys, full DUIDs, serial numbers, and the final local IP address octet while preserving the connection state and latest local test result needed for troubleshooting.

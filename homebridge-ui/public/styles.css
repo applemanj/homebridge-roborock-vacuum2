@@ -227,16 +227,48 @@ button:hover {
   margin: 18px 0 14px;
 }
 
+.local-test-results {
+  display: grid;
+  gap: 12px;
+  margin: 0 0 14px;
+}
+
+.local-test-results.hidden {
+  display: none;
+}
+
+.local-test-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding-top: 4px;
+}
+
+.local-test-heading h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
 .diagnostics-list {
   display: grid;
   gap: 14px;
 }
 
-.diagnostic-device {
+.diagnostic-device,
+.local-test-card {
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 16px;
   background: var(--panel-soft);
+}
+
+.local-test-card.good {
+  border-color: rgba(34, 197, 94, 0.38);
+}
+
+.local-test-card.warn {
+  border-color: rgba(245, 158, 11, 0.38);
 }
 
 .device-header {
@@ -303,20 +335,23 @@ button:hover {
   color: #ffd98a;
 }
 
-.diagnostic-device dl {
+.diagnostic-device dl,
+.local-test-card dl {
   margin: 0;
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 10px 16px;
 }
 
-.diagnostic-device dt {
+.diagnostic-device dt,
+.local-test-card dt {
   color: var(--muted);
   font-size: 0.82rem;
   margin-bottom: 4px;
 }
 
-.diagnostic-device dd {
+.diagnostic-device dd,
+.local-test-card dd {
   margin: 0;
   word-break: break-word;
 }
@@ -346,7 +381,8 @@ button:hover {
   }
 
   .section-header,
-  .device-header {
+  .device-header,
+  .local-test-heading {
     flex-direction: column;
     align-items: stretch;
   }

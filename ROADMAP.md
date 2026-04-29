@@ -11,17 +11,16 @@
 - Improved the Homebridge admin UI layout, setting descriptions, and diagnostics readability.
 - Added GitHub Issue templates for bug reports, feature requests, and model support reports.
 - Added plain-language per-device connection diagnostics and a redacted diagnostics report for GitHub Issues.
+- Added startup diagnostics auto-refresh and transport freshness timestamps.
+- Added a manual "Test Local Connection" action that runs a live LAN TCP probe from the admin UI.
 
 ## In Progress
 
-- Make startup diagnostics less stale by auto-refreshing shortly after the admin UI opens when the first snapshot is not locally connected.
-- Show transport freshness in diagnostics so users can tell whether an offline or cloud-fallback state is current.
+- Add clearer transport logs for missing local credentials, failed TCP connects, model lookup mismatches, and unsupported attributes.
+- Improve scene and room controls so HomeKit exposes room cleaning shortcuts with cleaner names and fewer invalid characteristic warnings.
 
 ## Worth Doing Next
 
-- Add a manual "Test local connection" action in the admin UI that performs a lightweight local probe and reports the result.
-- Add clearer transport logs for missing local credentials, failed TCP connects, model lookup mismatches, and unsupported attributes.
-- Improve scene and room controls so HomeKit exposes room cleaning shortcuts with cleaner names and fewer invalid characteristic warnings.
 - Add HomeKit controls for return-to-dock, pause/resume, and supported fan or cleaning modes where the HomeKit service model allows it.
 - Improve support for recently reported models such as Saros 10, Q5 Max+, QX Revo Plus, and Q10 S5+.
 - Reduce brittle model-specific switches by moving feature detection toward schema/capability-based logic.
