@@ -525,6 +525,10 @@ class Roborock {
     }
 
     if (current.lastTransport === "cloud") {
+      if (this.isCloudOnlyTransportReason(current.lastTransportReason)) {
+        return `Using Roborock cloud transport for ${deviceLabel} (${method}) because ${reason}.`;
+      }
+
       if (previous.lastTransport === "local") {
         return `Falling back from local LAN to Roborock cloud for ${deviceLabel} (${method}) because ${reason}.`;
       }
@@ -537,6 +541,14 @@ class Roborock {
     }
 
     return null;
+  }
+
+  isCloudOnlyTransportReason(reason) {
+    return [
+      "network-info-cloud-only",
+      "secure-command",
+      "photo-command",
+    ].includes(String(reason));
   }
 
   describeTransportReason(reason) {
@@ -2207,6 +2219,10 @@ class Roborock {
 
   async app_stop(duid) {
     await this.startCommand(duid, "app_stop", null);
+  }
+
+  async app_pause(duid) {
+    await this.startCommand(duid, "app_pause", null);
   }
 
   async app_charge(duid) {

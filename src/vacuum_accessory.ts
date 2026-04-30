@@ -20,6 +20,7 @@ import { log } from "console";
 export default class RoborockVacuumAccessory {
   private services: Service[] = [];
   private sceneServices: Map<string, Service> = new Map();
+  private controlSwitches: Map<string, Service> = new Map();
   private currentScenes: any[] = [];
   private lastKnownBatteryLevel: number | null = null;
 
@@ -74,6 +75,8 @@ export default class RoborockVacuumAccessory {
       .onSet(this.setActive.bind(this))
       .onGet(this.getActive.bind(this));
 
+    this.setupControlSwitches();
+
     this.services["Battery"] =
       this.accessory.getService(this.platform.Service.Battery) ||
       this.accessory.addService(this.platform.Service.Battery);
@@ -106,6 +109,110 @@ export default class RoborockVacuumAccessory {
         "state"
       )
     );
+  }
+
+  /**
+   * Add explicit action switches for commands that should not be bundled into
+   * the primary HomeKit on/off control.
+   */
+  private setupControlSwitches() {
+    this.setupMomentaryControlSwitch(
+      "pause-cleaning",
+      "Pause Cleaning",
+      this.setPauseCleaning.bind(this)
+    );
+
+    this.setupMomentaryControlSwitch(
+      "return-to-dock",
+      "Return to Dock",
+      this.setReturnToDock.bind(this)
+    );
+  }
+
+  private setupMomentaryControlSwitch(
+    key: string,
+    displayName: string,
+    onSet: (value: CharacteristicValue) => Promise<void>
+  ) {
+    const switchService =
+      this.accessory.getServiceById(this.platform.Service.Switch, key) ||
+      this.accessory.addService(this.platform.Service.Switch, displayName, key);
+
+    switchService.setCharacteristic(
+      this.platform.Characteristic.Name,
+      displayName
+    );
+
+    switchService.addOptionalCharacteristic(
+      this.platform.Characteristic.ConfiguredName
+    );
+    switchService.setCharacteristic(
+      this.platform.Characteristic.ConfiguredName,
+      displayName
+    );
+
+    switchService
+      .getCharacteristic(this.platform.Characteristic.On)
+      .onSet(onSet)
+      .onGet(this.getMomentaryControlSwitch.bind(this));
+
+    this.controlSwitches.set(key, switchService);
+  }
+
+  private resetMomentaryControlSwitch(key: string) {
+    setTimeout(() => {
+      const service = this.controlSwitches.get(key);
+      if (service) {
+        service.updateCharacteristic(this.platform.Characteristic.On, false);
+      }
+    }, 1000);
+  }
+
+  private getVacuumName(): string {
+    return (
+      this.platform.roborockAPI.getVacuumDeviceInfo(
+        this.accessory.context,
+        "name"
+      ) || "Roborock vacuum"
+    );
+  }
+
+  async getMomentaryControlSwitch(): Promise<CharacteristicValue> {
+    return false;
+  }
+
+  async setPauseCleaning(value: CharacteristicValue) {
+    if (!value) {
+      return;
+    }
+
+    try {
+      this.platform.log.info(`Pausing ${this.getVacuumName()}.`);
+      await this.platform.roborockAPI.app_pause(this.accessory.context);
+    } catch (error) {
+      this.platform.log.error(
+        `Error pausing ${this.getVacuumName()}: ${error}`
+      );
+    } finally {
+      this.resetMomentaryControlSwitch("pause-cleaning");
+    }
+  }
+
+  async setReturnToDock(value: CharacteristicValue) {
+    if (!value) {
+      return;
+    }
+
+    try {
+      this.platform.log.info(`Sending ${this.getVacuumName()} back to dock.`);
+      await this.platform.roborockAPI.app_charge(this.accessory.context);
+    } catch (error) {
+      this.platform.log.error(
+        `Error sending ${this.getVacuumName()} back to dock: ${error}`
+      );
+    } finally {
+      this.resetMomentaryControlSwitch("return-to-dock");
+    }
   }
 
   updateDeviceState() {
@@ -402,8 +509,10 @@ export default class RoborockVacuumAccessory {
       if (value == this.platform.Characteristic.Active.ACTIVE) {
         await this.platform.roborockAPI.app_start(this.accessory.context);
       } else {
+        this.platform.log.info(
+          `Stopping ${this.getVacuumName()}. Use the Return to Dock switch to dock intentionally.`
+        );
         await this.platform.roborockAPI.app_stop(this.accessory.context);
-        await this.platform.roborockAPI.app_charge(this.accessory.context);
       }
 
       this.services["Fan"].updateCharacteristic(

@@ -14,6 +14,8 @@
 - Added startup diagnostics auto-refresh and transport freshness timestamps.
 - Added a manual "Test Local Connection" action that runs a live LAN TCP probe from the admin UI.
 - Added clearer transport logs for local TCP connections, cloud fallback, local recovery, remote/shared devices, missing local credentials, and missing local IP discovery.
+- Added dedicated HomeKit controls for Pause Cleaning and Return to Dock so docking is no longer bundled into the main on/off control.
+- Clarified cloud-only transport logs so expected Roborock cloud calls are not described as local fallback.
 
 ## In Progress
 
@@ -22,7 +24,7 @@
 
 ## Worth Doing Next
 
-- Add HomeKit controls for return-to-dock, pause/resume, and supported fan or cleaning modes where the HomeKit service model allows it.
+- Evaluate supported fan or cleaning modes where the HomeKit service model allows it.
 - Improve support for recently reported models such as Saros 10, Q5 Max+, QX Revo Plus, and Q10 S5+.
 - Reduce brittle model-specific switches by moving feature detection toward schema/capability-based logic.
 - Review GitHub Issues regularly for new model reports, diagnostics exports, and feature requests.

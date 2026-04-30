@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.22
+
+- Added dedicated HomeKit momentary switches for Pause Cleaning and Return to Dock.
+- Changed the main HomeKit off action to stop cleaning only instead of also sending a dock command.
+- Clarified cloud-only transport logs so expected Roborock cloud calls are not described as fallback from local control.
+
 ## 1.4.21
 
 - Added plain-English transport transition logs for local TCP connections, cloud fallback, local recovery, remote/shared devices, offline state, missing local credentials, and missing local IP discovery.

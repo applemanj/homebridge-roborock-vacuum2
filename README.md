@@ -14,7 +14,7 @@ This plugin is inspired by and adapted from the [ioBroker.roborock](https://gith
 
 - **Automatic Device Detection**: No need to manually find or enter your vacuum's device ID.
 - **Local Transport Diagnostics**: The plugin UI shows resolved model data, local key availability, discovered local IP, TCP connection state, whether the plugin is using local or cloud transport, and a live local TCP probe.
-- **Start/Stop Cleaning**: Begin or end cleaning sessions.
+- **HomeKit Cleaning Controls**: Start or stop cleaning from the main HomeKit accessory, pause cleaning with a dedicated momentary switch, and send the vacuum back to the dock with a separate Return to Dock switch.
 
 ## The supported robots are:
 
@@ -80,6 +80,20 @@ Use the Homebridge plugin settings UI to sign in, save account settings, and ins
 | `debugMode`      | No             | Enables verbose API, discovery, and transport logging in the Homebridge log.                                                                                                               |
 
 The plugin needs either a valid `encryptedToken` or a `password` to start. A saved token is preferred because it avoids repeated password login attempts.
+
+## HomeKit Controls
+
+HomeKit does not currently expose a dedicated vacuum service through Homebridge, so the vacuum appears as a fan-style accessory plus helper switches.
+
+| HomeKit control    | Behavior                                                                    |
+| ------------------ | --------------------------------------------------------------------------- |
+| Main accessory on  | Starts cleaning or resumes the current cleaning command.                    |
+| Main accessory off | Stops cleaning without automatically returning to the dock.                 |
+| Pause Cleaning     | Sends Roborock's pause command, then resets the switch off.                 |
+| Return to Dock     | Sends Roborock's dock command, then resets the switch off.                  |
+| Scene switches     | Runs Roborock scenes discovered for the vacuum, then resets the switch off. |
+
+Docking is intentionally separate from turning the main accessory off. This keeps "off" from unexpectedly ending a pause-only workflow and lets you choose whether the vacuum should remain stopped or return to the charger.
 
 ## Diagnostics
 

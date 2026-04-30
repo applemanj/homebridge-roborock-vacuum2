@@ -129,6 +129,39 @@ describe("Roborock API model and diagnostics helpers", () => {
     expect(log.info).not.toHaveBeenCalled();
   });
 
+  test("cloud-only transport reasons are not described as fallback", async () => {
+    const log = createLog();
+    const api = new Roborock({ log });
+    await api.setStateAsync("HomeData", {
+      val: JSON.stringify({
+        products: [],
+        devices: [{ duid: "device-1", name: "Hallway Robot" }],
+        receivedDevices: [],
+      }),
+      ack: true,
+    });
+
+    await api.updateTransportDiagnostics("device-1", {
+      lastTransport: "local",
+      lastTransportReason: "local-request",
+      lastCommandMethod: "get_status",
+    });
+    log.info.mockClear();
+
+    await api.updateTransportDiagnostics("device-1", {
+      lastTransport: "cloud",
+      lastTransportReason: "network-info-cloud-only",
+      lastCommandMethod: "get_network_info",
+    });
+
+    expect(log.info).toHaveBeenCalledWith(
+      expect.stringContaining("Using Roborock cloud transport")
+    );
+    expect(log.info).not.toHaveBeenCalledWith(
+      expect.stringContaining("Falling back")
+    );
+  });
+
   test("skip device helper matches serial numbers and DUIDs", () => {
     const api = new Roborock({ log: createLog() });
     const ignoredSet = new Set(api.parseSkipDevices("serial-1, duid-2"));
