@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.21
+
+- Added plain-English transport transition logs for local TCP connections, cloud fallback, local recovery, remote/shared devices, offline state, missing local credentials, and missing local IP discovery.
+- Reduced duplicate fallback logging and stopped printing local keys in debug discovery logs.
+
 ## 1.4.20
 
 - Added a "Test Local Connection" action in the admin UI that performs a live LAN TCP probe for each cached vacuum.

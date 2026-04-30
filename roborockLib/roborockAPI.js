@@ -393,6 +393,226 @@ class Roborock {
       val: JSON.stringify(diagnostics),
       ack: true,
     });
+
+    this.logTransportDiagnosticsChange(
+      duid,
+      currentEntry,
+      diagnostics[duid],
+      patch
+    );
+  }
+
+  logTransportDiagnosticsChange(duid, previous, current, patch) {
+    const message = this.buildTransportDiagnosticsLogMessage(
+      duid,
+      previous || {},
+      current || {},
+      patch || {}
+    );
+
+    if (message) {
+      this.log.info(message);
+    }
+  }
+
+  buildTransportDiagnosticsLogMessage(duid, previous, current, patch) {
+    const deviceLabel = this.formatDeviceForTransportLog(duid);
+    const method =
+      current.lastCommandMethod || patch.lastCommandMethod || "unknown method";
+
+    if (
+      Object.prototype.hasOwnProperty.call(patch, "tcpConnectionState") &&
+      previous.tcpConnectionState !== current.tcpConnectionState
+    ) {
+      return this.describeTcpTransportChange(deviceLabel, current);
+    }
+
+    if (
+      (Object.prototype.hasOwnProperty.call(patch, "isRemote") ||
+        Object.prototype.hasOwnProperty.call(patch, "remoteReason")) &&
+      (previous.isRemote !== current.isRemote ||
+        previous.remoteReason !== current.remoteReason)
+    ) {
+      return this.describeRemoteTransportChange(deviceLabel, current);
+    }
+
+    if (
+      Object.prototype.hasOwnProperty.call(patch, "online") &&
+      previous.online !== current.online
+    ) {
+      return current.online
+        ? `Roborock reports ${deviceLabel} is online again; local transport can resume when TCP is connected.`
+        : `Roborock reports ${deviceLabel} is offline; commands will wait or fall back to cloud when possible.`;
+    }
+
+    if (
+      Object.prototype.hasOwnProperty.call(patch, "localIp") &&
+      previous.localIp !== current.localIp
+    ) {
+      return `Discovered local IP ${this.formatLocalIpForLog(current.localIp)} for ${deviceLabel}; LAN TCP connection can be attempted.`;
+    }
+
+    if (
+      Object.prototype.hasOwnProperty.call(patch, "localDiscoveryState") &&
+      previous.localDiscoveryState !== current.localDiscoveryState
+    ) {
+      return this.describeLocalDiscoveryChange(deviceLabel, current);
+    }
+
+    if (
+      (Object.prototype.hasOwnProperty.call(patch, "lastTransport") ||
+        Object.prototype.hasOwnProperty.call(patch, "lastTransportReason")) &&
+      (previous.lastTransport !== current.lastTransport ||
+        previous.lastTransportReason !== current.lastTransportReason)
+    ) {
+      return this.describeTransportRouteChange(
+        deviceLabel,
+        previous,
+        current,
+        method
+      );
+    }
+
+    return null;
+  }
+
+  describeTcpTransportChange(deviceLabel, current) {
+    const ip = this.formatLocalIpForLog(current.localIp);
+    const reason = this.describeTransportReason(current.lastTransportReason);
+
+    switch (current.tcpConnectionState) {
+      case "connecting":
+        return `Opening local LAN TCP connection to ${deviceLabel}${ip ? ` at ${ip}` : ""}.`;
+      case "connected":
+        return `Local LAN TCP connected to ${deviceLabel}${ip ? ` at ${ip}` : ""}; commands can use local transport.`;
+      case "connect-failed":
+        return `Local LAN TCP connection failed for ${deviceLabel}${ip ? ` at ${ip}` : ""}; ${reason}. Cloud transport will be used when available.`;
+      case "disconnected":
+        return `Local LAN TCP disconnected for ${deviceLabel}; cloud fallback will be used until local reconnects.`;
+      case "error":
+        return `Local LAN TCP error for ${deviceLabel}; ${reason}. Cloud fallback will be used when available.`;
+      default:
+        return `Local LAN TCP state for ${deviceLabel} changed to ${current.tcpConnectionState || "unknown"}.`;
+    }
+  }
+
+  describeRemoteTransportChange(deviceLabel, current) {
+    if (current.isRemote) {
+      const reason = current.remoteReason || "remote-device";
+      return `Using Roborock cloud transport for ${deviceLabel} because ${this.describeTransportReason(reason)}.`;
+    }
+
+    return `${deviceLabel} is no longer marked remote; local transport may be used when credentials and TCP are available.`;
+  }
+
+  describeLocalDiscoveryChange(deviceLabel, current) {
+    if (current.localDiscoveryState === "not-discovered") {
+      return `No local IP is cached for ${deviceLabel}; the plugin will use cloud transport until discovery succeeds.`;
+    }
+
+    return `Local discovery for ${deviceLabel} changed to ${current.localDiscoveryState || "unknown"}.`;
+  }
+
+  describeTransportRouteChange(deviceLabel, previous, current, method) {
+    const reason = this.describeTransportReason(current.lastTransportReason);
+
+    if (current.lastTransport === "local") {
+      if (previous.lastTransport === "cloud") {
+        return `Local transport recovered for ${deviceLabel}; using LAN TCP for ${method} because ${reason}.`;
+      }
+
+      return `Using local LAN transport for ${deviceLabel} (${method}) because ${reason}.`;
+    }
+
+    if (current.lastTransport === "cloud") {
+      if (previous.lastTransport === "local") {
+        return `Falling back from local LAN to Roborock cloud for ${deviceLabel} (${method}) because ${reason}.`;
+      }
+
+      return `Using Roborock cloud transport for ${deviceLabel} (${method}) because ${reason}.`;
+    }
+
+    if (current.lastTransport === "local-pending") {
+      return `Preparing local LAN transport for ${deviceLabel}; waiting for TCP connection.`;
+    }
+
+    return null;
+  }
+
+  describeTransportReason(reason) {
+    const reasons = {
+      "cloud-request": "cloud transport was selected for this command",
+      "device-offline": "Roborock currently reports the vacuum offline",
+      "device-offline-during-connect":
+        "Roborock reported the vacuum offline while opening the local TCP connection",
+      "local-request": "an active LAN TCP connection is available",
+      "local-socket-unavailable":
+        "the local TCP socket was unavailable when the command was requested",
+      "local-unavailable-fallback":
+        "the local TCP socket was not connected when the command was requested",
+      "missing-local-ip": "no local IP address is cached for this vacuum",
+      "missing-local-key": "no local credential is cached for this vacuum",
+      "mqtt-unavailable": "the Roborock cloud MQTT connection is unavailable",
+      "network-info-cloud-only":
+        "Roborock network information must be fetched through the cloud",
+      "photo-command": "photo requests require Roborock cloud transport",
+      "received-device":
+        "the vacuum is shared into this account as a received device",
+      "remote-device": "the vacuum is marked remote",
+      "secure-command": "this secure command requires Roborock cloud transport",
+      "tcp-connected": "the local TCP socket connected successfully",
+      "tcp-connect-failed": "opening the local TCP socket failed",
+      "tcp-disconnected": "the local TCP socket disconnected",
+      "udp-broadcast-discovery": "UDP broadcast discovery found the vacuum",
+      "marked-remote-after-connect-failure":
+        "local TCP connection failed and the vacuum was marked remote",
+    };
+
+    if (!reason) {
+      return "no transport reason was recorded";
+    }
+
+    const normalizedReason = String(reason);
+
+    if (normalizedReason.startsWith("tcp-error:")) {
+      return `the local TCP socket reported ${normalizedReason.replace("tcp-error:", "").trim()}`;
+    }
+
+    return reasons[normalizedReason] || normalizedReason;
+  }
+
+  formatDeviceForTransportLog(duid) {
+    const device = this.getAllHomeDevices().find(
+      (entry) => entry && entry.duid === duid
+    );
+    const name = device?.name || "Roborock vacuum";
+    return `${name} (${this.maskIdentifierForLog(duid)})`;
+  }
+
+  maskIdentifierForLog(value) {
+    if (!value) {
+      return "unknown";
+    }
+
+    const normalized = String(value);
+    if (normalized.length <= 8) {
+      return "[redacted]";
+    }
+
+    return `${normalized.slice(0, 4)}...${normalized.slice(-4)}`;
+  }
+
+  formatLocalIpForLog(value) {
+    if (!value) {
+      return "";
+    }
+
+    const parts = String(value).split(".");
+    if (parts.length === 4) {
+      return `${parts.slice(0, 3).join(".")}.x`;
+    }
+
+    return "local IP present";
   }
 
   getKnownProducts(homedata) {
@@ -563,21 +783,41 @@ class Roborock {
           const allManagedDevices = (homedataResult.devices || []).concat(
             homedataResult.receivedDevices || []
           );
-          const localKeyDevices = allManagedDevices.filter((device) => {
-            if (!device || !device.duid || !device.localKey) {
-              return false;
+          const managedDevicesForDiagnostics = allManagedDevices.filter(
+            (device) => {
+              return (
+                device &&
+                device.duid &&
+                !this.shouldSkipDevice(device, ignoredSet)
+              );
             }
+          );
+          const localKeyDevices = managedDevicesForDiagnostics.filter(
+            (device) => {
+              if (!device || !device.duid || !device.localKey) {
+                return false;
+              }
 
-            if (device.sn && ignoredSet.has(device.sn)) {
-              return false;
+              if (device.sn && ignoredSet.has(device.sn)) {
+                return false;
+              }
+
+              return true;
             }
-
-            return true;
-          });
+          );
 
           this.localKeys = new Map(
             localKeyDevices.map((device) => [device.duid, device.localKey])
           );
+
+          for (const device of managedDevicesForDiagnostics) {
+            if (!device.localKey) {
+              await this.updateTransportDiagnostics(device.duid, {
+                lastTransport: "cloud",
+                lastTransportReason: "missing-local-key",
+              });
+            }
+          }
 
           // this.adapter.log.debug(`initUser test: ${JSON.stringify(Array.from(this.adapter.localKeys.entries()))}`);
 
@@ -625,6 +865,20 @@ class Roborock {
             }
           });
           this.log.debug(`localDevices: ${JSON.stringify(this.localDevices)}`);
+
+          for (const device of localKeyDevices) {
+            if (
+              !Object.prototype.hasOwnProperty.call(
+                this.localDevices,
+                device.duid
+              )
+            ) {
+              await this.updateTransportDiagnostics(device.duid, {
+                localDiscoveryState: "not-discovered",
+                lastTransportReason: "missing-local-ip",
+              });
+            }
+          }
 
           for (const device in this.localDevices) {
             const duid = device;

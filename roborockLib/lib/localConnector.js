@@ -110,7 +110,7 @@ class localConnector {
       });
       if (online) {
         // if the device is online, we can assume that the device is a remote device
-        this.adapter.log.info(
+        this.adapter.log.debug(
           `error on tcp client for ${duid}. Marking this device as remote device. Connecting via MQTT instead ${error.message}`
         );
         this.adapter.remoteDevices.add(duid);
@@ -381,7 +381,9 @@ class localConnector {
           const localKey = this.adapter.localKeys.get(
             parsedDecodedMessage.duid
           );
-          this.adapter.log.debug(`getLocalDevices localKey: ${localKey}`);
+          this.adapter.log.debug(
+            `getLocalDevices localKey present: ${Boolean(localKey)}`
+          );
 
           if (localKey) {
             // if there's no localKey, decryption cannot work. For example when the found robot is not associated with a roborock account

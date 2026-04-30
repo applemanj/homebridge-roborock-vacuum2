@@ -93,7 +93,7 @@ class messageQueueHandler {
         lastTransportReason: "local-unavailable-fallback",
         lastCommandMethod: method,
       });
-      this.adapter.log.info(
+      this.adapter.log.debug(
         `Local connection unavailable for ${duid}. Falling back to cloud connection for method ${method}.`
       );
     }

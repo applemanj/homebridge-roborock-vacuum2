@@ -88,3 +88,5 @@ The plugin UI includes a Diagnostics section that reads cached HomeData and tran
 Use **Test Local Connection** to run a live LAN TCP probe from the Homebridge environment to each cached vacuum's local IP on the Roborock local port. This does not send a cleaning command; it only confirms whether the local socket can be reached and reports latency, cached transport state, and whether cloud fallback is likely.
 
 Use **Copy Diagnostic Report** when opening GitHub Issues. The copied report redacts tokens, local keys, full DUIDs, serial numbers, and the final local IP address octet while preserving the connection state and latest local test result needed for troubleshooting.
+
+The Homebridge log also records transport transitions in plain language, including local TCP connect/disconnect, cloud fallback reasons, local recovery, offline state, remote/shared devices, missing local credentials, and missing local IP discovery.

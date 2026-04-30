@@ -13,11 +13,12 @@
 - Added plain-language per-device connection diagnostics and a redacted diagnostics report for GitHub Issues.
 - Added startup diagnostics auto-refresh and transport freshness timestamps.
 - Added a manual "Test Local Connection" action that runs a live LAN TCP probe from the admin UI.
+- Added clearer transport logs for local TCP connections, cloud fallback, local recovery, remote/shared devices, missing local credentials, and missing local IP discovery.
 
 ## In Progress
 
-- Add clearer transport logs for missing local credentials, failed TCP connects, model lookup mismatches, and unsupported attributes.
 - Improve scene and room controls so HomeKit exposes room cleaning shortcuts with cleaner names and fewer invalid characteristic warnings.
+- Add clearer model lookup mismatch and unsupported attribute logs.
 
 ## Worth Doing Next
 

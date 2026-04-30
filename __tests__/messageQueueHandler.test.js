@@ -51,7 +51,7 @@ describe("messageQueueHandler transport selection", () => {
       handler.sendRequest("device-1", "get_status", [])
     ).resolves.toEqual(["ok"]);
 
-    expect(adapter.log.info).toHaveBeenCalledWith(
+    expect(adapter.log.debug).toHaveBeenCalledWith(
       expect.stringContaining("Falling back to cloud connection")
     );
     expect(adapter.updateTransportDiagnostics).toHaveBeenCalledWith(

@@ -65,6 +65,70 @@ describe("Roborock API model and diagnostics helpers", () => {
     });
   });
 
+  test("transport diagnostics log cloud fallback and local recovery", async () => {
+    const log = createLog();
+    const api = new Roborock({ log });
+    await api.setStateAsync("HomeData", {
+      val: JSON.stringify({
+        products: [],
+        devices: [{ duid: "device-1", name: "Hallway Robot" }],
+        receivedDevices: [],
+      }),
+      ack: true,
+    });
+
+    await api.updateTransportDiagnostics("device-1", {
+      lastTransport: "local",
+      lastTransportReason: "local-request",
+      lastCommandMethod: "get_status",
+    });
+    log.info.mockClear();
+
+    await api.updateTransportDiagnostics("device-1", {
+      lastTransport: "cloud",
+      lastTransportReason: "local-unavailable-fallback",
+      lastCommandMethod: "get_consumable",
+    });
+
+    expect(log.info).toHaveBeenCalledWith(
+      expect.stringContaining("Falling back from local LAN to Roborock cloud")
+    );
+    expect(log.info).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "the local TCP socket was not connected when the command was requested"
+      )
+    );
+
+    log.info.mockClear();
+    await api.updateTransportDiagnostics("device-1", {
+      lastTransport: "local",
+      lastTransportReason: "local-request",
+      lastCommandMethod: "get_consumable",
+    });
+
+    expect(log.info).toHaveBeenCalledWith(
+      expect.stringContaining("Local transport recovered")
+    );
+  });
+
+  test("transport diagnostics do not log when only the command method changes", async () => {
+    const log = createLog();
+    const api = new Roborock({ log });
+
+    await api.updateTransportDiagnostics("device-1", {
+      lastTransport: "local",
+      lastTransportReason: "local-request",
+      lastCommandMethod: "get_status",
+    });
+    log.info.mockClear();
+
+    await api.updateTransportDiagnostics("device-1", {
+      lastCommandMethod: "get_consumable",
+    });
+
+    expect(log.info).not.toHaveBeenCalled();
+  });
+
   test("skip device helper matches serial numbers and DUIDs", () => {
     const api = new Roborock({ log: createLog() });
     const ignoredSet = new Set(api.parseSkipDevices("serial-1, duid-2"));
