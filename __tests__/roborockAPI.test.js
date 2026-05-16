@@ -162,6 +162,53 @@ describe("Roborock API model and diagnostics helpers", () => {
     );
   });
 
+  test("transient command warnings are throttled per robot and command", async () => {
+    const log = createLog();
+    let now = 1000;
+    const api = new Roborock({
+      log,
+      errorLogThrottleMs: 60 * 1000,
+      now: () => now,
+    });
+
+    await api.catchError(
+      new Error(
+        "Local request with id 149 with method get_consumable timed out after 10 seconds Local connect state: true"
+      ),
+      "get_consumable",
+      "device-1",
+      "roborock.vacuum.a51"
+    );
+    await api.catchError(
+      new Error(
+        "Local request with id 150 with method get_consumable timed out after 10 seconds Local connect state: true"
+      ),
+      "get_consumable",
+      "device-1",
+      "roborock.vacuum.a51"
+    );
+
+    expect(log.warn).toHaveBeenCalledTimes(1);
+    expect(log.debug).toHaveBeenCalledWith(
+      expect.stringContaining("Suppressed repeated local timeout warning")
+    );
+
+    now += 60 * 1000 + 1;
+    await api.catchError(
+      new Error(
+        "Local request with id 151 with method get_consumable timed out after 10 seconds Local connect state: true"
+      ),
+      "get_consumable",
+      "device-1",
+      "roborock.vacuum.a51"
+    );
+
+    expect(log.warn).toHaveBeenCalledTimes(2);
+    expect(log.warn.mock.calls[1][0]).toContain(
+      "1 similar warning(s) were suppressed"
+    );
+  });
+
   test("skip device helper matches serial numbers and DUIDs", () => {
     const api = new Roborock({ log: createLog() });
     const ignoredSet = new Set(api.parseSkipDevices("serial-1, duid-2"));

@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.23
+
+- Throttled repeated transient command warnings so recurring Roborock polling timeouts are logged periodically instead of every refresh cycle.
+
 ## 1.4.22
 
 - Added dedicated HomeKit momentary switches for Pause Cleaning and Return to Dock.

@@ -40,6 +40,8 @@ const dockingStationStates = [
   "isUpdownWaterReady",
 ];
 
+const TRANSIENT_ERROR_LOG_THROTTLE_MS = 15 * 60 * 1000;
+
 function md5hex(str) {
   return crypto.createHash("md5").update(str).digest("hex");
 }
@@ -94,6 +96,13 @@ class Roborock {
     };
     this.pendingAuth = null;
     this.persistBasePath = null;
+    this.errorLogThrottleMs =
+      typeof options.errorLogThrottleMs === "number"
+        ? options.errorLogThrottleMs
+        : TRANSIENT_ERROR_LOG_THROTTLE_MS;
+    this.errorLogThrottle = new Map();
+    this.now =
+      typeof options.now === "function" ? options.now : () => Date.now();
   }
 
   isInited() {
@@ -2197,20 +2206,90 @@ class Roborock {
 
   async catchError(error, attribute, duid, model) {
     if (error) {
-      if (
-        error.toString().includes("retry") ||
-        error.toString().includes("locating") ||
-        error.toString().includes("timed out after 10 seconds")
-      ) {
-        this.log.warn(
-          `Failed to execute ${attribute} on robot ${duid} (${model || "unknown model"}): ${error}`
+      const errorText = error.toString();
+      const transientErrorKind = this.getTransientErrorKind(errorText);
+      const message = `Failed to execute ${attribute} on robot ${duid} (${model || "unknown model"}): ${error}`;
+
+      if (transientErrorKind) {
+        const throttledWarning = this.getThrottledTransientWarning(
+          transientErrorKind,
+          attribute,
+          duid,
+          model,
+          message
         );
+
+        if (throttledWarning) {
+          this.log.warn(throttledWarning);
+        } else {
+          this.log.debug(
+            `Suppressed repeated ${transientErrorKind} warning for ${attribute} on robot ${duid} (${model || "unknown model"}).`
+          );
+        }
       } else {
         this.log.error(
           `Failed to execute ${attribute} on robot ${duid} (${model || "unknown model"}): ${error.stack || error}`
         );
       }
     }
+  }
+
+  getTransientErrorKind(errorText) {
+    const text = String(errorText || "");
+
+    if (text.includes("timed out after 10 seconds")) {
+      if (text.includes("Local request")) {
+        return "local timeout";
+      }
+      if (text.includes("Cloud request")) {
+        return "cloud timeout";
+      }
+      return "timeout";
+    }
+
+    if (text.includes("retry")) {
+      return "retry";
+    }
+
+    if (text.includes("locating")) {
+      return "locating";
+    }
+
+    return null;
+  }
+
+  getThrottledTransientWarning(kind, attribute, duid, model, message) {
+    const now = this.now();
+    const key = [kind, attribute, duid, model || "unknown model"].join("|");
+    const previous = this.errorLogThrottle.get(key);
+
+    if (!previous || now - previous.lastLoggedAt >= this.errorLogThrottleMs) {
+      const suppressedCount = previous?.suppressedCount || 0;
+      this.errorLogThrottle.set(key, {
+        lastLoggedAt: now,
+        suppressedCount: 0,
+      });
+
+      const throttleNote = ` Future repeats for this robot and command will be logged at most once every ${this.formatThrottleDuration(this.errorLogThrottleMs)}.`;
+      const summaryNote =
+        suppressedCount > 0
+          ? ` ${suppressedCount} similar warning(s) were suppressed.`
+          : "";
+
+      return `${message}${summaryNote}${throttleNote}`;
+    }
+
+    previous.suppressedCount = (previous.suppressedCount || 0) + 1;
+    this.errorLogThrottle.set(key, previous);
+    return null;
+  }
+
+  formatThrottleDuration(durationMs) {
+    if (durationMs >= 60 * 1000) {
+      return `${Math.round(durationMs / (60 * 1000))} minutes`;
+    }
+
+    return `${Math.max(1, Math.round(durationMs / 1000))} seconds`;
   }
 
   async app_start(duid) {
