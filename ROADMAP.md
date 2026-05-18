@@ -16,6 +16,7 @@
 - Added clearer transport logs for local TCP connections, cloud fallback, local recovery, remote/shared devices, missing local credentials, and missing local IP discovery.
 - Added dedicated HomeKit controls for Pause Cleaning and Return to Dock so docking is no longer bundled into the main on/off control.
 - Clarified cloud-only transport logs so expected Roborock cloud calls are not described as local fallback.
+- Added configurable, per-vacuum throttling for recurring transient timeout warnings.
 
 ## In Progress
 

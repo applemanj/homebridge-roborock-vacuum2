@@ -54,6 +54,13 @@
         "description": "Write verbose Roborock API, discovery, and transport diagnostics to the Homebridge log.",
         "type": "boolean",
         "default": false
+      },
+      "transientWarningThrottleHours": {
+        "title": "Transient Warning Interval",
+        "description": "Hours between repeated transient timeout warnings for each vacuum. Use 0 to hide these recurring warnings unless debug logging is enabled.",
+        "type": "number",
+        "default": 6,
+        "minimum": 0
       }
     },
     "required": ["email"]

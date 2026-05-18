@@ -7,4 +7,5 @@ export interface RoborockPlatformConfig extends PlatformConfig {
   baseURL?: string;
   encryptedToken?: string;
   skipDevices?: string;
+  transientWarningThrottleHours?: number;
 }

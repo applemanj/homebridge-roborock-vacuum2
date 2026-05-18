@@ -19,6 +19,7 @@ import { decryptSession } from "./crypto";
 
 const DEP0040_CODE = "DEP0040";
 let dep0040FilterInstalled = false;
+const DEFAULT_TRANSIENT_WARNING_THROTTLE_HOURS = 6;
 
 function installDeprecationWarningFilter(): void {
   if (dep0040FilterInstalled) {
@@ -108,6 +109,10 @@ export default class RoborockPlatform implements DynamicPlatformPlugin {
     const password = this.platformConfig.password;
     const baseURL = this.platformConfig.baseURL;
     const debugMode = this.platformConfig.debugMode;
+    const transientWarningThrottleHours =
+      this.normalizeTransientWarningThrottleHours(
+        this.platformConfig.transientWarningThrottleHours
+      );
 
     const storagePath = this.api.user.storagePath();
     const decryptedSession = this.platformConfig.encryptedToken
@@ -123,6 +128,7 @@ export default class RoborockPlatform implements DynamicPlatformPlugin {
       log: this.log,
       userData: decryptedSession,
       storagePath: storagePath,
+      errorLogThrottleMs: transientWarningThrottleHours * 60 * 60 * 1000,
     });
 
     /**
@@ -147,6 +153,21 @@ export default class RoborockPlatform implements DynamicPlatformPlugin {
 
   async configurePlugin() {
     await this.loginAndDiscoverDevices();
+  }
+
+  private normalizeTransientWarningThrottleHours(value: unknown): number {
+    const parsed =
+      typeof value === "number"
+        ? value
+        : typeof value === "string" && value.trim() !== ""
+          ? Number(value)
+          : DEFAULT_TRANSIENT_WARNING_THROTTLE_HOURS;
+
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      return DEFAULT_TRANSIENT_WARNING_THROTTLE_HOURS;
+    }
+
+    return parsed;
   }
 
   async loginAndDiscoverDevices() {

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.24
+
+- Changed transient timeout warning throttling to group repeated polling failures per vacuum instead of per command.
+- Increased the default transient warning interval to 6 hours and added a configurable Homebridge/UI setting.
+- Added support for setting the transient warning interval to 0 so recurring transient warnings only appear when debug logging is enabled.
+
 ## 1.4.23
 
 - Throttled repeated transient command warnings so recurring Roborock polling timeouts are logged periodically instead of every refresh cycle.

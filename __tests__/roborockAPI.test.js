@@ -162,7 +162,7 @@ describe("Roborock API model and diagnostics helpers", () => {
     );
   });
 
-  test("transient command warnings are throttled per robot and command", async () => {
+  test("transient command warnings are throttled per robot", async () => {
     const log = createLog();
     let now = 1000;
     const api = new Roborock({
@@ -181,31 +181,64 @@ describe("Roborock API model and diagnostics helpers", () => {
     );
     await api.catchError(
       new Error(
-        "Local request with id 150 with method get_consumable timed out after 10 seconds Local connect state: true"
+        "Local request with id 150 with method get_carpet_mode timed out after 10 seconds Local connect state: true"
       ),
-      "get_consumable",
+      "get_carpet_mode",
+      "device-1",
+      "roborock.vacuum.a51"
+    );
+    await api.catchError(
+      new Error(
+        "Local request with id 151 with method get_water_box_custom_mode timed out after 10 seconds Local connect state: true"
+      ),
+      "get_water_box_custom_mode",
       "device-1",
       "roborock.vacuum.a51"
     );
 
     expect(log.warn).toHaveBeenCalledTimes(1);
     expect(log.debug).toHaveBeenCalledWith(
-      expect.stringContaining("Suppressed repeated local timeout warning")
+      expect.stringContaining("Suppressed transient local timeout warning")
     );
 
     now += 60 * 1000 + 1;
     await api.catchError(
       new Error(
-        "Local request with id 151 with method get_consumable timed out after 10 seconds Local connect state: true"
+        "Local request with id 152 with method get_status timed out after 10 seconds Local connect state: true"
       ),
-      "get_consumable",
+      "get_room_mapping",
       "device-1",
       "roborock.vacuum.a51"
     );
 
     expect(log.warn).toHaveBeenCalledTimes(2);
     expect(log.warn.mock.calls[1][0]).toContain(
-      "1 similar warning(s) were suppressed"
+      "2 similar warning(s) across get_carpet_mode (1), get_water_box_custom_mode (1) were suppressed"
+    );
+    expect(log.warn.mock.calls[1][0]).toContain(
+      "Future transient local timeout warnings for this robot"
+    );
+  });
+
+  test("zero transient warning throttle moves transient warnings to debug only", async () => {
+    const log = createLog();
+    const api = new Roborock({
+      log,
+      errorLogThrottleMs: 0,
+    });
+
+    await api.catchError(
+      new Error(
+        "Local request with id 149 with method get_consumable timed out after 10 seconds Local connect state: true"
+      ),
+      "get_consumable",
+      "device-1",
+      "roborock.vacuum.a51"
+    );
+
+    expect(log.warn).not.toHaveBeenCalled();
+    expect(log.debug).toHaveBeenCalledWith(
+      expect.stringContaining("Suppressed transient local timeout warning")
     );
   });
 

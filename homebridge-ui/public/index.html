@@ -65,6 +65,21 @@
           >Optional. Use values shown in Diagnostics to ignore devices.</small
         >
       </label>
+
+      <label class="field">
+        <span>Transient Warning Interval</span>
+        <input
+          id="transient-warning-throttle-hours"
+          type="number"
+          min="0"
+          step="0.25"
+          placeholder="6"
+        />
+        <small
+          >Hours between repeated timeout warnings per vacuum. Use 0 to show
+          these only when debug logging is enabled.</small
+        >
+      </label>
     </div>
 
     <label class="checkbox">

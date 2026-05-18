@@ -40,7 +40,7 @@ const dockingStationStates = [
   "isUpdownWaterReady",
 ];
 
-const TRANSIENT_ERROR_LOG_THROTTLE_MS = 15 * 60 * 1000;
+const TRANSIENT_ERROR_LOG_THROTTLE_MS = 6 * 60 * 60 * 1000;
 
 function md5hex(str) {
   return crypto.createHash("md5").update(str).digest("hex");
@@ -2223,7 +2223,7 @@ class Roborock {
           this.log.warn(throttledWarning);
         } else {
           this.log.debug(
-            `Suppressed repeated ${transientErrorKind} warning for ${attribute} on robot ${duid} (${model || "unknown model"}).`
+            `Suppressed transient ${transientErrorKind} warning for ${attribute} on robot ${duid} (${model || "unknown model"}): ${error}`
           );
         }
       } else {
@@ -2259,29 +2259,50 @@ class Roborock {
   }
 
   getThrottledTransientWarning(kind, attribute, duid, model, message) {
+    if (this.errorLogThrottleMs <= 0) {
+      return null;
+    }
+
     const now = this.now();
-    const key = [kind, attribute, duid, model || "unknown model"].join("|");
+    const key = [kind, duid, model || "unknown model"].join("|");
     const previous = this.errorLogThrottle.get(key);
 
     if (!previous || now - previous.lastLoggedAt >= this.errorLogThrottleMs) {
       const suppressedCount = previous?.suppressedCount || 0;
+      const suppressedAttributes = previous?.suppressedAttributes || {};
       this.errorLogThrottle.set(key, {
         lastLoggedAt: now,
         suppressedCount: 0,
+        suppressedAttributes: {},
       });
 
-      const throttleNote = ` Future repeats for this robot and command will be logged at most once every ${this.formatThrottleDuration(this.errorLogThrottleMs)}.`;
+      const throttleNote = ` Future transient ${kind} warnings for this robot will be logged at most once every ${this.formatThrottleDuration(this.errorLogThrottleMs)}.`;
       const summaryNote =
         suppressedCount > 0
-          ? ` ${suppressedCount} similar warning(s) were suppressed.`
+          ? ` ${suppressedCount} similar warning(s) across ${this.formatSuppressedAttributes(suppressedAttributes)} were suppressed.`
           : "";
 
       return `${message}${summaryNote}${throttleNote}`;
     }
 
     previous.suppressedCount = (previous.suppressedCount || 0) + 1;
+    previous.suppressedAttributes = previous.suppressedAttributes || {};
+    previous.suppressedAttributes[attribute || "unknown command"] =
+      (previous.suppressedAttributes[attribute || "unknown command"] || 0) + 1;
     this.errorLogThrottle.set(key, previous);
     return null;
+  }
+
+  formatSuppressedAttributes(attributes) {
+    const entries = Object.entries(attributes || {});
+
+    if (entries.length === 0) {
+      return "this robot";
+    }
+
+    return entries
+      .map(([attribute, count]) => `${attribute} (${count})`)
+      .join(", ");
   }
 
   formatThrottleDuration(durationMs) {
