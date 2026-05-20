@@ -15,6 +15,7 @@ This plugin is inspired by and adapted from the [ioBroker.roborock](https://gith
 - **Automatic Device Detection**: No need to manually find or enter your vacuum's device ID.
 - **Local Transport Diagnostics**: The plugin UI shows resolved model data, local key availability, discovered local IP, TCP connection state, whether the plugin is using local or cloud transport, and a live local TCP probe.
 - **HomeKit Cleaning Controls**: Start or stop cleaning from the main HomeKit accessory, pause cleaning with a dedicated momentary switch, and send the vacuum back to the dock with a separate Return to Dock switch.
+- **Experimental Matter Vacuum**: On Homebridge 2 with Matter enabled, optionally expose each robot as a Matter robotic vacuum while keeping the existing HomeKit fan/switch accessory for compatibility.
 
 ## The supported robots are:
 
@@ -79,6 +80,7 @@ Use the Homebridge plugin settings UI to sign in, save account settings, and ins
 | `skipDevices`                   | No             | Comma-separated Roborock serial numbers or DUIDs to ignore during discovery. The Diagnostics panel shows these values.                                                                     |
 | `debugMode`                     | No             | Enables verbose API, discovery, and transport logging in the Homebridge log.                                                                                                               |
 | `transientWarningThrottleHours` | No             | Hours between repeated transient timeout warnings for each vacuum. Defaults to `6`. Use `0` to hide recurring transient warnings unless debug logging is enabled.                          |
+| `enableMatter`                  | No             | Experimental. Also exposes each vacuum as a Matter robotic vacuum when running Homebridge 2 with Matter enabled for the bridge. Defaults to `false`.                                       |
 
 The plugin needs either a valid `encryptedToken` or a `password` to start. A saved token is preferred because it avoids repeated password login attempts.
 
@@ -95,6 +97,23 @@ HomeKit does not currently expose a dedicated vacuum service through Homebridge,
 | Scene switches     | Runs Roborock scenes discovered for the vacuum, then resets the switch off. |
 
 Docking is intentionally separate from turning the main accessory off. This keeps "off" from unexpectedly ending a pause-only workflow and lets you choose whether the vacuum should remain stopped or return to the charger.
+
+## Matter Vacuum (Experimental)
+
+Homebridge 2 can expose supported accessories over Matter. If you enable **Enable experimental Matter vacuum** in this plugin and Matter is enabled for your Homebridge bridge, the plugin registers a second, Matter-native robotic vacuum accessory for each supported Roborock.
+
+This is opt-in because it can create an additional accessory in Apple Home. The original HomeKit fan-style accessory and helper switches remain available so existing automations and Homebridge 1.x installs keep working.
+
+Phase 1 maps the Matter vacuum controls to the same Roborock commands used elsewhere in the plugin:
+
+| Matter control         | Behavior                                                    |
+| ---------------------- | ----------------------------------------------------------- |
+| Cleaning mode          | Starts cleaning.                                            |
+| Idle mode              | Stops cleaning without automatically returning to the dock. |
+| Pause                  | Sends Roborock's pause command.                             |
+| Resume                 | Sends Roborock's start command.                             |
+| Home / return to dock  | Sends Roborock's dock command.                              |
+| Battery and run status | Mirrors the latest cached Roborock status where available.  |
 
 ## Diagnostics
 

@@ -17,15 +17,18 @@
 - Added dedicated HomeKit controls for Pause Cleaning and Return to Dock so docking is no longer bundled into the main on/off control.
 - Clarified cloud-only transport logs so expected Roborock cloud calls are not described as local fallback.
 - Added configurable, per-vacuum throttling for recurring transient timeout warnings.
+- Added Phase 1 optional Matter robotic vacuum exposure for Homebridge 2 while preserving the existing HomeKit fan/switch accessory.
 
 ## In Progress
 
+- Validate Matter vacuum behavior in Apple Home and tune command/status mapping based on real controller feedback.
 - Improve scene and room controls so HomeKit exposes room cleaning shortcuts with cleaner names and fewer invalid characteristic warnings.
 - Add clearer model lookup mismatch and unsupported attribute logs.
 
 ## Worth Doing Next
 
 - Evaluate supported fan or cleaning modes where the HomeKit service model allows it.
+- Expand Matter support with room/service-area selection and richer clean modes once the basic vacuum accessory is validated.
 - Improve support for recently reported models such as Saros 10, Q5 Max+, QX Revo Plus, and Q10 S5+.
 - Reduce brittle model-specific switches by moving feature detection toward schema/capability-based logic.
 - Review GitHub Issues regularly for new model reports, diagnostics exports, and feature requests.

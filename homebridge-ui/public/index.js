@@ -5,6 +5,7 @@ const elements = {
   baseUrl: document.getElementById("base-url"),
   skipDevices: document.getElementById("skip-devices"),
   debugMode: document.getElementById("debug-mode"),
+  enableMatter: document.getElementById("enable-matter"),
   transientWarningThrottleHours: document.getElementById(
     "transient-warning-throttle-hours"
   ),
@@ -94,6 +95,7 @@ async function loadConfig() {
     elements.skipDevices.value = config.skipDevices;
   }
   elements.debugMode.checked = Boolean(config.debugMode);
+  elements.enableMatter.checked = Boolean(config.enableMatter);
   elements.transientWarningThrottleHours.value =
     config.transientWarningThrottleHours ?? 6;
 
@@ -123,6 +125,10 @@ function getDebugMode() {
   return Boolean(elements.debugMode.checked);
 }
 
+function getEnableMatter() {
+  return Boolean(elements.enableMatter.checked);
+}
+
 function getTransientWarningThrottleHours() {
   const value = elements.transientWarningThrottleHours.value.trim();
   if (value === "") {
@@ -147,6 +153,7 @@ async function saveCredentials(showSuccess = false) {
   const baseURL = getBaseUrl();
   const skipDevices = getSkipDevices();
   const debugMode = getDebugMode();
+  const enableMatter = getEnableMatter();
   const transientWarningThrottleHours = getTransientWarningThrottleHours();
   if (!email) {
     showToast("error", "Email is required.");
@@ -158,6 +165,7 @@ async function saveCredentials(showSuccess = false) {
     baseURL,
     skipDevices,
     debugMode,
+    enableMatter,
     transientWarningThrottleHours,
   };
 
@@ -184,6 +192,7 @@ async function login() {
   const baseURL = getBaseUrl();
   const skipDevices = getSkipDevices();
   const debugMode = getDebugMode();
+  const enableMatter = getEnableMatter();
   const transientWarningThrottleHours = getTransientWarningThrottleHours();
 
   if (!email || !password) {
@@ -200,6 +209,7 @@ async function login() {
       baseURL,
       skipDevices,
       debugMode,
+      enableMatter,
       transientWarningThrottleHours,
       encryptedToken: result.encryptedToken,
     });
@@ -245,6 +255,7 @@ async function verifyTwoFactorCode() {
   const baseURL = getBaseUrl();
   const skipDevices = getSkipDevices();
   const debugMode = getDebugMode();
+  const enableMatter = getEnableMatter();
   const transientWarningThrottleHours = getTransientWarningThrottleHours();
   if (!email) {
     showToast("error", "Email is required.");
@@ -266,6 +277,7 @@ async function verifyTwoFactorCode() {
       baseURL,
       skipDevices,
       debugMode,
+      enableMatter,
       transientWarningThrottleHours,
       encryptedToken: result.encryptedToken,
     });
@@ -793,6 +805,9 @@ function init() {
   elements.baseUrl.addEventListener("change", () => saveCredentials(false));
   elements.skipDevices.addEventListener("change", () => saveCredentials(false));
   elements.debugMode.addEventListener("change", () => saveCredentials(false));
+  elements.enableMatter.addEventListener("change", () =>
+    saveCredentials(false)
+  );
   elements.transientWarningThrottleHours.addEventListener("change", () =>
     saveCredentials(false)
   );

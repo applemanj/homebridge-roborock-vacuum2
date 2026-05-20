@@ -61,6 +61,12 @@
         "type": "number",
         "default": 6,
         "minimum": 0
+      },
+      "enableMatter": {
+        "title": "Enable Matter Vacuum",
+        "description": "Experimental. When running Homebridge 2 with Matter enabled for this bridge, also exposes each Roborock as a Matter robotic vacuum cleaner. The existing HomeKit fan/switch accessory remains available for backwards compatibility.",
+        "type": "boolean",
+        "default": false
       }
     },
     "required": ["email"]

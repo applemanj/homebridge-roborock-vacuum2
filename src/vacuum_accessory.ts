@@ -26,7 +26,7 @@ export default class RoborockVacuumAccessory {
 
   constructor(
     private readonly platform: RoborockPlatform,
-    private readonly accessory: PlatformAccessory<String>
+    private readonly accessory: PlatformAccessory
   ) {
     const self = this;
 

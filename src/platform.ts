@@ -10,6 +10,7 @@ import {
 } from "homebridge";
 
 import RoborockVacuumAccessory from "./vacuum_accessory";
+import RoborockMatterVacuumAccessory from "./matter_vacuum_accessory";
 
 import RoborockPlatformLogger from "./logger";
 import { RoborockPlatformConfig } from "./types";
@@ -75,8 +76,12 @@ export default class RoborockPlatform implements DynamicPlatformPlugin {
     this.api.hap.Characteristic;
 
   // Used to track restored cached accessories
-  private readonly accessories: PlatformAccessory<String>[] = [];
+  private readonly accessories: PlatformAccessory[] = [];
   private readonly vacuums: RoborockVacuumAccessory[] = [];
+  private readonly matterAccessories: any[] = [];
+  private readonly matterVacuums: Map<string, RoborockMatterVacuumAccessory> =
+    new Map();
+  private matterUnavailableLogged = false;
 
   public readonly roborockAPI: any;
   public readonly log: RoborockPlatformLogger;
@@ -195,6 +200,12 @@ export default class RoborockPlatform implements DynamicPlatformPlugin {
       for (const vacuum of self.vacuums) {
         vacuum.notifyDeviceUpdater(id, homeData);
       }
+
+      for (const vacuum of self.matterVacuums.values()) {
+        vacuum.notifyDeviceUpdater(id, homeData).catch((error) => {
+          self.log.debug("Error updating Matter vacuum state: " + error);
+        });
+      }
     });
 
     self.roborockAPI.startService(function () {
@@ -208,7 +219,7 @@ export default class RoborockPlatform implements DynamicPlatformPlugin {
    * This function is invoked when Homebridge restores cached accessories from disk at startup.
    * It should be used to set up event handlers for characteristics and update respective values.
    */
-  configureAccessory(accessory: PlatformAccessory<String>) {
+  configureAccessory(accessory: PlatformAccessory) {
     this.log.info(`Loading accessory '${accessory.displayName}' from cache.`);
 
     // Store restored accessory in the cached accessories list
@@ -233,6 +244,38 @@ export default class RoborockPlatform implements DynamicPlatformPlugin {
     this.accessories.push(accessory);
   }
 
+  /**
+   * Homebridge 2 calls this for cached Matter accessories. Keep this optional
+   * and runtime-typed so Homebridge 1.x users remain fully supported.
+   */
+  configureMatterAccessory(accessory: any) {
+    this.log.info(
+      `Loading Matter accessory '${accessory.displayName}' from cache.`
+    );
+    this.matterAccessories.push(accessory);
+
+    if (!this.platformConfig.enableMatter) {
+      return;
+    }
+
+    const duid = this.getMatterAccessoryDuid(accessory);
+    if (!duid) {
+      return;
+    }
+
+    const matter = this.getMatterApi();
+    if (!matter?.deviceTypes?.RoboticVacuumCleaner) {
+      return;
+    }
+
+    accessory.deviceType = matter.deviceTypes.RoboticVacuumCleaner;
+    this.createOrUpdateMatterVacuum(
+      { duid, name: accessory.displayName },
+      accessory,
+      true
+    );
+  }
+
   isSupportedDevice(model: string): boolean {
     return typeof model === "string" && model.startsWith("roborock.vacuum.");
   }
@@ -250,17 +293,19 @@ export default class RoborockPlatform implements DynamicPlatformPlugin {
       const self = this;
 
       if (self.roborockAPI.isInited()) {
-        self.roborockAPI.getVacuumList().forEach(function (device) {
-          var duid = device.duid;
-          var name = device.name;
-          var model = self.roborockAPI.getProductAttribute(duid, "model");
+        const devices = self.roborockAPI.getVacuumList();
+
+        for (const device of devices) {
+          const duid = device.duid;
+          const name = device.name;
+          const model = self.roborockAPI.getProductAttribute(duid, "model");
 
           if (!self.isSupportedDevice(model)) {
             self.log.info(
               `Device '${name}' (${duid}) is not supported (model '${model || "unknown"}').`
             );
 
-            return;
+            continue;
           }
 
           const uuid = self.api.hap.uuid.generate(device.duid);
@@ -306,7 +351,9 @@ export default class RoborockPlatform implements DynamicPlatformPlugin {
               accessory,
             ]);
           }
-        });
+
+          await self.discoverMatterVacuum(device);
+        }
       }
 
       // At this point, we set up all devices from Roborock App, but we did not unregister
@@ -330,6 +377,8 @@ export default class RoborockPlatform implements DynamicPlatformPlugin {
           }
         }
       }
+
+      await this.unregisterStaleMatterAccessories();
     } catch (error) {
       this.log.error(
         "An error occurred during device discovery. " +
@@ -339,7 +388,190 @@ export default class RoborockPlatform implements DynamicPlatformPlugin {
     }
   }
 
-  createRoborockAccessory(accessory: PlatformAccessory<String>) {
+  createRoborockAccessory(accessory: PlatformAccessory) {
     this.vacuums.push(new RoborockVacuumAccessory(this, accessory));
+  }
+
+  getMatterApi(): any | null {
+    if (!this.platformConfig.enableMatter) {
+      return null;
+    }
+
+    const api = this.api as any;
+    const matterEnabled =
+      typeof api.isMatterEnabled === "function"
+        ? api.isMatterEnabled()
+        : Boolean(api.matter);
+
+    if (!matterEnabled || !api.matter) {
+      if (!this.matterUnavailableLogged) {
+        this.matterUnavailableLogged = true;
+        this.log.info(
+          "Matter vacuum exposure is enabled in plugin settings, but Matter is not enabled for this Homebridge bridge. The existing HomeKit accessory will continue to work."
+        );
+      }
+
+      return null;
+    }
+
+    return api.matter;
+  }
+
+  private async discoverMatterVacuum(device: any): Promise<void> {
+    const matter = this.getMatterApi();
+    if (!matter) {
+      return;
+    }
+
+    if (!matter.deviceTypes?.RoboticVacuumCleaner) {
+      this.log.warn(
+        "Matter is enabled, but this Homebridge version does not expose the robotic vacuum device type yet."
+      );
+      return;
+    }
+
+    const uuid = this.generateMatterUuid(device.duid);
+    const existingAccessory = this.matterAccessories.find(
+      (accessory) => accessory.UUID === uuid
+    );
+    const accessory =
+      existingAccessory ||
+      this.createMatterAccessory(
+        device,
+        matter.deviceTypes.RoboticVacuumCleaner
+      );
+    const vacuum = this.createOrUpdateMatterVacuum(
+      device,
+      accessory,
+      Boolean(existingAccessory)
+    );
+
+    if (existingAccessory) {
+      await matter.updatePlatformAccessories([accessory]);
+      await vacuum.updateMatterStateFromRoborock();
+      return;
+    }
+
+    this.log.info(
+      `Adding Matter vacuum accessory '${accessory.displayName}' (${uuid}).`
+    );
+    await matter.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [
+      accessory,
+    ]);
+    this.matterAccessories.push(accessory);
+    vacuum.markRegistered();
+    await vacuum.updateMatterStateFromRoborock();
+  }
+
+  private createMatterAccessory(device: any, deviceType: unknown): any {
+    const duid = String(device.duid);
+    const firmwareRevision = this.roborockAPI.getVacuumDeviceInfo(duid, "fv");
+
+    return {
+      UUID: this.generateMatterUuid(duid),
+      displayName: device.name || "Roborock Vacuum",
+      deviceType,
+      serialNumber: this.roborockAPI.getVacuumDeviceInfo(duid, "sn") || duid,
+      manufacturer: "Roborock",
+      model:
+        this.roborockAPI.getProductAttribute(duid, "model") ||
+        "Roborock Vacuum",
+      ...(firmwareRevision ? { firmwareRevision } : {}),
+      context: { duid },
+    };
+  }
+
+  private createOrUpdateMatterVacuum(
+    device: any,
+    accessory: any,
+    isRegistered: boolean
+  ): RoborockMatterVacuumAccessory {
+    const duid = String(device.duid);
+    const existing = this.matterVacuums.get(duid);
+
+    if (existing) {
+      existing.updateMetadata(device);
+      return existing;
+    }
+
+    const vacuum = new RoborockMatterVacuumAccessory(
+      this,
+      accessory,
+      device,
+      isRegistered
+    );
+    this.matterVacuums.set(duid, vacuum);
+    return vacuum;
+  }
+
+  private async unregisterStaleMatterAccessories(): Promise<void> {
+    const api = this.api as any;
+    const matter = api.matter;
+    if (!matter || typeof matter.unregisterPlatformAccessories !== "function") {
+      return;
+    }
+
+    const currentMatterUuids = new Set(
+      this.roborockAPI
+        .getVacuumList()
+        .filter((device) =>
+          this.isSupportedDevice(
+            this.roborockAPI.getProductAttribute(device.duid, "model")
+          )
+        )
+        .map((device) => this.generateMatterUuid(device.duid))
+    );
+
+    const staleAccessories = this.matterAccessories.filter(
+      (accessory) =>
+        !this.platformConfig.enableMatter ||
+        !currentMatterUuids.has(accessory.UUID)
+    );
+
+    if (staleAccessories.length === 0) {
+      return;
+    }
+
+    await matter.unregisterPlatformAccessories(
+      PLUGIN_NAME,
+      PLATFORM_NAME,
+      staleAccessories
+    );
+
+    for (const accessory of staleAccessories) {
+      const duid = this.getMatterAccessoryDuid(accessory);
+      if (duid) {
+        this.matterVacuums.delete(duid);
+      }
+
+      const index = this.matterAccessories.findIndex(
+        (cachedAccessory) => cachedAccessory.UUID === accessory.UUID
+      );
+      if (index >= 0) {
+        this.matterAccessories.splice(index, 1);
+      }
+    }
+  }
+
+  private generateMatterUuid(duid: string): string {
+    const api = this.api as any;
+    const uuidGenerator = api.matter?.uuid || this.api.hap.uuid;
+    return uuidGenerator.generate(`matter:roborock:${duid}`);
+  }
+
+  private getMatterAccessoryDuid(accessory: any): string | null {
+    if (!accessory?.context) {
+      return null;
+    }
+
+    if (typeof accessory.context === "string") {
+      return accessory.context;
+    }
+
+    if (typeof accessory.context.duid === "string") {
+      return accessory.context.duid;
+    }
+
+    return null;
   }
 }

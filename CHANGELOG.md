@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.25
+
+- Added optional experimental Matter robotic vacuum exposure for Homebridge 2 with Matter enabled.
+- Kept the existing HomeKit fan/switch accessory path active for backwards compatibility.
+- Documented the Matter setting and Phase 1 command mapping in the README, roadmap, and admin UI.
+
 ## 1.4.24
 
 - Changed transient timeout warning throttling to group repeated polling failures per vacuum instead of per command.
