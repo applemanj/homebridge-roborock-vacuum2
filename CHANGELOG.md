@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.28
+
+- Added a Matter RVC clean-mode cluster so Apple Home can complete the native vacuum accessory setup.
+- Clarified Matter vacuum setup instructions for child bridge Matter enablement and log-based pairing codes.
+
 ## 1.4.27
 
 - Removed the unsupported Matter run-mode startup attribute from experimental vacuum state updates.

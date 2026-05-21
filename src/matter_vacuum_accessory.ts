@@ -21,9 +21,11 @@ type RoborockDevice = {
 
 const RUN_MODE_IDLE = 0;
 const RUN_MODE_CLEANING = 1;
+const CLEAN_MODE_VACUUM = 0;
 
 const RVC_RUN_MODE_TAG_IDLE = 16384;
 const RVC_RUN_MODE_TAG_CLEANING = 16385;
+const RVC_CLEAN_MODE_TAG_VACUUM = 16385;
 
 const RVC_OPERATIONAL_STATE = {
   STOPPED: 0,
@@ -143,6 +145,11 @@ export default class RoborockMatterVacuumAccessory {
           await this.changeRunMode(request?.newMode);
         },
       },
+      rvcCleanMode: {
+        changeToMode: async (request?: { newMode?: number }) => {
+          await this.changeCleanMode(request?.newMode);
+        },
+      },
       rvcOperationalState: {
         pause: async () => {
           await this.pauseCleaning();
@@ -189,6 +196,21 @@ export default class RoborockMatterVacuumAccessory {
 
     this.platform.log.warn(
       `Ignoring unsupported Matter run mode '${newMode}' for ${name}.`
+    );
+  }
+
+  private async changeCleanMode(newMode?: number): Promise<void> {
+    const name = this.getVacuumName();
+
+    if (newMode === CLEAN_MODE_VACUUM) {
+      await this.updateMatterState({
+        rvcCleanMode: { currentMode: CLEAN_MODE_VACUUM },
+      });
+      return;
+    }
+
+    this.platform.log.warn(
+      `Ignoring unsupported Matter clean mode '${newMode}' for ${name}.`
     );
   }
 
@@ -248,6 +270,7 @@ export default class RoborockMatterVacuumAccessory {
   private buildClusters(): Record<string, Record<string, unknown>> {
     return {
       rvcRunMode: this.buildRunModeCluster(),
+      rvcCleanMode: this.buildCleanModeCluster(),
       rvcOperationalState: this.buildOperationalStateCluster(),
       powerSource: this.buildPowerSourceCluster(),
     };
@@ -270,6 +293,19 @@ export default class RoborockMatterVacuumAccessory {
       currentMode: this.isInCleaningRunMode()
         ? RUN_MODE_CLEANING
         : RUN_MODE_IDLE,
+    };
+  }
+
+  private buildCleanModeCluster(): Record<string, unknown> {
+    return {
+      supportedModes: [
+        {
+          label: "Vacuum",
+          mode: CLEAN_MODE_VACUUM,
+          modeTags: [{ value: RVC_CLEAN_MODE_TAG_VACUUM }],
+        },
+      ],
+      currentMode: CLEAN_MODE_VACUUM,
     };
   }
 

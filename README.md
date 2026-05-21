@@ -80,7 +80,7 @@ Use the Homebridge plugin settings UI to sign in, save account settings, and ins
 | `skipDevices`                   | No             | Comma-separated Roborock serial numbers or DUIDs to ignore during discovery. The Diagnostics panel shows these values.                                                                     |
 | `debugMode`                     | No             | Enables verbose API, discovery, and transport logging in the Homebridge log.                                                                                                               |
 | `transientWarningThrottleHours` | No             | Hours between repeated transient timeout warnings for each vacuum. Defaults to `6`. Use `0` to hide recurring transient warnings unless debug logging is enabled.                          |
-| `enableMatter`                  | No             | Experimental. Also exposes each vacuum as a Matter robotic vacuum when running Homebridge 2 with Matter enabled for the bridge. Defaults to `false`.                                       |
+| `enableMatter`                  | No             | Experimental. Also exposes each vacuum as a Matter robotic vacuum when running Homebridge 2 with Matter enabled for the Roborock child bridge. Defaults to `false`.                        |
 
 The plugin needs either a valid `encryptedToken` or a `password` to start. A saved token is preferred because it avoids repeated password login attempts.
 
@@ -104,12 +104,25 @@ Homebridge 2 can expose supported accessories over Matter. If you enable **Enabl
 
 This is opt-in because it can create an additional accessory in Apple Home. The original HomeKit fan-style accessory and helper switches remain available so existing automations and Homebridge 1.x installs keep working.
 
+To set it up:
+
+1. Run Homebridge 2 and enable Matter for the Roborock child bridge/daughter bridge in Homebridge. If this plugin runs in a child bridge, enabling Matter only on the main bridge is not enough.
+2. Enable **Enable experimental Matter vacuum** in this plugin's settings.
+3. Restart the Roborock child bridge.
+4. Open the Homebridge logs and look for the Matter commissioning block for the Roborock vacuum. It includes lines such as `Commissioning codes for Roborock S6 Pure`, `QR Code`, and `Manual Code`.
+5. Add the vacuum in Apple Home using the QR code or manual pairing code from the log.
+
+Treat the Matter QR code and manual pairing code like temporary setup secrets; avoid posting logs that include them publicly.
+
+If you paired the experimental Matter vacuum before version 1.4.28 and Apple Home keeps showing the accessory as **Updating**, remove the Matter vacuum from Apple Home, restart the Roborock child bridge, and pair it again using the fresh code from the log.
+
 Phase 1 maps the Matter vacuum controls to the same Roborock commands used elsewhere in the plugin:
 
 | Matter control         | Behavior                                                    |
 | ---------------------- | ----------------------------------------------------------- |
-| Cleaning mode          | Starts cleaning.                                            |
-| Idle mode              | Stops cleaning without automatically returning to the dock. |
+| Run mode: Cleaning     | Starts cleaning.                                            |
+| Run mode: Idle         | Stops cleaning without automatically returning to the dock. |
+| Clean mode: Vacuum     | Advertises the vacuum cleaning method expected by Matter.   |
 | Pause                  | Sends Roborock's pause command.                             |
 | Resume                 | Sends Roborock's start command.                             |
 | Home / return to dock  | Sends Roborock's dock command.                              |
