@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.26
+
+- Fixed experimental Matter vacuum registration by omitting standard operational-state labels that Matter rejects during conformance validation.
+
 ## 1.4.25
 
 - Added optional experimental Matter robotic vacuum exposure for Homebridge 2 with Matter enabled.

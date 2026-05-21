@@ -38,6 +38,19 @@ const RVC_OPERATIONAL_STATE = {
   UPDATING_MAPS: 70,
 } as const;
 
+const RVC_OPERATIONAL_STATE_LIST = [
+  RVC_OPERATIONAL_STATE.STOPPED,
+  RVC_OPERATIONAL_STATE.RUNNING,
+  RVC_OPERATIONAL_STATE.PAUSED,
+  RVC_OPERATIONAL_STATE.ERROR,
+  RVC_OPERATIONAL_STATE.SEEKING_CHARGER,
+  RVC_OPERATIONAL_STATE.CHARGING,
+  RVC_OPERATIONAL_STATE.DOCKED,
+  RVC_OPERATIONAL_STATE.EMPTYING_DUST_BIN,
+  RVC_OPERATIONAL_STATE.CLEANING_MOP,
+  RVC_OPERATIONAL_STATE.UPDATING_MAPS,
+] as const;
+
 const RVC_ERROR_STATE = {
   NO_ERROR: 0,
   UNABLE_TO_COMPLETE_OPERATION: 2,
@@ -269,56 +282,15 @@ export default class RoborockMatterVacuumAccessory {
           ? RVC_ERROR_STATE.UNABLE_TO_COMPLETE_OPERATION
           : RVC_ERROR_STATE.NO_ERROR,
     };
-    if (operationalState === RVC_OPERATIONAL_STATE.ERROR) {
-      operationalError.errorStateLabel = "Vacuum reported an error";
-    }
 
     return {
       phaseList: null,
       currentPhase: null,
       countdownTime: null,
-      operationalStateList: [
-        {
-          operationalStateId: RVC_OPERATIONAL_STATE.STOPPED,
-          operationalStateLabel: "Stopped",
-        },
-        {
-          operationalStateId: RVC_OPERATIONAL_STATE.RUNNING,
-          operationalStateLabel: "Running",
-        },
-        {
-          operationalStateId: RVC_OPERATIONAL_STATE.PAUSED,
-          operationalStateLabel: "Paused",
-        },
-        {
-          operationalStateId: RVC_OPERATIONAL_STATE.ERROR,
-          operationalStateLabel: "Error",
-        },
-        {
-          operationalStateId: RVC_OPERATIONAL_STATE.SEEKING_CHARGER,
-          operationalStateLabel: "Returning to dock",
-        },
-        {
-          operationalStateId: RVC_OPERATIONAL_STATE.CHARGING,
-          operationalStateLabel: "Charging",
-        },
-        {
-          operationalStateId: RVC_OPERATIONAL_STATE.DOCKED,
-          operationalStateLabel: "Docked",
-        },
-        {
-          operationalStateId: RVC_OPERATIONAL_STATE.EMPTYING_DUST_BIN,
-          operationalStateLabel: "Emptying dust bin",
-        },
-        {
-          operationalStateId: RVC_OPERATIONAL_STATE.CLEANING_MOP,
-          operationalStateLabel: "Cleaning mop",
-        },
-        {
-          operationalStateId: RVC_OPERATIONAL_STATE.UPDATING_MAPS,
-          operationalStateLabel: "Updating maps",
-        },
-      ],
+      // Matter only allows labels for manufacturer-specific operational states.
+      operationalStateList: RVC_OPERATIONAL_STATE_LIST.map(
+        (operationalStateId) => ({ operationalStateId })
+      ),
       operationalState,
       operationalError,
     };
