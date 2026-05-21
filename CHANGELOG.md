@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.27
+
+- Removed the unsupported Matter run-mode startup attribute from experimental vacuum state updates.
+
 ## 1.4.26
 
 - Fixed experimental Matter vacuum registration by omitting standard operational-state labels that Matter rejects during conformance validation.

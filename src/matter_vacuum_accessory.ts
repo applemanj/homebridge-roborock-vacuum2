@@ -270,7 +270,6 @@ export default class RoborockMatterVacuumAccessory {
       currentMode: this.isInCleaningRunMode()
         ? RUN_MODE_CLEANING
         : RUN_MODE_IDLE,
-      startUpMode: RUN_MODE_IDLE,
     };
   }
 
