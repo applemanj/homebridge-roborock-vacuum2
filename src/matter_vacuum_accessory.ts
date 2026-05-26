@@ -14,6 +14,8 @@ type MatterAccessory = {
   getState?: (cluster: string, attribute: string) => Promise<unknown>;
 };
 
+type MatterClusterState = Record<string, Record<string, unknown>>;
+
 type RoborockDevice = {
   duid: string;
   name?: string;
@@ -58,6 +60,8 @@ const RVC_ERROR_STATE = {
   UNABLE_TO_COMPLETE_OPERATION: 2,
 } as const;
 
+const OPTIMISTIC_STATE_TTL_MS = 2 * 60 * 1000;
+
 /**
  * Optional Homebridge 2 Matter exposure for Apple Home's native vacuum UI.
  *
@@ -66,6 +70,8 @@ const RVC_ERROR_STATE = {
  */
 export default class RoborockMatterVacuumAccessory {
   private registered: boolean;
+  private optimisticClusters: MatterClusterState | null = null;
+  private optimisticExpiresAt = 0;
 
   constructor(
     private readonly platform: RoborockPlatform,
@@ -115,8 +121,13 @@ export default class RoborockMatterVacuumAccessory {
   }
 
   async notifyDeviceUpdater(id: string, data: unknown): Promise<void> {
-    if (id === "CloudMessage" || id === "LocalMessage" || id === "HomeData") {
+    if (id === "HomeData") {
       await this.updateMatterStateFromRoborock();
+      return;
+    }
+
+    if (id === "CloudMessage" || id === "LocalMessage") {
+      await this.updateMatterStateFromMessage(data);
     }
   }
 
@@ -171,12 +182,14 @@ export default class RoborockMatterVacuumAccessory {
     if (newMode === RUN_MODE_CLEANING) {
       this.platform.log.info(`Starting ${name} from Matter.`);
       await this.platform.roborockAPI.app_start(duid);
-      await this.updateMatterState({
+      const state = {
         rvcRunMode: { currentMode: RUN_MODE_CLEANING },
         rvcOperationalState: {
           operationalState: RVC_OPERATIONAL_STATE.RUNNING,
         },
-      });
+      };
+      this.setOptimisticState(state);
+      await this.updateMatterState(state);
       return;
     }
 
@@ -185,12 +198,14 @@ export default class RoborockMatterVacuumAccessory {
         `Stopping ${name} from Matter. Use the Home/Dock action to dock intentionally.`
       );
       await this.platform.roborockAPI.app_stop(duid);
-      await this.updateMatterState({
+      const state = {
         rvcRunMode: { currentMode: RUN_MODE_IDLE },
         rvcOperationalState: {
           operationalState: RVC_OPERATIONAL_STATE.STOPPED,
         },
-      });
+      };
+      this.setOptimisticState(state);
+      await this.updateMatterState(state);
       return;
     }
 
@@ -203,9 +218,11 @@ export default class RoborockMatterVacuumAccessory {
     const name = this.getVacuumName();
 
     if (newMode === CLEAN_MODE_VACUUM) {
-      await this.updateMatterState({
+      const state = {
         rvcCleanMode: { currentMode: CLEAN_MODE_VACUUM },
-      });
+      };
+      this.setOptimisticState(state);
+      await this.updateMatterState(state);
       return;
     }
 
@@ -217,22 +234,26 @@ export default class RoborockMatterVacuumAccessory {
   private async pauseCleaning(): Promise<void> {
     this.platform.log.info(`Pausing ${this.getVacuumName()} from Matter.`);
     await this.platform.roborockAPI.app_pause(this.getDuid());
-    await this.updateMatterState({
+    const state = {
       rvcOperationalState: {
         operationalState: RVC_OPERATIONAL_STATE.PAUSED,
       },
-    });
+    };
+    this.setOptimisticState(state);
+    await this.updateMatterState(state);
   }
 
   private async resumeCleaning(): Promise<void> {
     this.platform.log.info(`Resuming ${this.getVacuumName()} from Matter.`);
     await this.platform.roborockAPI.app_start(this.getDuid());
-    await this.updateMatterState({
+    const state = {
       rvcRunMode: { currentMode: RUN_MODE_CLEANING },
       rvcOperationalState: {
         operationalState: RVC_OPERATIONAL_STATE.RUNNING,
       },
-    });
+    };
+    this.setOptimisticState(state);
+    await this.updateMatterState(state);
   }
 
   private async returnToDock(): Promise<void> {
@@ -240,12 +261,14 @@ export default class RoborockMatterVacuumAccessory {
       `Sending ${this.getVacuumName()} back to dock from Matter.`
     );
     await this.platform.roborockAPI.app_charge(this.getDuid());
-    await this.updateMatterState({
+    const state = {
       rvcRunMode: { currentMode: RUN_MODE_IDLE },
       rvcOperationalState: {
         operationalState: RVC_OPERATIONAL_STATE.SEEKING_CHARGER,
       },
-    });
+    };
+    this.setOptimisticState(state);
+    await this.updateMatterState(state);
   }
 
   private async updateMatterState(
@@ -267,13 +290,51 @@ export default class RoborockMatterVacuumAccessory {
     );
   }
 
-  private buildClusters(): Record<string, Record<string, unknown>> {
-    return {
+  private async updateMatterStateFromMessage(data: unknown): Promise<void> {
+    if (!this.registered) {
+      return;
+    }
+
+    const status = this.extractStatusUpdate(data);
+    if (!status) {
+      return;
+    }
+
+    const state = this.getNumberFromValue(status.state);
+    const chargeStatus = this.getNumberFromValue(status.charge_status);
+    const battery = this.getNumberFromValue(status.battery);
+    const clusters: MatterClusterState = {};
+
+    if (state !== null || chargeStatus !== null) {
+      const operationalState = this.getOperationalState(state, chargeStatus);
+      const suppressState = this.shouldSuppressLiveState(operationalState);
+
+      if (!suppressState) {
+        clusters.rvcRunMode = {
+          currentMode: this.isInCleaningRunMode(operationalState)
+            ? RUN_MODE_CLEANING
+            : RUN_MODE_IDLE,
+        };
+        clusters.rvcOperationalState = { operationalState };
+      }
+    }
+
+    if (battery !== null) {
+      clusters.powerSource = this.buildPowerSourceCluster(battery);
+    }
+
+    if (Object.keys(clusters).length > 0) {
+      await this.updateMatterState(clusters);
+    }
+  }
+
+  private buildClusters(): MatterClusterState {
+    return this.applyOptimisticState({
       rvcRunMode: this.buildRunModeCluster(),
       rvcCleanMode: this.buildCleanModeCluster(),
       rvcOperationalState: this.buildOperationalStateCluster(),
       powerSource: this.buildPowerSourceCluster(),
-    };
+    });
   }
 
   private buildRunModeCluster(): Record<string, unknown> {
@@ -290,7 +351,7 @@ export default class RoborockMatterVacuumAccessory {
           modeTags: [{ value: RVC_RUN_MODE_TAG_CLEANING }],
         },
       ],
-      currentMode: this.isInCleaningRunMode()
+      currentMode: this.isInCleaningRunMode(this.getOperationalState())
         ? RUN_MODE_CLEANING
         : RUN_MODE_IDLE,
     };
@@ -331,8 +392,13 @@ export default class RoborockMatterVacuumAccessory {
     };
   }
 
-  private buildPowerSourceCluster(): Record<string, unknown> {
-    const battery = this.getNumberStatus("battery");
+  private buildPowerSourceCluster(
+    batteryValue?: number
+  ): Record<string, unknown> {
+    const battery =
+      batteryValue === undefined
+        ? this.getNumberStatus("battery")
+        : batteryValue;
     const normalizedBattery =
       battery === null ? null : Math.max(0, Math.min(100, battery));
 
@@ -351,10 +417,10 @@ export default class RoborockMatterVacuumAccessory {
     };
   }
 
-  private getOperationalState(): number {
-    const state = this.getNumberStatus("state");
-    const chargeStatus = this.getNumberStatus("charge_status");
-
+  private getOperationalState(
+    state = this.getNumberStatus("state"),
+    chargeStatus = this.getNumberStatus("charge_status")
+  ): number {
     switch (state) {
       case 5: // Cleaning
       case 11: // Spot Cleaning
@@ -392,8 +458,8 @@ export default class RoborockMatterVacuumAccessory {
     }
   }
 
-  private isInCleaningRunMode(): boolean {
-    switch (this.getOperationalState()) {
+  private isInCleaningRunMode(operationalState: number): boolean {
+    switch (operationalState) {
       case RVC_OPERATIONAL_STATE.RUNNING:
       case RVC_OPERATIONAL_STATE.PAUSED:
       case RVC_OPERATIONAL_STATE.EMPTYING_DUST_BIN:
@@ -411,6 +477,10 @@ export default class RoborockMatterVacuumAccessory {
       property
     );
 
+    return this.getNumberFromValue(value);
+  }
+
+  private getNumberFromValue(value: unknown): number | null {
     if (typeof value === "number" && Number.isFinite(value)) {
       return value;
     }
@@ -421,6 +491,140 @@ export default class RoborockMatterVacuumAccessory {
     }
 
     return null;
+  }
+
+  private extractStatusUpdate(data: unknown): Record<string, unknown> | null {
+    const rootMessage = this.asRecord(data);
+    const dps = this.asRecord(rootMessage?.dps);
+
+    if (dps) {
+      const status: Record<string, unknown> = {};
+
+      if (Object.prototype.hasOwnProperty.call(dps, "121")) {
+        status.state = dps["121"];
+      }
+      if (Object.prototype.hasOwnProperty.call(dps, "122")) {
+        status.battery = dps["122"];
+      }
+      if (Object.prototype.hasOwnProperty.call(dps, "123")) {
+        status.charge_status = dps["123"];
+      }
+
+      return Object.keys(status).length > 0 ? status : null;
+    }
+
+    const payload = Array.isArray(data) ? data : data ? [data] : [];
+    const message = this.asRecord(payload[0]);
+    if (!message) {
+      return null;
+    }
+
+    const hasStatus =
+      Object.prototype.hasOwnProperty.call(message, "state") ||
+      Object.prototype.hasOwnProperty.call(message, "battery") ||
+      Object.prototype.hasOwnProperty.call(message, "charge_status");
+
+    return hasStatus ? message : null;
+  }
+
+  private asRecord(value: unknown): Record<string, unknown> | null {
+    return value !== null && typeof value === "object"
+      ? (value as Record<string, unknown>)
+      : null;
+  }
+
+  private setOptimisticState(partialClusters: MatterClusterState): void {
+    this.optimisticClusters = this.mergeClusterState(
+      this.getActiveOptimisticState() || {},
+      partialClusters
+    );
+    this.optimisticExpiresAt = Date.now() + OPTIMISTIC_STATE_TTL_MS;
+  }
+
+  private shouldSuppressLiveState(operationalState: number): boolean {
+    const optimistic = this.getActiveOptimisticState();
+    const expected = optimistic?.rvcOperationalState?.operationalState;
+
+    if (typeof expected !== "number") {
+      return false;
+    }
+
+    if (this.doesLiveStateConfirmOptimisticState(expected, operationalState)) {
+      this.clearOptimisticState();
+      return false;
+    }
+
+    return true;
+  }
+
+  private doesLiveStateConfirmOptimisticState(
+    expected: number,
+    actual: number
+  ): boolean {
+    if (expected === actual) {
+      return true;
+    }
+
+    if (
+      expected === RVC_OPERATIONAL_STATE.RUNNING &&
+      this.isInCleaningRunMode(actual)
+    ) {
+      return true;
+    }
+
+    if (
+      expected === RVC_OPERATIONAL_STATE.STOPPED &&
+      !this.isInCleaningRunMode(actual)
+    ) {
+      return true;
+    }
+
+    return (
+      expected === RVC_OPERATIONAL_STATE.SEEKING_CHARGER &&
+      (actual === RVC_OPERATIONAL_STATE.CHARGING ||
+        actual === RVC_OPERATIONAL_STATE.DOCKED)
+    );
+  }
+
+  private applyOptimisticState(
+    clusters: MatterClusterState
+  ): MatterClusterState {
+    const optimistic = this.getActiveOptimisticState();
+    return optimistic ? this.mergeClusterState(clusters, optimistic) : clusters;
+  }
+
+  private getActiveOptimisticState(): MatterClusterState | null {
+    if (!this.optimisticClusters) {
+      return null;
+    }
+
+    if (Date.now() > this.optimisticExpiresAt) {
+      this.clearOptimisticState();
+      return null;
+    }
+
+    return this.optimisticClusters;
+  }
+
+  private clearOptimisticState(): void {
+    this.optimisticClusters = null;
+    this.optimisticExpiresAt = 0;
+  }
+
+  private mergeClusterState(
+    base: MatterClusterState,
+    override: MatterClusterState
+  ): MatterClusterState {
+    const merged: MatterClusterState = { ...base };
+
+    for (const [cluster, attributes] of Object.entries(override)) {
+      merged[cluster] = {
+        ...(merged[cluster] || {}),
+        ...attributes,
+      };
+    }
+
+    return merged;
   }
 
   private getVacuumName(): string {

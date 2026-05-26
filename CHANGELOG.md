@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.29
+
+- Kept Matter vacuum state optimistic after commands so Apple Home does not fall back to stale ready/idle status while Roborock reports the transition.
+
 ## 1.4.28
 
 - Added a Matter RVC clean-mode cluster so Apple Home can complete the native vacuum accessory setup.
