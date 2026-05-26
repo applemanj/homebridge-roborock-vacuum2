@@ -13,6 +13,29 @@ import { AccessoryPlugin, API, Logging } from "homebridge";
 import { STATUS_CODES } from "http";
 import { log } from "console";
 
+const MAX_HOMEKIT_NAME_LENGTH = 64;
+const FALLBACK_SCENE_NAME = "Roborock Scene";
+
+export function toHomeKitSafeName(
+  name: string | null | undefined,
+  fallback = FALLBACK_SCENE_NAME
+): string {
+  const sanitized = (name ?? "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^A-Za-z0-9 ']+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^[^A-Za-z0-9]+/, "")
+    .replace(/[^A-Za-z0-9]+$/, "")
+    .trim()
+    .slice(0, MAX_HOMEKIT_NAME_LENGTH)
+    .replace(/[^A-Za-z0-9]+$/, "")
+    .trim();
+
+  return sanitized || fallback;
+}
+
 /**
  * An instance of this class is created for each accessory the platform registers.
  * Each accessory may expose multiple services of different service types.
@@ -80,6 +103,7 @@ export default class RoborockVacuumAccessory {
     this.services["Battery"] =
       this.accessory.getService(this.platform.Service.Battery) ||
       this.accessory.addService(this.platform.Service.Battery);
+    this.services["Fan"].addLinkedService(this.services["Battery"]);
 
     // Initialize scene switches
     this.updateSceneSwitches();
@@ -280,7 +304,7 @@ export default class RoborockVacuumAccessory {
         for (const scene of deviceScenes) {
           try {
             const sceneId = scene.id.toString();
-            const sceneName = scene.name.replaceAll(" ", "_");
+            const sceneName = toHomeKitSafeName(scene.name);
             if (!this.sceneServices.has(sceneId) && scene.enabled) {
               this.platform.log.debug(
                 `Adding scene switch for: ${scene.name} (ID: ${sceneId})`

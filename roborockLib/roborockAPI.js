@@ -420,7 +420,7 @@ class Roborock {
     );
 
     if (message) {
-      this.log.info(message);
+      this.log.debug(message);
     }
   }
 
@@ -2071,11 +2071,16 @@ class Roborock {
     }
   }
 
-  async startCommand(duid, command, parameters) {
+  async startCommand(duid, command, parameters, options = {}) {
     if (!this.isInited()) {
       this.log.warn("Adapter not inited. Command not executed.");
       return;
     }
+
+    const waitForResult = Boolean(options.waitForResult);
+    const commandOptions = waitForResult
+      ? { ...options, throwOnError: true }
+      : options;
 
     switch (command) {
       case "app_zoned_clean":
@@ -2084,9 +2089,18 @@ class Roborock {
       case "app_stop":
       case "stop_zoned_clean":
       case "app_pause":
-      case "app_charge":
-        this.vacuums[duid].command(duid, command, parameters);
+      case "app_charge": {
+        const commandPromise = this.vacuums[duid].command(
+          duid,
+          command,
+          parameters,
+          commandOptions
+        );
+        if (waitForResult) {
+          await commandPromise;
+        }
         break;
+      }
 
       case "get_photo":
         this.vacuums[duid].getParameter(duid, "get_photo", parameters);
@@ -2313,20 +2327,20 @@ class Roborock {
     return `${Math.max(1, Math.round(durationMs / 1000))} seconds`;
   }
 
-  async app_start(duid) {
-    await this.startCommand(duid, "app_start", null);
+  async app_start(duid, options) {
+    await this.startCommand(duid, "app_start", null, options);
   }
 
-  async app_stop(duid) {
-    await this.startCommand(duid, "app_stop", null);
+  async app_stop(duid, options) {
+    await this.startCommand(duid, "app_stop", null, options);
   }
 
-  async app_pause(duid) {
-    await this.startCommand(duid, "app_pause", null);
+  async app_pause(duid, options) {
+    await this.startCommand(duid, "app_pause", null, options);
   }
 
-  async app_charge(duid) {
-    await this.startCommand(duid, "app_charge", null);
+  async app_charge(duid, options) {
+    await this.startCommand(duid, "app_charge", null, options);
   }
 
   async getStatus(duid, vacuum) {

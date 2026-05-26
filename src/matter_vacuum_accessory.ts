@@ -60,7 +60,26 @@ const RVC_ERROR_STATE = {
   UNABLE_TO_COMPLETE_OPERATION: 2,
 } as const;
 
+const POWER_SOURCE_STATUS = {
+  ACTIVE: 1,
+  UNAVAILABLE: 3,
+} as const;
+
+const BATTERY_CHARGE_LEVEL = {
+  OK: 0,
+  WARNING: 1,
+  CRITICAL: 2,
+} as const;
+
+const BATTERY_CHARGE_STATE = {
+  UNKNOWN: 0,
+  IS_CHARGING: 1,
+  IS_AT_FULL_CHARGE: 2,
+  IS_NOT_CHARGING: 3,
+} as const;
+
 const OPTIMISTIC_STATE_TTL_MS = 2 * 60 * 1000;
+const SLOW_MATTER_COMMAND_MS = 3000;
 
 /**
  * Optional Homebridge 2 Matter exposure for Apple Home's native vacuum UI.
@@ -181,7 +200,6 @@ export default class RoborockMatterVacuumAccessory {
 
     if (newMode === RUN_MODE_CLEANING) {
       this.platform.log.info(`Starting ${name} from Matter.`);
-      await this.platform.roborockAPI.app_start(duid);
       const state = {
         rvcRunMode: { currentMode: RUN_MODE_CLEANING },
         rvcOperationalState: {
@@ -190,6 +208,9 @@ export default class RoborockMatterVacuumAccessory {
       };
       this.setOptimisticState(state);
       await this.updateMatterState(state);
+      this.dispatchRoborockMatterCommand("start", () =>
+        this.platform.roborockAPI.app_start(duid, { waitForResult: true })
+      );
       return;
     }
 
@@ -197,7 +218,6 @@ export default class RoborockMatterVacuumAccessory {
       this.platform.log.info(
         `Stopping ${name} from Matter. Use the Home/Dock action to dock intentionally.`
       );
-      await this.platform.roborockAPI.app_stop(duid);
       const state = {
         rvcRunMode: { currentMode: RUN_MODE_IDLE },
         rvcOperationalState: {
@@ -206,6 +226,9 @@ export default class RoborockMatterVacuumAccessory {
       };
       this.setOptimisticState(state);
       await this.updateMatterState(state);
+      this.dispatchRoborockMatterCommand("stop", () =>
+        this.platform.roborockAPI.app_stop(duid, { waitForResult: true })
+      );
       return;
     }
 
@@ -233,7 +256,6 @@ export default class RoborockMatterVacuumAccessory {
 
   private async pauseCleaning(): Promise<void> {
     this.platform.log.info(`Pausing ${this.getVacuumName()} from Matter.`);
-    await this.platform.roborockAPI.app_pause(this.getDuid());
     const state = {
       rvcOperationalState: {
         operationalState: RVC_OPERATIONAL_STATE.PAUSED,
@@ -241,11 +263,15 @@ export default class RoborockMatterVacuumAccessory {
     };
     this.setOptimisticState(state);
     await this.updateMatterState(state);
+    this.dispatchRoborockMatterCommand("pause", () =>
+      this.platform.roborockAPI.app_pause(this.getDuid(), {
+        waitForResult: true,
+      })
+    );
   }
 
   private async resumeCleaning(): Promise<void> {
     this.platform.log.info(`Resuming ${this.getVacuumName()} from Matter.`);
-    await this.platform.roborockAPI.app_start(this.getDuid());
     const state = {
       rvcRunMode: { currentMode: RUN_MODE_CLEANING },
       rvcOperationalState: {
@@ -254,13 +280,17 @@ export default class RoborockMatterVacuumAccessory {
     };
     this.setOptimisticState(state);
     await this.updateMatterState(state);
+    this.dispatchRoborockMatterCommand("resume", () =>
+      this.platform.roborockAPI.app_start(this.getDuid(), {
+        waitForResult: true,
+      })
+    );
   }
 
   private async returnToDock(): Promise<void> {
     this.platform.log.info(
       `Sending ${this.getVacuumName()} back to dock from Matter.`
     );
-    await this.platform.roborockAPI.app_charge(this.getDuid());
     const state = {
       rvcRunMode: { currentMode: RUN_MODE_IDLE },
       rvcOperationalState: {
@@ -269,6 +299,11 @@ export default class RoborockMatterVacuumAccessory {
     };
     this.setOptimisticState(state);
     await this.updateMatterState(state);
+    this.dispatchRoborockMatterCommand("return to dock", () =>
+      this.platform.roborockAPI.app_charge(this.getDuid(), {
+        waitForResult: true,
+      })
+    );
   }
 
   private async updateMatterState(
@@ -320,7 +355,11 @@ export default class RoborockMatterVacuumAccessory {
     }
 
     if (battery !== null) {
-      clusters.powerSource = this.buildPowerSourceCluster(battery);
+      clusters.powerSource = this.buildPowerSourceCluster(
+        battery,
+        chargeStatus,
+        state
+      );
     }
 
     if (Object.keys(clusters).length > 0) {
@@ -393,28 +432,79 @@ export default class RoborockMatterVacuumAccessory {
   }
 
   private buildPowerSourceCluster(
-    batteryValue?: number
+    batteryValue?: number,
+    chargeStatusValue?: number | null,
+    stateValue?: number | null
   ): Record<string, unknown> {
     const battery =
       batteryValue === undefined
         ? this.getNumberStatus("battery")
         : batteryValue;
+    const chargeStatus =
+      chargeStatusValue === undefined
+        ? this.getNumberStatus("charge_status")
+        : chargeStatusValue;
+    const state =
+      stateValue === undefined ? this.getNumberStatus("state") : stateValue;
     const normalizedBattery =
       battery === null ? null : Math.max(0, Math.min(100, battery));
 
     return {
+      status:
+        normalizedBattery === null
+          ? POWER_SOURCE_STATUS.UNAVAILABLE
+          : POWER_SOURCE_STATUS.ACTIVE,
+      order: 0,
       description: "Roborock vacuum battery",
       batPresent: normalizedBattery !== null,
       batPercentRemaining:
         normalizedBattery === null ? null : normalizedBattery * 2,
-      batChargeLevel:
-        normalizedBattery !== null && normalizedBattery <= 10
-          ? 2
-          : normalizedBattery !== null && normalizedBattery < 20
-            ? 1
-            : 0,
+      batChargeLevel: this.getBatteryChargeLevel(normalizedBattery),
+      batChargeState: this.getBatteryChargeState(
+        normalizedBattery,
+        chargeStatus,
+        state
+      ),
       batReplacementNeeded: false,
     };
+  }
+
+  private getBatteryChargeLevel(battery: number | null): number {
+    if (battery !== null && battery <= 10) {
+      return BATTERY_CHARGE_LEVEL.CRITICAL;
+    }
+
+    if (battery !== null && battery < 20) {
+      return BATTERY_CHARGE_LEVEL.WARNING;
+    }
+
+    return BATTERY_CHARGE_LEVEL.OK;
+  }
+
+  private getBatteryChargeState(
+    battery: number | null,
+    chargeStatus: number | null,
+    state: number | null
+  ): number {
+    if (battery === null) {
+      return BATTERY_CHARGE_STATE.UNKNOWN;
+    }
+
+    if (state === 100 || (battery >= 100 && chargeStatus !== 0)) {
+      return BATTERY_CHARGE_STATE.IS_AT_FULL_CHARGE;
+    }
+
+    if (chargeStatus !== null) {
+      return chargeStatus !== 0
+        ? BATTERY_CHARGE_STATE.IS_CHARGING
+        : BATTERY_CHARGE_STATE.IS_NOT_CHARGING;
+    }
+
+    if (state === 8) {
+      return BATTERY_CHARGE_STATE.IS_CHARGING;
+    }
+
+    return BATTERY_CHARGE_STATE.UNKNOWN;
   }
 
   private getOperationalState(
@@ -609,6 +699,68 @@ export default class RoborockMatterVacuumAccessory {
   private clearOptimisticState(): void {
     this.optimisticClusters = null;
     this.optimisticExpiresAt = 0;
+  }
+
+  private dispatchRoborockMatterCommand(
+    action: string,
+    command: () => Promise<void>
+  ): void {
+    const startedAt = Date.now();
+
+    void command()
+      .then(() => {
+        this.logMatterCommandDuration(action, startedAt);
+      })
+      .catch((error) => {
+        this.platform.log.error(
+          `Error sending Matter ${action} command to ${this.getVacuumName()}: ${error}`
+        );
+        this.clearOptimisticState();
+        void this.updateMatterStateFromRoborock();
+      });
+  }
+
+  private logMatterCommandDuration(action: string, startedAt: number): void {
+    const durationMs = Date.now() - startedAt;
+    const transport = this.getTransportDescription();
+    const message =
+      `Matter ${action} command for ${this.getVacuumName()} was acknowledged ` +
+      `by Roborock in ${durationMs} ms${transport ? ` via ${transport}` : ""}.`;
+
+    if (durationMs >= SLOW_MATTER_COMMAND_MS) {
+      this.platform.log.warn(`Slow ${message}`);
+      return;
+    }
+
+    this.platform.log.info(message);
+  }
+
+  private getTransportDescription(): string {
+    const diagnostics =
+      typeof this.platform.roborockAPI.getTransportDiagnostics === "function"
+        ? this.platform.roborockAPI.getTransportDiagnostics()
+        : null;
+    const transport =
+      diagnostics && typeof diagnostics === "object"
+        ? diagnostics[this.getDuid()]
+        : null;
+
+    if (!transport || typeof transport !== "object") {
+      return "";
+    }
+
+    const lastTransport =
+      "lastTransport" in transport ? String(transport.lastTransport) : "";
+    const lastReason =
+      "lastTransportReason" in transport
+        ? String(transport.lastTransportReason)
+        : "";
+
+    if (lastTransport && lastReason) {
+      return `${lastTransport} (${lastReason})`;
+    }
+
+    return lastTransport;
   }
 
   private mergeClusterState(

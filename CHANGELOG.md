@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.30
+
+- Moved local/cloud transport transition diagnostics behind debug logging to keep normal Homebridge logs quieter.
+- Updated Matter vacuum commands to report the requested state immediately and log Roborock acknowledgment timing.
+- Expanded Matter battery power-source state and linked the regular HomeKit battery service to the main accessory.
+- Sanitized Roborock scene switch names so generated HomeKit names avoid unsupported characters.
+
 ## 1.4.29
 
 - Kept Matter vacuum state optimistic after commands so Apple Home does not fall back to stale ready/idle status while Roborock reports the transition.

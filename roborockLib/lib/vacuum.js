@@ -48,7 +48,7 @@ class vacuum {
     };
   }
 
-  async command(duid, parameter, value) {
+  async command(duid, parameter, value, options = {}) {
     try {
       switch (parameter) {
         case "app_segment_clean": {
@@ -177,6 +177,9 @@ class vacuum {
       }
     } catch (error) {
       this.adapter.catchError(error, parameter, duid, this.robotModel);
+      if (options.throwOnError) {
+        throw error;
+      }
     }
   }
 

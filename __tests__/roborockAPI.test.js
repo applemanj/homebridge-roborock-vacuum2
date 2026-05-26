@@ -65,7 +65,7 @@ describe("Roborock API model and diagnostics helpers", () => {
     });
   });
 
-  test("transport diagnostics log cloud fallback and local recovery", async () => {
+  test("transport diagnostics debug-log cloud fallback and local recovery", async () => {
     const log = createLog();
     const api = new Roborock({ log });
     await api.setStateAsync("HomeData", {
@@ -82,7 +82,7 @@ describe("Roborock API model and diagnostics helpers", () => {
       lastTransportReason: "local-request",
       lastCommandMethod: "get_status",
     });
-    log.info.mockClear();
+    log.debug.mockClear();
 
     await api.updateTransportDiagnostics("device-1", {
       lastTransport: "cloud",
@@ -90,23 +90,23 @@ describe("Roborock API model and diagnostics helpers", () => {
       lastCommandMethod: "get_consumable",
     });
 
-    expect(log.info).toHaveBeenCalledWith(
+    expect(log.debug).toHaveBeenCalledWith(
       expect.stringContaining("Falling back from local LAN to Roborock cloud")
     );
-    expect(log.info).toHaveBeenCalledWith(
+    expect(log.debug).toHaveBeenCalledWith(
       expect.stringContaining(
         "the local TCP socket was not connected when the command was requested"
       )
     );
 
-    log.info.mockClear();
+    log.debug.mockClear();
     await api.updateTransportDiagnostics("device-1", {
       lastTransport: "local",
       lastTransportReason: "local-request",
       lastCommandMethod: "get_consumable",
     });
 
-    expect(log.info).toHaveBeenCalledWith(
+    expect(log.debug).toHaveBeenCalledWith(
       expect.stringContaining("Local transport recovered")
     );
   });
@@ -120,13 +120,13 @@ describe("Roborock API model and diagnostics helpers", () => {
       lastTransportReason: "local-request",
       lastCommandMethod: "get_status",
     });
-    log.info.mockClear();
+    log.debug.mockClear();
 
     await api.updateTransportDiagnostics("device-1", {
       lastCommandMethod: "get_consumable",
     });
 
-    expect(log.info).not.toHaveBeenCalled();
+    expect(log.debug).not.toHaveBeenCalled();
   });
 
   test("cloud-only transport reasons are not described as fallback", async () => {
@@ -146,7 +146,7 @@ describe("Roborock API model and diagnostics helpers", () => {
       lastTransportReason: "local-request",
       lastCommandMethod: "get_status",
     });
-    log.info.mockClear();
+    log.debug.mockClear();
 
     await api.updateTransportDiagnostics("device-1", {
       lastTransport: "cloud",
@@ -154,10 +154,10 @@ describe("Roborock API model and diagnostics helpers", () => {
       lastCommandMethod: "get_network_info",
     });
 
-    expect(log.info).toHaveBeenCalledWith(
+    expect(log.debug).toHaveBeenCalledWith(
       expect.stringContaining("Using Roborock cloud transport")
     );
-    expect(log.info).not.toHaveBeenCalledWith(
+    expect(log.debug).not.toHaveBeenCalledWith(
       expect.stringContaining("Falling back")
     );
   });
