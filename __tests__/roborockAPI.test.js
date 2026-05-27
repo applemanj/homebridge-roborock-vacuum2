@@ -1,4 +1,7 @@
 const { Roborock } = require("../roborockLib/roborockAPI");
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
 
 function createLog() {
   return {
@@ -9,9 +12,17 @@ function createLog() {
   };
 }
 
+function createRoborock(options = {}) {
+  return new Roborock({
+    log: createLog(),
+    storagePath: fs.mkdtempSync(path.join(os.tmpdir(), "roborock-api-test-")),
+    ...options,
+  });
+}
+
 describe("Roborock API model and diagnostics helpers", () => {
   test("prefers device-level model metadata when product metadata is incomplete", async () => {
-    const api = new Roborock({ log: createLog() });
+    const api = createRoborock();
     await api.setStateAsync("HomeData", {
       val: JSON.stringify({
         products: [{ id: "product-1" }],
@@ -33,7 +44,7 @@ describe("Roborock API model and diagnostics helpers", () => {
   });
 
   test("getVacuumList merges owned and received devices", async () => {
-    const api = new Roborock({ log: createLog() });
+    const api = createRoborock();
     await api.setStateAsync("HomeData", {
       val: JSON.stringify({
         products: [],
@@ -50,7 +61,7 @@ describe("Roborock API model and diagnostics helpers", () => {
   });
 
   test("stores room mapping cache for Matter service areas", () => {
-    const api = new Roborock({ log: createLog() });
+    const api = createRoborock();
     const notify = jest.fn();
     api.roomIDs = { 55: "Kitchen" };
     api.setDeviceNotify(notify);
@@ -75,8 +86,33 @@ describe("Roborock API model and diagnostics helpers", () => {
     );
   });
 
+  test("keeps Matter room mappings for multiple Roborock maps", () => {
+    const api = createRoborock();
+    api.roomIDs = {
+      55: "Kitchen",
+      77: "Bedroom",
+    };
+
+    api.updateMapListCache("device-1", [
+      { mapFlag: 0, name: "Lower Level" },
+      { mapFlag: 1, name: "Upper Level" },
+    ]);
+    api.updateRoomMappingCache("device-1", 0, [[16, 55]]);
+    api.updateRoomMappingCache("device-1", 1, [[16, 77]]);
+
+    expect(api.getMapListForDevice("device-1")).toEqual([
+      { mapId: 0, name: "Lower Level" },
+      { mapId: 1, name: "Upper Level" },
+    ]);
+    expect(api.getRoomMappingsForDevice("device-1")).toEqual([
+      { segmentId: 16, roomId: 55, mapId: 0, name: "Kitchen" },
+      { segmentId: 16, roomId: 77, mapId: 1, name: "Bedroom" },
+    ]);
+    expect(api.getCurrentMapIdForDevice("device-1")).toBe(1);
+  });
+
   test("transport diagnostics are persisted per device", async () => {
-    const api = new Roborock({ log: createLog() });
+    const api = createRoborock();
 
     await api.updateTransportDiagnostics("device-1", {
       lastTransport: "local",
@@ -93,7 +129,7 @@ describe("Roborock API model and diagnostics helpers", () => {
 
   test("transport diagnostics debug-log cloud fallback and local recovery", async () => {
     const log = createLog();
-    const api = new Roborock({ log });
+    const api = createRoborock({ log });
     await api.setStateAsync("HomeData", {
       val: JSON.stringify({
         products: [],
@@ -139,7 +175,7 @@ describe("Roborock API model and diagnostics helpers", () => {
 
   test("transport diagnostics do not log when only the command method changes", async () => {
     const log = createLog();
-    const api = new Roborock({ log });
+    const api = createRoborock({ log });
 
     await api.updateTransportDiagnostics("device-1", {
       lastTransport: "local",
@@ -157,7 +193,7 @@ describe("Roborock API model and diagnostics helpers", () => {
 
   test("cloud-only transport reasons are not described as fallback", async () => {
     const log = createLog();
-    const api = new Roborock({ log });
+    const api = createRoborock({ log });
     await api.setStateAsync("HomeData", {
       val: JSON.stringify({
         products: [],
@@ -191,7 +227,7 @@ describe("Roborock API model and diagnostics helpers", () => {
   test("transient command warnings are throttled per robot", async () => {
     const log = createLog();
     let now = 1000;
-    const api = new Roborock({
+    const api = createRoborock({
       log,
       errorLogThrottleMs: 60 * 1000,
       now: () => now,
@@ -248,7 +284,7 @@ describe("Roborock API model and diagnostics helpers", () => {
 
   test("zero transient warning throttle moves transient warnings to debug only", async () => {
     const log = createLog();
-    const api = new Roborock({
+    const api = createRoborock({
       log,
       errorLogThrottleMs: 0,
     });
@@ -269,7 +305,7 @@ describe("Roborock API model and diagnostics helpers", () => {
   });
 
   test("skip device helper matches serial numbers and DUIDs", () => {
-    const api = new Roborock({ log: createLog() });
+    const api = createRoborock();
     const ignoredSet = new Set(api.parseSkipDevices("serial-1, duid-2"));
 
     expect(

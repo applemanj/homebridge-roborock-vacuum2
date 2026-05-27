@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.33
+
+- Added multi-map Matter Service Area metadata so supported clients can group rooms by saved Roborock maps.
+- Cached room mappings per Roborock map and preserved saved map names for upper/lower floor setups.
+- Loaded the selected Roborock map before starting Matter room cleaning when a selected area is on another map.
+
 ## 1.4.32
 
 - Deferred Matter state pushes until after command handlers return to reduce HomeKit command timeouts.

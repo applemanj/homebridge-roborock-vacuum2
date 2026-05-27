@@ -25,6 +25,7 @@ type MatterServiceArea = {
   areaId: number;
   segmentId: number;
   mapId: number | null;
+  mapName: string | null;
   name: string;
 };
 
@@ -94,9 +95,13 @@ const SERVICE_AREA_SELECT_STATUS = {
   SUCCESS: 0,
   UNSUPPORTED_AREA: 1,
   INVALID_IN_MODE: 2,
+  INVALID_SET: 3,
 } as const;
 
 const MATTER_LOCATION_NAME_MAX_LENGTH = 64;
+const MATTER_MAP_NAME_MAX_LENGTH = 64;
+const MATTER_AREA_ID_MAP_MULTIPLIER = 1_000_000;
+const MATTER_AREA_ID_MAX = 0xffffffff;
 const OPTIMISTIC_STATE_TTL_MS = 2 * 60 * 1000;
 const SLOW_MATTER_COMMAND_MS = 3000;
 
@@ -236,7 +241,17 @@ export default class RoborockMatterVacuumAccessory {
     if (newMode === RUN_MODE_CLEANING) {
       const selectedAreas = this.getSelectedServiceAreaSegments();
       if (selectedAreas.length > 0) {
-        const selectedAreaNames = selectedAreas.map((area) => area.name);
+        const selectedMapIds = this.getSelectedServiceAreaMapIds(selectedAreas);
+        if (selectedMapIds.length > 1) {
+          throw new Error(
+            `Matter can only start room cleaning on one Roborock map at a time for ${name}.`
+          );
+        }
+
+        const selectedAreaNames = selectedAreas.map((area) =>
+          this.formatServiceAreaName(area)
+        );
+        const targetMapId = selectedMapIds[0] ?? null;
         this.platform.log.info(
           `Starting ${name} from Matter for selected service area(s): ${selectedAreaNames.join(", ")}.`
         );
@@ -248,13 +263,14 @@ export default class RoborockMatterVacuumAccessory {
         };
         this.setOptimisticState(state);
         this.scheduleMatterStateUpdate(state, "selected-area start");
-        this.dispatchRoborockMatterCommand("service area clean", () =>
-          this.platform.roborockAPI.app_segment_clean_by_ids(
+        this.dispatchRoborockMatterCommand("service area clean", async () => {
+          await this.loadMatterMapIfNeeded(duid, targetMapId);
+          await this.platform.roborockAPI.app_segment_clean_by_ids(
             duid,
             selectedAreas.map((area) => area.segmentId),
             { waitForResult: true }
-          )
-        );
+          );
+        });
         return;
       }
 
@@ -614,11 +630,23 @@ export default class RoborockMatterVacuumAccessory {
       };
     }
 
+    const selectedMapIds = this.getSelectedServiceAreaMapIds(
+      selectedAreas
+        .map((areaId) => supportedAreas.get(areaId))
+        .filter((area): area is MatterServiceArea => area !== undefined)
+    );
+    if (selectedMapIds.length > 1) {
+      throw new Error(
+        `Select service areas from only one Roborock map at a time for ${this.getVacuumName()}.`
+      );
+    }
+
     this.selectedServiceAreaIds = selectedAreas;
     if (selectedAreas.length > 0) {
       const areaNames = selectedAreas
-        .map((areaId) => supportedAreas.get(areaId)?.name)
-        .filter((name): name is string => Boolean(name));
+        .map((areaId) => supportedAreas.get(areaId))
+        .filter((area): area is MatterServiceArea => area !== undefined)
+        .map((area) => this.formatServiceAreaName(area));
       this.platform.log.info(
         `Selected Matter service area(s) for ${this.getVacuumName()}: ${areaNames.join(", ")}.`
       );
@@ -657,25 +685,34 @@ export default class RoborockMatterVacuumAccessory {
     }
 
     const areas: MatterServiceArea[] = [];
+    const mapsById = new Map(
+      this.getMatterServiceAreaMapsFromRoborock().map((map) => [map.mapId, map])
+    );
     const seenAreaIds = new Set<number>();
     for (const room of rooms) {
       const roomRecord = this.asRecord(room);
       const segmentId = this.getNumberFromValue(roomRecord?.segmentId);
       const mapId = this.getMatterMapId(roomRecord?.mapId);
+      const areaId =
+        segmentId === null
+          ? null
+          : this.getMatterAreaId(segmentId, mapId, seenAreaIds);
       if (
+        areaId === null ||
         segmentId === null ||
         !Number.isInteger(segmentId) ||
         segmentId < 0 ||
-        seenAreaIds.has(segmentId)
+        seenAreaIds.has(areaId)
       ) {
         continue;
       }
 
-      seenAreaIds.add(segmentId);
+      seenAreaIds.add(areaId);
       areas.push({
-        areaId: segmentId,
+        areaId,
         segmentId,
         mapId,
+        mapName: mapId === null ? null : mapsById.get(mapId)?.name || null,
         name: this.toMatterLocationName(roomRecord?.name, segmentId),
       });
     }
@@ -688,6 +725,9 @@ export default class RoborockMatterVacuumAccessory {
   ): MatterServiceAreaMap[] {
     const maps: MatterServiceAreaMap[] = [];
     const seenMapIds = new Set<number>();
+    const knownMapsById = new Map(
+      this.getMatterServiceAreaMapsFromRoborock().map((map) => [map.mapId, map])
+    );
 
     for (const area of areas) {
       if (area.mapId === null || seenMapIds.has(area.mapId)) {
@@ -697,11 +737,83 @@ export default class RoborockMatterVacuumAccessory {
       seenMapIds.add(area.mapId);
       maps.push({
         mapId: area.mapId,
-        name: `Roborock Map ${area.mapId}`,
+        name:
+          area.mapName ||
+          knownMapsById.get(area.mapId)?.name ||
+          `Roborock Map ${area.mapId}`,
       });
     }
 
     return maps;
+  }
+
+  private getMatterServiceAreaMapsFromRoborock(): MatterServiceAreaMap[] {
+    const getMapListForDevice = this.platform.roborockAPI.getMapListForDevice;
+    if (typeof getMapListForDevice !== "function") {
+      return [];
+    }
+
+    const maps = getMapListForDevice.call(
+      this.platform.roborockAPI,
+      this.getDuid()
+    );
+    if (!Array.isArray(maps)) {
+      return [];
+    }
+
+    const supportedMaps: MatterServiceAreaMap[] = [];
+    const seenMapIds = new Set<number>();
+    for (const map of maps) {
+      const mapRecord = this.asRecord(map);
+      const mapId = this.getMatterMapId(mapRecord?.mapId);
+      if (mapId === null || seenMapIds.has(mapId)) {
+        continue;
+      }
+
+      seenMapIds.add(mapId);
+      supportedMaps.push({
+        mapId,
+        name: this.toMatterMapName(mapRecord?.name, mapId),
+      });
+    }
+
+    return supportedMaps;
+  }
+
+  private getMatterAreaId(
+    segmentId: number,
+    mapId: number | null,
+    usedAreaIds: Set<number>
+  ): number {
+    let areaId =
+      mapId === null
+        ? segmentId
+        : mapId * MATTER_AREA_ID_MAP_MULTIPLIER + segmentId;
+
+    if (!Number.isSafeInteger(areaId) || areaId > MATTER_AREA_ID_MAX) {
+      areaId = this.getHashedMatterAreaId(mapId, segmentId);
+    }
+
+    while (usedAreaIds.has(areaId)) {
+      areaId = areaId >= MATTER_AREA_ID_MAX ? 0 : areaId + 1;
+    }
+
+    return areaId;
+  }
+
+  private getHashedMatterAreaId(
+    mapId: number | null,
+    segmentId: number
+  ): number {
+    const source = `${mapId ?? "none"}:${segmentId}`;
+    let hash = 2166136261;
+
+    for (let i = 0; i < source.length; i++) {
+      hash ^= source.charCodeAt(i);
+      hash = Math.imul(hash, 16777619) >>> 0;
+    }
+
+    return hash;
   }
 
   private getMatterMapId(value: unknown): number | null {
@@ -791,6 +903,77 @@ export default class RoborockMatterVacuumAccessory {
       ? locationName.slice(0, MATTER_LOCATION_NAME_MAX_LENGTH).trim() ||
           fallbackName
       : locationName;
+  }
+
+  private toMatterMapName(name: unknown, mapId: number): string {
+    const fallbackName = `Roborock Map ${mapId}`;
+    const normalizedName =
+      typeof name === "string" ? name.replace(/\s+/g, " ").trim() : "";
+    const mapName = normalizedName || fallbackName;
+
+    return mapName.length > MATTER_MAP_NAME_MAX_LENGTH
+      ? mapName.slice(0, MATTER_MAP_NAME_MAX_LENGTH).trim() || fallbackName
+      : mapName;
+  }
+
+  private formatServiceAreaName(area: MatterServiceArea): string {
+    return area.mapName ? `${area.name} (${area.mapName})` : area.name;
+  }
+
+  private getSelectedServiceAreaMapIds(
+    selectedAreas: MatterServiceArea[]
+  ): number[] {
+    const selectedMapIds = new Set<number>();
+    for (const area of selectedAreas) {
+      if (area.mapId !== null) {
+        selectedMapIds.add(area.mapId);
+      }
+    }
+
+    return Array.from(selectedMapIds);
+  }
+
+  private async loadMatterMapIfNeeded(
+    duid: string,
+    targetMapId: number | null
+  ): Promise<void> {
+    if (targetMapId === null) {
+      return;
+    }
+
+    const currentMapId = this.getCurrentMatterMapId();
+    if (currentMapId === targetMapId) {
+      return;
+    }
+
+    const loadMap = this.platform.roborockAPI.load_multi_map;
+    if (typeof loadMap !== "function") {
+      throw new Error(
+        `Roborock map ${targetMapId} is not currently loaded and this plugin cannot switch maps.`
+      );
+    }
+
+    this.platform.log.info(
+      `Loading Roborock map ${targetMapId} for ${this.getVacuumName()} before selected-area cleaning.`
+    );
+    await loadMap.call(this.platform.roborockAPI, duid, targetMapId, {
+      waitForResult: true,
+    });
+  }
+
+  private getCurrentMatterMapId(): number | null {
+    const getCurrentMapIdForDevice =
+      this.platform.roborockAPI.getCurrentMapIdForDevice;
+    if (typeof getCurrentMapIdForDevice !== "function") {
+      return null;
+    }
+
+    const currentMapId = getCurrentMapIdForDevice.call(
+      this.platform.roborockAPI,
+      this.getDuid()
+    );
+
+    return this.getMatterMapId(currentMapId);
   }
 
   private isServiceAreaBetaEnabled(): boolean {

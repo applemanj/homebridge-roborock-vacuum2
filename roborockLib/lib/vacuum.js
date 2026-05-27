@@ -163,6 +163,26 @@ class vacuum {
 
           break;
         }
+        case "load_multi_map": {
+          const mapId = Number(value);
+          if (!Number.isInteger(mapId) || mapId < 0) {
+            this.adapter.log.warn(
+              `Invalid map id '${value}' supplied for load_multi_map on ${duid}.`
+            );
+            break;
+          }
+
+          const result = await this.adapter.messageQueueHandler.sendRequest(
+            duid,
+            parameter,
+            [mapId]
+          );
+          this.adapter.log.debug(
+            `Command: ${parameter} with value: ${mapId} result: ${result}`
+          );
+          await this.getParameter(duid, "get_room_mapping");
+          break;
+        }
         case "set_water_box_distance_off": {
           const mappedValue = ((value - 1) / (30 - 1)) * (60 - 205) + 205;
           const parameterValue = { distance_off: mappedValue };
@@ -461,11 +481,15 @@ class vacuum {
           "get_multi_maps_list",
           []
         );
-        const mapInfo = mapList[0].map_info;
+        const mapInfo = mapList[0]?.map_info || [];
         const maps = {};
 
+        if (typeof this.adapter.updateMapListCache === "function") {
+          this.adapter.updateMapListCache(duid, mapInfo);
+        }
+
         // Set states for numeric parameters
-        for (const mapParameter in mapList[0]) {
+        for (const mapParameter in mapList[0] || {}) {
           if (typeof mapList[0][mapParameter] === "number") {
             const statePath = `Devices.${duid}.floors.${mapParameter}`;
             this.adapter.setStateAsync(statePath, {
@@ -493,7 +517,7 @@ class vacuum {
 
         // Handle the load_multi_map command
         const commandPath = `Devices.${duid}.commands.load_multi_map`;
-        if (mapList[0]["max_multi_map"] > 1) {
+        if ((mapList[0]?.max_multi_map || 0) > 1) {
           await this.adapter.createStateObjectHelper(
             commandPath,
             "Load map",

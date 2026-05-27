@@ -1,6 +1,6 @@
 const { vacuum } = require("../roborockLib/lib/vacuum");
 
-function createAdapter(mappedRooms) {
+function createAdapter(mappedRooms, multiMapResponse = []) {
   return {
     log: {
       debug: jest.fn(),
@@ -16,13 +16,19 @@ function createAdapter(mappedRooms) {
         if (method === "get_room_mapping") {
           return Promise.resolve(mappedRooms);
         }
+        if (method === "get_multi_maps_list") {
+          return Promise.resolve(multiMapResponse);
+        }
         return Promise.resolve([]);
       }),
     },
     roomIDs: {},
     updateRoomMappingCache: jest.fn(),
+    updateMapListCache: jest.fn(),
     createStateObjectHelper: jest.fn().mockResolvedValue(undefined),
     setStateAsync: jest.fn().mockResolvedValue(undefined),
+    setObjectAsync: jest.fn().mockResolvedValue(undefined),
+    delObjectAsync: jest.fn().mockResolvedValue(undefined),
     vacuums: {
       "device-1": {
         features: {
@@ -82,6 +88,36 @@ describe("vacuum room mapping", () => {
     ]);
   });
 
+  test("updates the shared map list cache after reading multi-map metadata", async () => {
+    const mapInfo = [
+      { mapFlag: 0, name: "Lower Level" },
+      { mapFlag: 1, name: "Upper Level" },
+    ];
+    const adapter = createAdapter(
+      [],
+      [{ max_multi_map: 2, multi_map_count: 2, map_info: mapInfo }]
+    );
+    const robot = new vacuum(adapter, "roborock.vacuum.a08");
+
+    await robot.getParameter("device-1", "get_multi_maps_list");
+
+    expect(adapter.updateMapListCache).toHaveBeenCalledWith(
+      "device-1",
+      mapInfo
+    );
+    expect(adapter.createStateObjectHelper).toHaveBeenCalledWith(
+      "Devices.device-1.commands.load_multi_map",
+      "Load map",
+      "number",
+      null,
+      0,
+      "value",
+      true,
+      true,
+      { 0: "Lower Level", 1: "Upper Level" }
+    );
+  });
+
   test("sends direct room segment clean commands for Matter service areas", async () => {
     const adapter = createAdapter([]);
     const robot = new vacuum(adapter, "roborock.vacuum.a08");
@@ -96,5 +132,21 @@ describe("vacuum room mapping", () => {
       "app_segment_clean",
       [{ segments: [101, 102], repeat: 2 }]
     );
+  });
+
+  test("loads a multi-map before refreshing room mappings", async () => {
+    const adapter = createAdapter([[101, 55]]);
+    const robot = new vacuum(adapter, "roborock.vacuum.a08");
+
+    await robot.command("device-1", "load_multi_map", 2);
+
+    expect(adapter.messageQueueHandler.sendRequest).toHaveBeenCalledWith(
+      "device-1",
+      "load_multi_map",
+      [2]
+    );
+    expect(adapter.updateRoomMappingCache).toHaveBeenCalledWith("device-1", 2, [
+      [101, 55],
+    ]);
   });
 });

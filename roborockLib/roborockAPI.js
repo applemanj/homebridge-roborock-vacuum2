@@ -28,6 +28,7 @@ const PERSISTED_STATE_IDS = new Set([
   "UserData",
   "clientID",
   "HomeData",
+  "RoomMappings",
   "TransportDiagnostics",
 ]);
 
@@ -59,13 +60,13 @@ class Roborock {
     this.localKeys = null;
     this.localL01Nonces = new Map();
     this.roomIDs = {};
-    this.roomMappings = {};
     this.vacuums = {};
     this.initializedVacuumDuids = new Set();
     this.socket = null;
 
     this.objects = {};
     this.states = {};
+    this.roomMappings = this.getPersistedRoomMappings();
 
     this.idCounter = 0;
     this.nonce = crypto.randomBytes(16);
@@ -374,6 +375,7 @@ class Roborock {
 
     const normalizedMapId = Number(mapId);
     const roomMapId = Number.isFinite(normalizedMapId) ? normalizedMapId : null;
+    const entry = this.ensureRoomMappingEntry(duid);
     const rooms = [];
     const seenSegments = new Set();
 
@@ -400,28 +402,162 @@ class Roborock {
       });
     }
 
-    this.roomMappings[duid] = {
-      mapId: roomMapId,
-      rooms,
-      updatedAt: new Date().toISOString(),
-    };
+    entry.mapId = roomMapId;
+    entry.currentMapId = roomMapId;
+    entry.roomsByMap[this.getRoomMappingMapKey(roomMapId)] = rooms;
+    entry.rooms = this.getFlattenedRoomMappings(entry);
+    entry.updatedAt = new Date().toISOString();
+    this.ensureMapListEntry(entry, roomMapId);
+    this.persistRoomMappings();
 
     if (this.deviceNotify) {
       this.deviceNotify("RoomMapping", {
         duid,
-        mapId: this.roomMappings[duid].mapId,
+        mapId: entry.mapId,
         rooms,
+      });
+    }
+  }
+
+  updateMapListCache(duid, mapInfo) {
+    if (!duid) {
+      return;
+    }
+
+    const maps = [];
+    const seenMapIds = new Set();
+    const mapEntries = Array.isArray(mapInfo)
+      ? mapInfo
+      : mapInfo && typeof mapInfo === "object"
+        ? Object.values(mapInfo)
+        : [];
+
+    for (const map of mapEntries) {
+      const mapRecord = map && typeof map === "object" ? map : null;
+      const mapId = Number(mapRecord?.mapFlag);
+      if (!Number.isInteger(mapId) || mapId < 0 || seenMapIds.has(mapId)) {
+        continue;
+      }
+
+      const normalizedName =
+        typeof mapRecord.name === "string" ? mapRecord.name.trim() : "";
+      seenMapIds.add(mapId);
+      maps.push({
+        mapId,
+        name: normalizedName || `Roborock Map ${mapId}`,
+      });
+    }
+
+    const entry = this.ensureRoomMappingEntry(duid);
+    if (maps.length > 0) {
+      entry.maps = maps;
+    }
+    entry.updatedAt = new Date().toISOString();
+    this.ensureMapListEntry(entry, entry.currentMapId ?? entry.mapId ?? null);
+    this.persistRoomMappings();
+
+    if (this.deviceNotify) {
+      this.deviceNotify("RoomMapping", {
+        duid,
+        mapId: entry.mapId ?? null,
+        rooms: this.getFlattenedRoomMappings(entry),
       });
     }
   }
 
   getRoomMappingsForDevice(duid) {
     const mapping = this.roomMappings[duid];
-    if (!mapping || !Array.isArray(mapping.rooms)) {
+    if (!mapping) {
       return [];
     }
 
-    return mapping.rooms.map((room) => ({ ...room }));
+    return this.getFlattenedRoomMappings(mapping).map((room) => ({ ...room }));
+  }
+
+  getMapListForDevice(duid) {
+    const mapping = this.roomMappings[duid];
+    if (!mapping || !Array.isArray(mapping.maps)) {
+      return [];
+    }
+
+    return mapping.maps.map((map) => ({ ...map }));
+  }
+
+  getCurrentMapIdForDevice(duid) {
+    const mapping = this.roomMappings[duid];
+    if (!mapping) {
+      return null;
+    }
+
+    return mapping.currentMapId ?? mapping.mapId ?? null;
+  }
+
+  getPersistedRoomMappings() {
+    const cached = this.getStateAsync("RoomMappings");
+    const value =
+      cached && typeof cached.val === "string" ? cached.val : cached?.val;
+
+    if (!value) {
+      return {};
+    }
+
+    try {
+      return typeof value === "string" ? JSON.parse(value) : value;
+    } catch (error) {
+      this.log.debug(`Failed to parse persisted room mappings: ${error}`);
+      return {};
+    }
+  }
+
+  ensureRoomMappingEntry(duid) {
+    const existing = this.roomMappings[duid] || {};
+    if (!existing.roomsByMap) {
+      existing.roomsByMap = {};
+    }
+    if (!Array.isArray(existing.maps)) {
+      existing.maps = [];
+    }
+
+    this.roomMappings[duid] = existing;
+    return existing;
+  }
+
+  ensureMapListEntry(entry, mapId) {
+    if (mapId === null || mapId === undefined) {
+      return;
+    }
+
+    if (!Array.isArray(entry.maps)) {
+      entry.maps = [];
+    }
+
+    if (!entry.maps.some((map) => map.mapId === mapId)) {
+      entry.maps.push({
+        mapId,
+        name: `Roborock Map ${mapId}`,
+      });
+    }
+  }
+
+  getFlattenedRoomMappings(mapping) {
+    if (mapping.roomsByMap && typeof mapping.roomsByMap === "object") {
+      return Object.values(mapping.roomsByMap).flatMap((rooms) =>
+        this.normalizeArray(rooms)
+      );
+    }
+
+    return this.normalizeArray(mapping.rooms);
+  }
+
+  getRoomMappingMapKey(mapId) {
+    return mapId === null || mapId === undefined ? "none" : String(mapId);
+  }
+
+  persistRoomMappings() {
+    void this.setStateAsync("RoomMappings", {
+      val: JSON.stringify(this.roomMappings),
+      ack: true,
+    });
   }
 
   getTransportDiagnostics() {
@@ -2148,7 +2284,8 @@ class Roborock {
       case "stop_zoned_clean":
       case "app_pause":
       case "app_charge":
-      case "app_segment_clean_by_ids": {
+      case "app_segment_clean_by_ids":
+      case "load_multi_map": {
         const commandPromise = this.vacuums[duid].command(
           duid,
           command,
@@ -2412,6 +2549,10 @@ class Roborock {
       },
       options
     );
+  }
+
+  async load_multi_map(duid, mapId, options = {}) {
+    await this.startCommand(duid, "load_multi_map", mapId, options);
   }
 
   async getStatus(duid, vacuum) {
