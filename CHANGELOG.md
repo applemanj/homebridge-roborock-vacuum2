@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.4.31
 
 - Added an opt-in beta Matter Service Area path that exposes cached Roborock rooms to Matter clients and uses selected rooms for Matter-initiated cleaning.
 - Documented the Service Area beta as work in progress and kept it behind a separate setting from the main experimental Matter vacuum.
