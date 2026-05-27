@@ -137,7 +137,8 @@ Known limits while this is beta:
 
 - Apple Home and other Matter controllers may not show Service Area controls yet, or may present them differently across app/OS versions.
 - If you enable or disable this beta after the Matter vacuum was already paired, remove the Matter vacuum from Apple Home, restart the Roborock child bridge, and pair it again using the fresh code from the Homebridge log. Matter controllers can cache the cluster list from the first pairing.
-- The plugin can expose saved Roborock maps, such as upper and lower floors, when Roborock reports multi-map metadata. Room mappings are cached per map as each map is seen. If a room is missing from a floor, load that floor's map in the Roborock app or the plugin's map command, let the child bridge refresh, and check the Homebridge log for room mapping updates.
+- The plugin can expose saved Roborock maps, such as upper and lower floors, when Roborock reports multi-map metadata. Some Matter controllers do not show the separate map/floor picker yet, so when more than one map is available the plugin also prefixes room labels with the map name, such as `Upper Floor - Kitchen`.
+- Room mappings are cached per map as each map is seen. If a room is missing from a floor, load that floor's map in the Roborock app or the plugin's map command, let the child bridge refresh, and check the Homebridge log for room mapping updates.
 - Starting a selected room on a map that is not currently active will ask Roborock to load that map first, then send the room-clean command.
 - This does not replace the existing HomeKit scene switches. Those remain the most reliable way to expose saved Roborock routines while Service Area behavior is being tested.
 

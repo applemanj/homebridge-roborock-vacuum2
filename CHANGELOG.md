@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.34
+
+- Prefixed Matter Service Area room labels with the Roborock map name when multiple saved maps are available, so controllers that flatten maps still show floor context.
+- Documented the map-name label fallback for Apple Home and other Matter clients that do not expose a separate map picker yet.
+
 ## 1.4.33
 
 - Added multi-map Matter Service Area metadata so supported clients can group rooms by saved Roborock maps.

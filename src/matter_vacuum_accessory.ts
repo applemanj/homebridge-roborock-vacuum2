@@ -574,6 +574,7 @@ export default class RoborockMatterVacuumAccessory {
   private buildServiceAreaCluster(): Record<string, unknown> {
     const areas = this.getMatterServiceAreas();
     const supportedMaps = this.getMatterServiceAreaMaps(areas);
+    const includeMapNamesInAreaLabels = supportedMaps.length > 1;
     const supportedAreaIds = new Set(areas.map((area) => area.areaId));
     const selectedAreas = this.selectedServiceAreaIds.filter((areaId) =>
       supportedAreaIds.has(areaId)
@@ -591,7 +592,10 @@ export default class RoborockMatterVacuumAccessory {
         mapId: area.mapId,
         areaInfo: {
           locationInfo: {
-            locationName: area.name,
+            locationName: this.getMatterLocationDisplayName(
+              area,
+              includeMapNamesInAreaLabels
+            ),
             floorNumber: null,
             areaType: null,
           },
@@ -851,7 +855,11 @@ export default class RoborockMatterVacuumAccessory {
 
     this.platform.log.info(
       `Matter Service Area beta for ${this.getVacuumName()}: exposing ${areas.length} room(s)` +
-        `${maps.length > 0 ? ` on ${maps.length} map(s)` : ""}: ${areas.map((area) => area.name).join(", ")}.`
+        `${maps.length > 0 ? ` on ${maps.length} map(s)` : ""}: ${areas
+          .map((area) =>
+            this.getMatterLocationDisplayName(area, maps.length > 1)
+          )
+          .join(", ")}.`
     );
   }
 
@@ -918,6 +926,23 @@ export default class RoborockMatterVacuumAccessory {
 
   private formatServiceAreaName(area: MatterServiceArea): string {
     return area.mapName ? `${area.name} (${area.mapName})` : area.name;
+  }
+
+  private getMatterLocationDisplayName(
+    area: MatterServiceArea,
+    includeMapName: boolean
+  ): string {
+    if (!includeMapName || !area.mapName) {
+      return area.name;
+    }
+
+    const fallbackName = `${area.mapName} - Room ${area.segmentId}`;
+    const displayName = `${area.mapName} - ${area.name}`;
+
+    return displayName.length > MATTER_LOCATION_NAME_MAX_LENGTH
+      ? displayName.slice(0, MATTER_LOCATION_NAME_MAX_LENGTH).trim() ||
+          fallbackName.slice(0, MATTER_LOCATION_NAME_MAX_LENGTH).trim()
+      : displayName;
   }
 
   private getSelectedServiceAreaMapIds(
