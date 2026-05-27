@@ -49,6 +49,32 @@ describe("Roborock API model and diagnostics helpers", () => {
     ]);
   });
 
+  test("stores room mapping cache for Matter service areas", () => {
+    const api = new Roborock({ log: createLog() });
+    const notify = jest.fn();
+    api.roomIDs = { 55: "Kitchen" };
+    api.setDeviceNotify(notify);
+
+    api.updateRoomMappingCache("device-1", 2, [
+      [101, 55],
+      [101, 56],
+      ["bad", 57],
+      [102, 99],
+    ]);
+
+    expect(api.getRoomMappingsForDevice("device-1")).toEqual([
+      { segmentId: 101, roomId: 55, name: "Kitchen" },
+      { segmentId: 102, roomId: 99, name: "Room 99" },
+    ]);
+    expect(notify).toHaveBeenCalledWith(
+      "RoomMapping",
+      expect.objectContaining({
+        duid: "device-1",
+        mapId: 2,
+      })
+    );
+  });
+
   test("transport diagnostics are persisted per device", async () => {
     const api = new Roborock({ log: createLog() });
 

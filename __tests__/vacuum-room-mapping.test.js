@@ -20,6 +20,7 @@ function createAdapter(mappedRooms) {
       }),
     },
     roomIDs: {},
+    updateRoomMappingCache: jest.fn(),
     createStateObjectHelper: jest.fn().mockResolvedValue(undefined),
     setStateAsync: jest.fn().mockResolvedValue(undefined),
     vacuums: {
@@ -67,5 +68,33 @@ describe("vacuum room mapping", () => {
       expect.stringContaining("No room mappings returned")
     );
     expect(adapter.log.warn).not.toHaveBeenCalled();
+  });
+
+  test("updates the shared room mapping cache after reading room mappings", async () => {
+    const adapter = createAdapter([[101, 55]]);
+    adapter.roomIDs = { 55: "Kitchen" };
+    const robot = new vacuum(adapter, "roborock.vacuum.a08");
+
+    await robot.getParameter("device-1", "get_room_mapping");
+
+    expect(adapter.updateRoomMappingCache).toHaveBeenCalledWith("device-1", 2, [
+      [101, 55],
+    ]);
+  });
+
+  test("sends direct room segment clean commands for Matter service areas", async () => {
+    const adapter = createAdapter([]);
+    const robot = new vacuum(adapter, "roborock.vacuum.a08");
+
+    await robot.command("device-1", "app_segment_clean_by_ids", {
+      segments: [101, "102", 101, "bad"],
+      repeat: 2,
+    });
+
+    expect(adapter.messageQueueHandler.sendRequest).toHaveBeenCalledWith(
+      "device-1",
+      "app_segment_clean",
+      [{ segments: [101, 102], repeat: 2 }]
+    );
   });
 });

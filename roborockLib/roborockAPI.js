@@ -59,6 +59,7 @@ class Roborock {
     this.localKeys = null;
     this.localL01Nonces = new Map();
     this.roomIDs = {};
+    this.roomMappings = {};
     this.vacuums = {};
     this.initializedVacuumDuids = new Set();
     this.socket = null;
@@ -364,6 +365,61 @@ class Roborock {
     return this.normalizeArray(homeDataSource.devices).concat(
       this.normalizeArray(homeDataSource.receivedDevices)
     );
+  }
+
+  updateRoomMappingCache(duid, mapId, mappedRooms) {
+    if (!duid) {
+      return;
+    }
+
+    const normalizedMapId = Number(mapId);
+    const rooms = [];
+    const seenSegments = new Set();
+
+    for (const mappedRoom of this.normalizeArray(mappedRooms)) {
+      if (!Array.isArray(mappedRoom) || mappedRoom.length < 2) {
+        continue;
+      }
+
+      const segmentId = Number(mappedRoom[0]);
+      const roomId = Number(mappedRoom[1]);
+      if (!Number.isInteger(segmentId) || segmentId < 0) {
+        continue;
+      }
+      if (seenSegments.has(segmentId)) {
+        continue;
+      }
+
+      seenSegments.add(segmentId);
+      rooms.push({
+        segmentId,
+        roomId: Number.isFinite(roomId) ? roomId : mappedRoom[1],
+        name: this.roomIDs[mappedRoom[1]] || `Room ${mappedRoom[1]}`,
+      });
+    }
+
+    this.roomMappings[duid] = {
+      mapId: Number.isFinite(normalizedMapId) ? normalizedMapId : null,
+      rooms,
+      updatedAt: new Date().toISOString(),
+    };
+
+    if (this.deviceNotify) {
+      this.deviceNotify("RoomMapping", {
+        duid,
+        mapId: this.roomMappings[duid].mapId,
+        rooms,
+      });
+    }
+  }
+
+  getRoomMappingsForDevice(duid) {
+    const mapping = this.roomMappings[duid];
+    if (!mapping || !Array.isArray(mapping.rooms)) {
+      return [];
+    }
+
+    return mapping.rooms.map((room) => ({ ...room }));
   }
 
   getTransportDiagnostics() {
@@ -2089,7 +2145,8 @@ class Roborock {
       case "app_stop":
       case "stop_zoned_clean":
       case "app_pause":
-      case "app_charge": {
+      case "app_charge":
+      case "app_segment_clean_by_ids": {
         const commandPromise = this.vacuums[duid].command(
           duid,
           command,
@@ -2341,6 +2398,18 @@ class Roborock {
 
   async app_charge(duid, options) {
     await this.startCommand(duid, "app_charge", null, options);
+  }
+
+  async app_segment_clean_by_ids(duid, segments, options = {}) {
+    await this.startCommand(
+      duid,
+      "app_segment_clean_by_ids",
+      {
+        segments,
+        repeat: options.repeat,
+      },
+      options
+    );
   }
 
   async getStatus(duid, vacuum) {

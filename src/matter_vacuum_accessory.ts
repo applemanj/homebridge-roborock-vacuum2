@@ -21,6 +21,12 @@ type RoborockDevice = {
   name?: string;
 };
 
+type MatterServiceArea = {
+  areaId: number;
+  segmentId: number;
+  name: string;
+};
+
 const RUN_MODE_IDLE = 0;
 const RUN_MODE_CLEANING = 1;
 const CLEAN_MODE_VACUUM = 0;
@@ -78,6 +84,13 @@ const BATTERY_CHARGE_STATE = {
   IS_NOT_CHARGING: 3,
 } as const;
 
+const SERVICE_AREA_SELECT_STATUS = {
+  SUCCESS: 0,
+  UNSUPPORTED_AREA: 1,
+  INVALID_IN_MODE: 2,
+} as const;
+
+const MATTER_LOCATION_NAME_MAX_LENGTH = 64;
 const OPTIMISTIC_STATE_TTL_MS = 2 * 60 * 1000;
 const SLOW_MATTER_COMMAND_MS = 3000;
 
@@ -91,6 +104,7 @@ export default class RoborockMatterVacuumAccessory {
   private registered: boolean;
   private optimisticClusters: MatterClusterState | null = null;
   private optimisticExpiresAt = 0;
+  private selectedServiceAreaIds: number[] = [];
 
   constructor(
     private readonly platform: RoborockPlatform,
@@ -140,7 +154,7 @@ export default class RoborockMatterVacuumAccessory {
   }
 
   async notifyDeviceUpdater(id: string, data: unknown): Promise<void> {
-    if (id === "HomeData") {
+    if (id === "HomeData" || id === "RoomMapping") {
       await this.updateMatterStateFromRoborock();
       return;
     }
@@ -169,7 +183,7 @@ export default class RoborockMatterVacuumAccessory {
   }
 
   private buildHandlers(): Record<string, Record<string, unknown>> {
-    return {
+    const handlers: Record<string, Record<string, unknown>> = {
       rvcRunMode: {
         changeToMode: async (request?: { newMode?: number }) => {
           await this.changeRunMode(request?.newMode);
@@ -192,6 +206,16 @@ export default class RoborockMatterVacuumAccessory {
         },
       },
     };
+
+    if (this.isServiceAreaBetaEnabled()) {
+      handlers.serviceArea = {
+        selectAreas: async (request?: { newAreas?: unknown }) => {
+          return await this.selectServiceAreas(request?.newAreas);
+        },
+      };
+    }
+
+    return handlers;
   }
 
   private async changeRunMode(newMode?: number): Promise<void> {
@@ -199,6 +223,30 @@ export default class RoborockMatterVacuumAccessory {
     const duid = this.getDuid();
 
     if (newMode === RUN_MODE_CLEANING) {
+      const selectedAreas = this.getSelectedServiceAreaSegments();
+      if (selectedAreas.length > 0) {
+        const selectedAreaNames = selectedAreas.map((area) => area.name);
+        this.platform.log.info(
+          `Starting ${name} from Matter for selected service area(s): ${selectedAreaNames.join(", ")}.`
+        );
+        const state = {
+          rvcRunMode: { currentMode: RUN_MODE_CLEANING },
+          rvcOperationalState: {
+            operationalState: RVC_OPERATIONAL_STATE.RUNNING,
+          },
+        };
+        this.setOptimisticState(state);
+        await this.updateMatterState(state);
+        this.dispatchRoborockMatterCommand("service area clean", () =>
+          this.platform.roborockAPI.app_segment_clean_by_ids(
+            duid,
+            selectedAreas.map((area) => area.segmentId),
+            { waitForResult: true }
+          )
+        );
+        return;
+      }
+
       this.platform.log.info(`Starting ${name} from Matter.`);
       const state = {
         rvcRunMode: { currentMode: RUN_MODE_CLEANING },
@@ -368,12 +416,18 @@ export default class RoborockMatterVacuumAccessory {
   }
 
   private buildClusters(): MatterClusterState {
-    return this.applyOptimisticState({
+    const clusters: MatterClusterState = {
       rvcRunMode: this.buildRunModeCluster(),
       rvcCleanMode: this.buildCleanModeCluster(),
       rvcOperationalState: this.buildOperationalStateCluster(),
       powerSource: this.buildPowerSourceCluster(),
-    });
+    };
+
+    if (this.isServiceAreaBetaEnabled()) {
+      clusters.serviceArea = this.buildServiceAreaCluster();
+    }
+
+    return this.applyOptimisticState(clusters);
   }
 
   private buildRunModeCluster(): Record<string, unknown> {
@@ -467,6 +521,173 @@ export default class RoborockMatterVacuumAccessory {
       ),
       batReplacementNeeded: false,
     };
+  }
+
+  private buildServiceAreaCluster(): Record<string, unknown> {
+    const areas = this.getMatterServiceAreas();
+    const supportedAreaIds = new Set(areas.map((area) => area.areaId));
+    const selectedAreas = this.selectedServiceAreaIds.filter((areaId) =>
+      supportedAreaIds.has(areaId)
+    );
+
+    if (selectedAreas.length !== this.selectedServiceAreaIds.length) {
+      this.selectedServiceAreaIds = selectedAreas;
+    }
+
+    return {
+      supportedAreas: areas.map((area) => ({
+        areaId: area.areaId,
+        mapId: null,
+        areaInfo: {
+          locationInfo: {
+            locationName: area.name,
+            floorNumber: null,
+            areaType: null,
+          },
+          landmarkInfo: null,
+        },
+      })),
+      selectedAreas,
+    };
+  }
+
+  private async selectServiceAreas(
+    newAreas?: unknown
+  ): Promise<Record<string, unknown>> {
+    const supportedAreas = new Map(
+      this.getMatterServiceAreas().map((area) => [area.areaId, area])
+    );
+    const selectedAreas = this.normalizeMatterAreaIds(newAreas);
+    const unsupportedArea = selectedAreas.find(
+      (areaId) => !supportedAreas.has(areaId)
+    );
+
+    if (unsupportedArea !== undefined) {
+      return {
+        status: SERVICE_AREA_SELECT_STATUS.UNSUPPORTED_AREA,
+        statusText: `Area ${unsupportedArea} is not available from the Roborock room map.`,
+      };
+    }
+
+    this.selectedServiceAreaIds = selectedAreas;
+    if (selectedAreas.length > 0) {
+      const areaNames = selectedAreas
+        .map((areaId) => supportedAreas.get(areaId)?.name)
+        .filter((name): name is string => Boolean(name));
+      this.platform.log.info(
+        `Selected Matter service area(s) for ${this.getVacuumName()}: ${areaNames.join(", ")}.`
+      );
+    } else {
+      this.platform.log.info(
+        `Cleared Matter service area selection for ${this.getVacuumName()}.`
+      );
+    }
+
+    await this.updateMatterState({
+      serviceArea: this.buildServiceAreaCluster(),
+    });
+
+    return {
+      status: SERVICE_AREA_SELECT_STATUS.SUCCESS,
+      statusText: "",
+    };
+  }
+
+  private getMatterServiceAreas(): MatterServiceArea[] {
+    const getRoomMappingsForDevice =
+      this.platform.roborockAPI.getRoomMappingsForDevice;
+    if (typeof getRoomMappingsForDevice !== "function") {
+      return [];
+    }
+
+    const rooms = getRoomMappingsForDevice.call(
+      this.platform.roborockAPI,
+      this.getDuid()
+    );
+    if (!Array.isArray(rooms)) {
+      return [];
+    }
+
+    const areas: MatterServiceArea[] = [];
+    const seenAreaIds = new Set<number>();
+    for (const room of rooms) {
+      const roomRecord = this.asRecord(room);
+      const segmentId = this.getNumberFromValue(roomRecord?.segmentId);
+      if (
+        segmentId === null ||
+        !Number.isInteger(segmentId) ||
+        segmentId < 0 ||
+        seenAreaIds.has(segmentId)
+      ) {
+        continue;
+      }
+
+      seenAreaIds.add(segmentId);
+      areas.push({
+        areaId: segmentId,
+        segmentId,
+        name: this.toMatterLocationName(roomRecord?.name, segmentId),
+      });
+    }
+
+    return areas;
+  }
+
+  private getSelectedServiceAreaSegments(): MatterServiceArea[] {
+    if (!this.isServiceAreaBetaEnabled()) {
+      return [];
+    }
+
+    const areasById = new Map(
+      this.getMatterServiceAreas().map((area) => [area.areaId, area])
+    );
+    return this.selectedServiceAreaIds
+      .map((areaId) => areasById.get(areaId))
+      .filter((area): area is MatterServiceArea => area !== undefined);
+  }
+
+  private normalizeMatterAreaIds(newAreas: unknown): number[] {
+    if (!Array.isArray(newAreas)) {
+      return [];
+    }
+
+    const selectedAreas: number[] = [];
+    const seenAreaIds = new Set<number>();
+    for (const area of newAreas) {
+      const areaId = this.getNumberFromValue(area);
+      if (
+        areaId === null ||
+        !Number.isInteger(areaId) ||
+        areaId < 0 ||
+        seenAreaIds.has(areaId)
+      ) {
+        continue;
+      }
+
+      seenAreaIds.add(areaId);
+      selectedAreas.push(areaId);
+    }
+
+    return selectedAreas;
+  }
+
+  private toMatterLocationName(name: unknown, areaId: number): string {
+    const fallbackName = `Room ${areaId}`;
+    const normalizedName =
+      typeof name === "string" ? name.replace(/\s+/g, " ").trim() : "";
+    const locationName = normalizedName || fallbackName;
+
+    return locationName.length > MATTER_LOCATION_NAME_MAX_LENGTH
+      ? locationName.slice(0, MATTER_LOCATION_NAME_MAX_LENGTH).trim() ||
+          fallbackName
+      : locationName;
+  }
+
+  private isServiceAreaBetaEnabled(): boolean {
+    return Boolean(
+      this.platform.platformConfig.enableMatter &&
+        this.platform.platformConfig.enableMatterServiceAreaBeta
+    );
   }
 
   private getBatteryChargeLevel(battery: number | null): number {

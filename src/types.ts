@@ -9,4 +9,5 @@ export interface RoborockPlatformConfig extends PlatformConfig {
   skipDevices?: string;
   transientWarningThrottleHours?: number;
   enableMatter?: boolean;
+  enableMatterServiceAreaBeta?: boolean;
 }

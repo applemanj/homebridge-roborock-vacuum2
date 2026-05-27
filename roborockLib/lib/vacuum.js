@@ -98,6 +98,40 @@ class vacuum {
 
           break;
         }
+        case "app_segment_clean_by_ids": {
+          const requestedSegments =
+            value && Array.isArray(value.segments) ? value.segments : [];
+          const segments = Array.from(
+            new Set(
+              requestedSegments
+                .map((segment) => Number(segment))
+                .filter((segment) => Number.isInteger(segment) && segment >= 0)
+            )
+          );
+          const repeat = Number(value && value.repeat);
+          const roomList = {
+            segments,
+            repeat: Number.isInteger(repeat) && repeat > 0 ? repeat : 1,
+          };
+
+          if (roomList.segments.length === 0) {
+            this.adapter.log.warn(
+              `No room segments supplied for app_segment_clean_by_ids on ${duid}.`
+            );
+            break;
+          }
+
+          const result = await this.adapter.messageQueueHandler.sendRequest(
+            duid,
+            "app_segment_clean",
+            [roomList]
+          );
+          this.adapter.log.debug(
+            `app_segment_clean_by_ids with roomIDs: ${JSON.stringify(roomList)} result: ${result}`
+          );
+
+          break;
+        }
         case "reset_consumable":
           await this.adapter.messageQueueHandler.sendRequest(duid, parameter, [
             value,
@@ -368,6 +402,9 @@ class vacuum {
           "get_room_mapping",
           []
         );
+        if (typeof this.adapter.updateRoomMappingCache === "function") {
+          this.adapter.updateRoomMappingCache(duid, roomFloor, mappedRooms);
+        }
 
         // if no rooms have been named, processing them can't work
         if (!Array.isArray(mappedRooms) || mappedRooms.length < 1) {

@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Added an opt-in beta Matter Service Area path that exposes cached Roborock rooms to Matter clients and uses selected rooms for Matter-initiated cleaning.
+- Documented the Service Area beta as work in progress and kept it behind a separate setting from the main experimental Matter vacuum.
+
 ## 1.4.30
 
 - Moved local/cloud transport transition diagnostics behind debug logging to keep normal Homebridge logs quieter.
