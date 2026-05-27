@@ -24,6 +24,12 @@ type RoborockDevice = {
 type MatterServiceArea = {
   areaId: number;
   segmentId: number;
+  mapId: number | null;
+  name: string;
+};
+
+type MatterServiceAreaMap = {
+  mapId: number;
   name: string;
 };
 
@@ -105,6 +111,7 @@ export default class RoborockMatterVacuumAccessory {
   private optimisticClusters: MatterClusterState | null = null;
   private optimisticExpiresAt = 0;
   private selectedServiceAreaIds: number[] = [];
+  private lastServiceAreaSummary = "";
 
   constructor(
     private readonly platform: RoborockPlatform,
@@ -222,6 +229,10 @@ export default class RoborockMatterVacuumAccessory {
     const name = this.getVacuumName();
     const duid = this.getDuid();
 
+    this.platform.log.info(
+      `Matter run mode request for ${name}: ${newMode ?? "unknown"}.`
+    );
+
     if (newMode === RUN_MODE_CLEANING) {
       const selectedAreas = this.getSelectedServiceAreaSegments();
       if (selectedAreas.length > 0) {
@@ -236,7 +247,7 @@ export default class RoborockMatterVacuumAccessory {
           },
         };
         this.setOptimisticState(state);
-        await this.updateMatterState(state);
+        this.scheduleMatterStateUpdate(state, "selected-area start");
         this.dispatchRoborockMatterCommand("service area clean", () =>
           this.platform.roborockAPI.app_segment_clean_by_ids(
             duid,
@@ -255,7 +266,7 @@ export default class RoborockMatterVacuumAccessory {
         },
       };
       this.setOptimisticState(state);
-      await this.updateMatterState(state);
+      this.scheduleMatterStateUpdate(state, "start");
       this.dispatchRoborockMatterCommand("start", () =>
         this.platform.roborockAPI.app_start(duid, { waitForResult: true })
       );
@@ -273,7 +284,7 @@ export default class RoborockMatterVacuumAccessory {
         },
       };
       this.setOptimisticState(state);
-      await this.updateMatterState(state);
+      this.scheduleMatterStateUpdate(state, "stop");
       this.dispatchRoborockMatterCommand("stop", () =>
         this.platform.roborockAPI.app_stop(duid, { waitForResult: true })
       );
@@ -288,12 +299,16 @@ export default class RoborockMatterVacuumAccessory {
   private async changeCleanMode(newMode?: number): Promise<void> {
     const name = this.getVacuumName();
 
+    this.platform.log.info(
+      `Matter clean mode request for ${name}: ${newMode ?? "unknown"}.`
+    );
+
     if (newMode === CLEAN_MODE_VACUUM) {
       const state = {
         rvcCleanMode: { currentMode: CLEAN_MODE_VACUUM },
       };
       this.setOptimisticState(state);
-      await this.updateMatterState(state);
+      this.scheduleMatterStateUpdate(state, "clean mode change");
       return;
     }
 
@@ -310,7 +325,7 @@ export default class RoborockMatterVacuumAccessory {
       },
     };
     this.setOptimisticState(state);
-    await this.updateMatterState(state);
+    this.scheduleMatterStateUpdate(state, "pause");
     this.dispatchRoborockMatterCommand("pause", () =>
       this.platform.roborockAPI.app_pause(this.getDuid(), {
         waitForResult: true,
@@ -327,7 +342,7 @@ export default class RoborockMatterVacuumAccessory {
       },
     };
     this.setOptimisticState(state);
-    await this.updateMatterState(state);
+    this.scheduleMatterStateUpdate(state, "resume");
     this.dispatchRoborockMatterCommand("resume", () =>
       this.platform.roborockAPI.app_start(this.getDuid(), {
         waitForResult: true,
@@ -346,12 +361,29 @@ export default class RoborockMatterVacuumAccessory {
       },
     };
     this.setOptimisticState(state);
-    await this.updateMatterState(state);
+    this.scheduleMatterStateUpdate(state, "return to dock");
     this.dispatchRoborockMatterCommand("return to dock", () =>
       this.platform.roborockAPI.app_charge(this.getDuid(), {
         waitForResult: true,
       })
     );
+  }
+
+  private scheduleMatterStateUpdate(
+    partialClusters: MatterClusterState,
+    reason: string
+  ): void {
+    if (!this.registered) {
+      return;
+    }
+
+    setTimeout(() => {
+      void this.updateMatterState(partialClusters).catch((error) => {
+        this.platform.log.warn(
+          `Unable to update Matter state after ${reason} for ${this.getVacuumName()}: ${this.getErrorMessage(error)}`
+        );
+      });
+    }, 0);
   }
 
   private async updateMatterState(
@@ -525,6 +557,7 @@ export default class RoborockMatterVacuumAccessory {
 
   private buildServiceAreaCluster(): Record<string, unknown> {
     const areas = this.getMatterServiceAreas();
+    const supportedMaps = this.getMatterServiceAreaMaps(areas);
     const supportedAreaIds = new Set(areas.map((area) => area.areaId));
     const selectedAreas = this.selectedServiceAreaIds.filter((areaId) =>
       supportedAreaIds.has(areaId)
@@ -534,10 +567,12 @@ export default class RoborockMatterVacuumAccessory {
       this.selectedServiceAreaIds = selectedAreas;
     }
 
-    return {
+    this.logMatterServiceAreaSummary(areas, supportedMaps);
+
+    const state: Record<string, unknown> = {
       supportedAreas: areas.map((area) => ({
         areaId: area.areaId,
-        mapId: null,
+        mapId: area.mapId,
         areaInfo: {
           locationInfo: {
             locationName: area.name,
@@ -549,6 +584,12 @@ export default class RoborockMatterVacuumAccessory {
       })),
       selectedAreas,
     };
+
+    if (supportedMaps.length > 0) {
+      state.supportedMaps = supportedMaps;
+    }
+
+    return state;
   }
 
   private async selectServiceAreas(
@@ -560,6 +601,10 @@ export default class RoborockMatterVacuumAccessory {
     const selectedAreas = this.normalizeMatterAreaIds(newAreas);
     const unsupportedArea = selectedAreas.find(
       (areaId) => !supportedAreas.has(areaId)
+    );
+
+    this.platform.log.info(
+      `Matter service area selection request for ${this.getVacuumName()}: ${selectedAreas.join(", ") || "none"}.`
     );
 
     if (unsupportedArea !== undefined) {
@@ -583,9 +628,12 @@ export default class RoborockMatterVacuumAccessory {
       );
     }
 
-    await this.updateMatterState({
-      serviceArea: this.buildServiceAreaCluster(),
-    });
+    this.scheduleMatterStateUpdate(
+      {
+        serviceArea: this.buildServiceAreaCluster(),
+      },
+      "service area selection"
+    );
 
     return {
       status: SERVICE_AREA_SELECT_STATUS.SUCCESS,
@@ -613,6 +661,7 @@ export default class RoborockMatterVacuumAccessory {
     for (const room of rooms) {
       const roomRecord = this.asRecord(room);
       const segmentId = this.getNumberFromValue(roomRecord?.segmentId);
+      const mapId = this.getMatterMapId(roomRecord?.mapId);
       if (
         segmentId === null ||
         !Number.isInteger(segmentId) ||
@@ -626,11 +675,72 @@ export default class RoborockMatterVacuumAccessory {
       areas.push({
         areaId: segmentId,
         segmentId,
+        mapId,
         name: this.toMatterLocationName(roomRecord?.name, segmentId),
       });
     }
 
     return areas;
+  }
+
+  private getMatterServiceAreaMaps(
+    areas: MatterServiceArea[]
+  ): MatterServiceAreaMap[] {
+    const maps: MatterServiceAreaMap[] = [];
+    const seenMapIds = new Set<number>();
+
+    for (const area of areas) {
+      if (area.mapId === null || seenMapIds.has(area.mapId)) {
+        continue;
+      }
+
+      seenMapIds.add(area.mapId);
+      maps.push({
+        mapId: area.mapId,
+        name: `Roborock Map ${area.mapId}`,
+      });
+    }
+
+    return maps;
+  }
+
+  private getMatterMapId(value: unknown): number | null {
+    const mapId = this.getNumberFromValue(value);
+
+    return mapId !== null && Number.isInteger(mapId) && mapId >= 0
+      ? mapId
+      : null;
+  }
+
+  private logMatterServiceAreaSummary(
+    areas: MatterServiceArea[],
+    maps: MatterServiceAreaMap[]
+  ): void {
+    const summary = [
+      this.getDuid(),
+      areas
+        .map((area) => `${area.areaId}:${area.mapId ?? "none"}:${area.name}`)
+        .join("|"),
+      maps.map((map) => `${map.mapId}:${map.name}`).join("|"),
+    ].join(";");
+
+    if (summary === this.lastServiceAreaSummary) {
+      return;
+    }
+
+    this.lastServiceAreaSummary = summary;
+
+    if (areas.length === 0) {
+      this.platform.log.info(
+        `Matter Service Area beta is enabled for ${this.getVacuumName()}, but no Roborock rooms are available to expose yet.`
+      );
+      return;
+    }
+
+    this.platform.log.info(
+      `Matter Service Area beta for ${this.getVacuumName()}: exposing ${areas.length} room(s)` +
+        `${maps.length > 0 ? ` on ${maps.length} map(s)` : ""}: ${areas.map((area) => area.name).join(", ")}.`
+    );
   }
 
   private getSelectedServiceAreaSegments(): MatterServiceArea[] {
@@ -934,7 +1044,7 @@ export default class RoborockMatterVacuumAccessory {
       })
       .catch((error) => {
         this.platform.log.error(
-          `Error sending Matter ${action} command to ${this.getVacuumName()}: ${error}`
+          `Error sending Matter ${action} command to ${this.getVacuumName()}: ${this.getErrorMessage(error)}`
         );
         this.clearOptimisticState();
         void this.updateMatterStateFromRoborock();
@@ -982,6 +1092,10 @@ export default class RoborockMatterVacuumAccessory {
     }
 
     return lastTransport;
+  }
+
+  private getErrorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
   }
 
   private mergeClusterState(

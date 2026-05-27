@@ -373,6 +373,7 @@ class Roborock {
     }
 
     const normalizedMapId = Number(mapId);
+    const roomMapId = Number.isFinite(normalizedMapId) ? normalizedMapId : null;
     const rooms = [];
     const seenSegments = new Set();
 
@@ -394,12 +395,13 @@ class Roborock {
       rooms.push({
         segmentId,
         roomId: Number.isFinite(roomId) ? roomId : mappedRoom[1],
+        mapId: roomMapId,
         name: this.roomIDs[mappedRoom[1]] || `Room ${mappedRoom[1]}`,
       });
     }
 
     this.roomMappings[duid] = {
-      mapId: Number.isFinite(normalizedMapId) ? normalizedMapId : null,
+      mapId: roomMapId,
       rooms,
       updatedAt: new Date().toISOString(),
     };

@@ -63,8 +63,8 @@ describe("Roborock API model and diagnostics helpers", () => {
     ]);
 
     expect(api.getRoomMappingsForDevice("device-1")).toEqual([
-      { segmentId: 101, roomId: 55, name: "Kitchen" },
-      { segmentId: 102, roomId: 99, name: "Room 99" },
+      { segmentId: 101, roomId: 55, mapId: 2, name: "Kitchen" },
+      { segmentId: 102, roomId: 99, mapId: 2, name: "Room 99" },
     ]);
     expect(notify).toHaveBeenCalledWith(
       "RoomMapping",

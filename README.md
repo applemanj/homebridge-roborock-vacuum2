@@ -136,6 +136,7 @@ Phase 1 maps the Matter vacuum controls to the same Roborock commands used elsew
 Known limits while this is beta:
 
 - Apple Home and other Matter controllers may not show Service Area controls yet, or may present them differently across app/OS versions.
+- If you enable or disable this beta after the Matter vacuum was already paired, remove the Matter vacuum from Apple Home, restart the Roborock child bridge, and pair it again using the fresh code from the Homebridge log. Matter controllers can cache the cluster list from the first pairing.
 - The room list comes from the current Roborock map. If rooms are missing or renamed, refresh the map in the Roborock app, restart the Roborock child bridge, and check the Homebridge log for room mapping updates.
 - This does not replace the existing HomeKit scene switches. Those remain the most reliable way to expose saved Roborock routines while Service Area behavior is being tested.
 

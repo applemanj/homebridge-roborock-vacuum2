@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.32
+
+- Deferred Matter state pushes until after command handlers return to reduce HomeKit command timeouts.
+- Added Matter Service Area map metadata and clearer Matter command/room-selection diagnostics.
+- Documented re-pairing the Matter vacuum after changing the Service Area beta setting because controllers can cache the cluster list.
+
 ## 1.4.31
 
 - Added an opt-in beta Matter Service Area path that exposes cached Roborock rooms to Matter clients and uses selected rooms for Matter-initiated cleaning.
