@@ -111,6 +111,244 @@ describe("Roborock API model and diagnostics helpers", () => {
     expect(api.getCurrentMapIdForDevice("device-1")).toBe(1);
   });
 
+  test("Matter Service Area beta caches rooms from missing saved maps while idle", async () => {
+    const api = createRoborock({ enableMatterServiceAreaBeta: true });
+    api.roomIDs = {
+      55: "Lower Level",
+      77: "Upper Hallway",
+    };
+    await api.setStateAsync("HomeData", {
+      val: JSON.stringify({
+        products: [{ id: "product-1", model: "roborock.vacuum.a08" }],
+        devices: [
+          {
+            duid: "device-1",
+            productId: "product-1",
+            deviceStatus: { state: "8" },
+          },
+        ],
+        receivedDevices: [],
+      }),
+      ack: true,
+    });
+
+    const mapInfo = [
+      { mapFlag: 0, name: "Lower Floor" },
+      { mapFlag: 1, name: "Upper Floor" },
+    ];
+    const robot = {
+      getParameter: jest.fn(async (duid, parameter) => {
+        if (parameter === "get_multi_maps_list") {
+          api.updateMapListCache(duid, mapInfo);
+          return mapInfo;
+        }
+
+        if (parameter === "get_room_mapping") {
+          api.updateRoomMappingCache(duid, 0, [[16, 55]]);
+          return [[16, 55]];
+        }
+
+        return null;
+      }),
+      command: jest.fn(async (duid, parameter, mapId) => {
+        if (parameter !== "load_multi_map") {
+          return;
+        }
+
+        if (mapId === 1) {
+          api.updateRoomMappingCache(duid, 1, [[17, 77]]);
+        } else {
+          api.updateRoomMappingCache(duid, 0, [[16, 55]]);
+        }
+      }),
+    };
+
+    await api.updateDataMinimumData("device-1", robot, "roborock.vacuum.a08");
+
+    expect(robot.command).toHaveBeenCalledWith(
+      "device-1",
+      "load_multi_map",
+      1,
+      {
+        throwOnError: true,
+      }
+    );
+    expect(robot.command).toHaveBeenCalledWith(
+      "device-1",
+      "load_multi_map",
+      0,
+      {
+        throwOnError: true,
+      }
+    );
+    expect(api.getRoomMappingsForDevice("device-1")).toEqual([
+      { segmentId: 16, roomId: 55, mapId: 0, name: "Lower Level" },
+      { segmentId: 17, roomId: 77, mapId: 1, name: "Upper Hallway" },
+    ]);
+  });
+
+  test("detects Matter mop clean mode support from schema capabilities", async () => {
+    const api = createRoborock();
+    await api.setStateAsync("HomeData", {
+      val: JSON.stringify({
+        products: [
+          {
+            id: "product-1",
+            schema: [
+              { id: 123, code: "fan_power" },
+              { id: 124, code: "water_box_mode" },
+            ],
+          },
+        ],
+        devices: [
+          {
+            duid: "device-1",
+            productId: "product-1",
+            deviceStatus: { fan_power: "104" },
+          },
+        ],
+        receivedDevices: [],
+      }),
+      ack: true,
+    });
+
+    expect(api.getMatterCleanModeCapabilities("device-1")).toEqual({
+      canVacuum: true,
+      canMop: true,
+      canControlFanPower: true,
+      canControlWater: true,
+    });
+    expect(api.getVacuumDeviceStatus("device-1", "fan_power")).toBe("104");
+    expect(api.getMatterWaterModeCommandCandidates("device-1")).toEqual([
+      "set_water_box_mode",
+      "set_water_box_custom_mode",
+    ]);
+  });
+
+  test("does not expose Matter mop clean modes for vacuum-only schemas", async () => {
+    const api = createRoborock();
+    await api.setStateAsync("HomeData", {
+      val: JSON.stringify({
+        products: [
+          {
+            id: "product-1",
+            schema: [{ id: 123, code: "fan_power" }],
+          },
+        ],
+        devices: [
+          {
+            duid: "device-1",
+            productId: "product-1",
+          },
+        ],
+        receivedDevices: [],
+      }),
+      ack: true,
+    });
+
+    expect(api.getMatterCleanModeCapabilities("device-1")).toMatchObject({
+      canMop: false,
+      canControlFanPower: true,
+      canControlWater: false,
+    });
+    expect(api.getMatterWaterModeCommandCandidates("device-1")).toEqual([]);
+  });
+
+  test("applies Matter clean mode settings through Roborock setting commands", async () => {
+    const api = createRoborock();
+    await api.setStateAsync("HomeData", {
+      val: JSON.stringify({
+        products: [
+          {
+            id: "product-1",
+            schema: [
+              { id: 123, code: "fan_power" },
+              { id: 124, code: "water_box_mode" },
+            ],
+          },
+        ],
+        devices: [
+          {
+            duid: "device-1",
+            productId: "product-1",
+          },
+        ],
+        receivedDevices: [],
+      }),
+      ack: true,
+    });
+    api.bInited = true;
+    api.vacuums["device-1"] = {
+      command: jest.fn(),
+    };
+
+    await api.applyMatterCleanModeSettings(
+      "device-1",
+      {
+        fanPower: 105,
+        waterBoxMode: 201,
+      },
+      { waitForResult: true }
+    );
+
+    expect(api.vacuums["device-1"].command).toHaveBeenCalledWith(
+      "device-1",
+      "set_custom_mode",
+      105,
+      { waitForResult: true, throwOnError: true }
+    );
+    expect(api.vacuums["device-1"].command).toHaveBeenCalledWith(
+      "device-1",
+      "set_water_box_mode",
+      201,
+      { waitForResult: true, throwOnError: true }
+    );
+  });
+
+  test("falls back between Roborock water mode commands for Matter clean modes", async () => {
+    const api = createRoborock();
+    await api.setStateAsync("HomeData", {
+      val: JSON.stringify({
+        products: [
+          {
+            id: "product-1",
+            schema: [
+              { id: 123, code: "fan_power" },
+              { id: 124, code: "water_box_mode" },
+            ],
+          },
+        ],
+        devices: [{ duid: "device-1", productId: "product-1" }],
+        receivedDevices: [],
+      }),
+      ack: true,
+    });
+    api.bInited = true;
+    api.vacuums["device-1"] = {
+      command: jest.fn(async (duid, command) => {
+        if (command === "set_water_box_mode") {
+          throw new Error("unknown method");
+        }
+      }),
+    };
+
+    await api.applyMatterCleanModeSettings(
+      "device-1",
+      { waterBoxMode: 201 },
+      { waitForResult: true }
+    );
+
+    expect(api.vacuums["device-1"].command).toHaveBeenCalledWith(
+      "device-1",
+      "set_water_box_custom_mode",
+      201,
+      { waitForResult: true, throwOnError: true }
+    );
+    expect(api.getMatterWaterModeCommandCandidates("device-1")).toEqual([
+      "set_water_box_custom_mode",
+    ]);
+  });
+
   test("transport diagnostics are persisted per device", async () => {
     const api = createRoborock();
 

@@ -38,6 +38,7 @@ class vacuum {
 
     this.parameterFolders = {
       get_mop_mode: "deviceStatus",
+      get_water_box_mode: "deviceStatus",
       get_water_box_custom_mode: "deviceStatus",
       get_network_info: "networkInfo",
       get_consumable: "consumables",
@@ -180,8 +181,7 @@ class vacuum {
           this.adapter.log.debug(
             `Command: ${parameter} with value: ${mapId} result: ${result}`
           );
-          await this.getParameter(duid, "get_room_mapping");
-          break;
+          return await this.getParameter(duid, "get_room_mapping");
         }
         case "set_water_box_distance_off": {
           const mappedValue = ((value - 1) / (30 - 1)) * (60 - 205) + 205;
@@ -475,6 +475,8 @@ class vacuum {
           true,
           true
         );
+
+        return mappedRooms;
       } else if (parameter == "get_multi_maps_list") {
         const mapList = await this.adapter.messageQueueHandler.sendRequest(
           duid,
@@ -532,6 +534,8 @@ class vacuum {
         } else {
           this.adapter.delObjectAsync(commandPath);
         }
+
+        return mapInfo;
       } else if (parameter == "get_fw_features") {
         const firmwareFeatures =
           await this.adapter.messageQueueHandler.sendRequest(

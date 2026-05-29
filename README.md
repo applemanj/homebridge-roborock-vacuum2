@@ -117,17 +117,21 @@ Treat the Matter QR code and manual pairing code like temporary setup secrets; a
 
 If you paired the experimental Matter vacuum before version 1.4.28 and Apple Home keeps showing the accessory as **Updating**, remove the Matter vacuum from Apple Home, restart the Roborock child bridge, and pair it again using the fresh code from the log.
 
-Phase 1 maps the Matter vacuum controls to the same Roborock commands used elsewhere in the plugin:
+The Matter vacuum controls map to the same Roborock commands used elsewhere in the plugin:
 
-| Matter control         | Behavior                                                    |
-| ---------------------- | ----------------------------------------------------------- |
-| Run mode: Cleaning     | Starts cleaning.                                            |
-| Run mode: Idle         | Stops cleaning without automatically returning to the dock. |
-| Clean mode: Vacuum     | Advertises the vacuum cleaning method expected by Matter.   |
-| Pause                  | Sends Roborock's pause command.                             |
-| Resume                 | Sends Roborock's start command.                             |
-| Home / return to dock  | Sends Roborock's dock command.                              |
-| Battery and run status | Mirrors the latest cached Roborock status where available.  |
+| Matter control           | Behavior                                                                                                                                        |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Run mode: Cleaning       | Starts cleaning. If a Matter clean mode was selected, the plugin applies the matching Roborock suction/water settings first.                    |
+| Run mode: Idle           | Stops cleaning without automatically returning to the dock.                                                                                     |
+| Clean mode: Vacuum       | Uses Roborock vacuum/suction cleaning. On mop-capable models with controllable water flow, the plugin asks Roborock to turn water off.          |
+| Clean mode: Mop          | Shown only when the Roborock schema or feature list reports mop/water support. Uses mop cleaning and turns suction off where supported.         |
+| Clean mode: Vacuum + Mop | Shown only when mop/water support is detected. Uses Matter's VacuumThenMop tag and enables both suction and mop/water settings where supported. |
+| Pause                    | Sends Roborock's pause command.                                                                                                                 |
+| Resume                   | Sends Roborock's start command and reapplies the selected clean mode if needed.                                                                 |
+| Home / return to dock    | Sends Roborock's dock command.                                                                                                                  |
+| Battery and run status   | Mirrors the latest cached Roborock status where available.                                                                                      |
+
+Mop clean modes are capability-gated so vacuum-only models should continue to show only **Vacuum**. On models with a passive mop or limited water controls, Matter may still show mop modes when mop support is detected, but the plugin can only apply the Roborock settings the model exposes.
 
 ### Matter Service Area Beta
 

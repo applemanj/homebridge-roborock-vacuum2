@@ -34,13 +34,34 @@ type MatterServiceAreaMap = {
   name: string;
 };
 
+type MatterCleanModeCapabilities = {
+  canVacuum?: boolean;
+  canMop?: boolean;
+  canControlFanPower?: boolean;
+  canControlWater?: boolean;
+};
+
+type RoborockCleanModeSettings = {
+  fanPower?: number;
+  waterBoxMode?: number | null;
+};
+
 const RUN_MODE_IDLE = 0;
 const RUN_MODE_CLEANING = 1;
 const CLEAN_MODE_VACUUM = 0;
+const CLEAN_MODE_MOP = 1;
+const CLEAN_MODE_VACUUM_AND_MOP = 2;
 
 const RVC_RUN_MODE_TAG_IDLE = 16384;
 const RVC_RUN_MODE_TAG_CLEANING = 16385;
 const RVC_CLEAN_MODE_TAG_VACUUM = 16385;
+const RVC_CLEAN_MODE_TAG_MOP = 16386;
+const RVC_CLEAN_MODE_TAG_VACUUM_THEN_MOP = 16387;
+
+const ROBOROCK_FAN_POWER_OFF = 105;
+const ROBOROCK_FAN_POWER_BALANCED = 102;
+const ROBOROCK_WATER_BOX_OFF = 200;
+const ROBOROCK_WATER_BOX_MILD = 201;
 
 const RVC_OPERATIONAL_STATE = {
   STOPPED: 0,
@@ -117,6 +138,10 @@ export default class RoborockMatterVacuumAccessory {
   private optimisticExpiresAt = 0;
   private selectedServiceAreaIds: number[] = [];
   private lastServiceAreaSummary = "";
+  private selectedCleanMode = CLEAN_MODE_VACUUM;
+  private selectedCleanModeNeedsApply = false;
+  private lastVacuumFanPower: number | null = null;
+  private lastWaterBoxMode: number | null = null;
 
   constructor(
     private readonly platform: RoborockPlatform,
@@ -264,6 +289,7 @@ export default class RoborockMatterVacuumAccessory {
         this.setOptimisticState(state);
         this.scheduleMatterStateUpdate(state, "selected-area start");
         this.dispatchRoborockMatterCommand("service area clean", async () => {
+          await this.applySelectedCleanModeIfNeeded();
           await this.loadMatterMapIfNeeded(duid, targetMapId);
           await this.platform.roborockAPI.app_segment_clean_by_ids(
             duid,
@@ -283,9 +309,12 @@ export default class RoborockMatterVacuumAccessory {
       };
       this.setOptimisticState(state);
       this.scheduleMatterStateUpdate(state, "start");
-      this.dispatchRoborockMatterCommand("start", () =>
-        this.platform.roborockAPI.app_start(duid, { waitForResult: true })
-      );
+      this.dispatchRoborockMatterCommand("start", async () => {
+        await this.applySelectedCleanModeIfNeeded();
+        await this.platform.roborockAPI.app_start(duid, {
+          waitForResult: true,
+        });
+      });
       return;
     }
 
@@ -319,9 +348,12 @@ export default class RoborockMatterVacuumAccessory {
       `Matter clean mode request for ${name}: ${newMode ?? "unknown"}.`
     );
 
-    if (newMode === CLEAN_MODE_VACUUM) {
+    if (this.isSupportedCleanMode(newMode)) {
+      this.rememberCurrentRoborockCleanModeSettings();
+      this.selectedCleanMode = newMode;
+      this.selectedCleanModeNeedsApply = true;
       const state = {
-        rvcCleanMode: { currentMode: CLEAN_MODE_VACUUM },
+        rvcCleanMode: { currentMode: newMode },
       };
       this.setOptimisticState(state);
       this.scheduleMatterStateUpdate(state, "clean mode change");
@@ -359,11 +391,12 @@ export default class RoborockMatterVacuumAccessory {
     };
     this.setOptimisticState(state);
     this.scheduleMatterStateUpdate(state, "resume");
-    this.dispatchRoborockMatterCommand("resume", () =>
-      this.platform.roborockAPI.app_start(this.getDuid(), {
+    this.dispatchRoborockMatterCommand("resume", async () => {
+      await this.applySelectedCleanModeIfNeeded();
+      await this.platform.roborockAPI.app_start(this.getDuid(), {
         waitForResult: true,
-      })
-    );
+      });
+    });
   }
 
   private async returnToDock(): Promise<void> {
@@ -500,15 +533,172 @@ export default class RoborockMatterVacuumAccessory {
 
   private buildCleanModeCluster(): Record<string, unknown> {
     return {
-      supportedModes: [
-        {
-          label: "Vacuum",
-          mode: CLEAN_MODE_VACUUM,
-          modeTags: [{ value: RVC_CLEAN_MODE_TAG_VACUUM }],
-        },
-      ],
-      currentMode: CLEAN_MODE_VACUUM,
+      supportedModes: this.getSupportedCleanModes(),
+      currentMode: this.getCurrentCleanMode(),
     };
+  }
+
+  private getSupportedCleanModes(): Array<Record<string, unknown>> {
+    const supportedModes: Array<Record<string, unknown>> = [
+      {
+        label: "Vacuum",
+        mode: CLEAN_MODE_VACUUM,
+        modeTags: [{ value: RVC_CLEAN_MODE_TAG_VACUUM }],
+      },
+    ];
+
+    if (this.getMatterCleanModeCapabilities().canMop) {
+      supportedModes.push(
+        {
+          label: "Mop",
+          mode: CLEAN_MODE_MOP,
+          modeTags: [{ value: RVC_CLEAN_MODE_TAG_MOP }],
+        },
+        {
+          label: "Vacuum + Mop",
+          mode: CLEAN_MODE_VACUUM_AND_MOP,
+          modeTags: [{ value: RVC_CLEAN_MODE_TAG_VACUUM_THEN_MOP }],
+        }
+      );
+    }
+
+    return supportedModes;
+  }
+
+  private getCurrentCleanMode(): number {
+    return this.isSupportedCleanMode(this.selectedCleanMode)
+      ? this.selectedCleanMode
+      : CLEAN_MODE_VACUUM;
+  }
+
+  private isSupportedCleanMode(mode?: number): mode is number {
+    return this.getSupportedCleanModes().some(
+      (supportedMode) => supportedMode.mode === mode
+    );
+  }
+
+  private getMatterCleanModeCapabilities(): MatterCleanModeCapabilities {
+    const getCapabilities =
+      this.platform.roborockAPI.getMatterCleanModeCapabilities;
+
+    if (typeof getCapabilities !== "function") {
+      return { canVacuum: true, canMop: false };
+    }
+
+    return getCapabilities.call(
+      this.platform.roborockAPI,
+      this.getDuid()
+    ) as MatterCleanModeCapabilities;
+  }
+
+  private async applySelectedCleanModeIfNeeded(): Promise<void> {
+    if (!this.selectedCleanModeNeedsApply) {
+      return;
+    }
+
+    const applySettings =
+      this.platform.roborockAPI.applyMatterCleanModeSettings;
+    if (typeof applySettings !== "function") {
+      this.selectedCleanModeNeedsApply = false;
+      return;
+    }
+
+    const settings = this.getRoborockCleanModeSettings(
+      this.getCurrentCleanMode()
+    );
+    if (!settings) {
+      this.selectedCleanModeNeedsApply = false;
+      return;
+    }
+
+    this.platform.log.info(
+      `Applying ${this.getCleanModeLabel(this.getCurrentCleanMode())} mode to ${this.getVacuumName()} before starting.`
+    );
+    await applySettings.call(
+      this.platform.roborockAPI,
+      this.getDuid(),
+      settings,
+      {
+        waitForResult: true,
+      }
+    );
+    this.selectedCleanModeNeedsApply = false;
+  }
+
+  private getRoborockCleanModeSettings(
+    cleanMode: number
+  ): RoborockCleanModeSettings | null {
+    const capabilities = this.getMatterCleanModeCapabilities();
+    const settings: RoborockCleanModeSettings = {};
+
+    if (capabilities.canControlFanPower) {
+      settings.fanPower =
+        cleanMode === CLEAN_MODE_MOP
+          ? ROBOROCK_FAN_POWER_OFF
+          : this.getPreferredVacuumFanPower();
+    }
+
+    if (capabilities.canControlWater) {
+      settings.waterBoxMode =
+        cleanMode === CLEAN_MODE_VACUUM
+          ? ROBOROCK_WATER_BOX_OFF
+          : this.getPreferredWaterBoxMode();
+    }
+
+    return Object.keys(settings).length > 0 ? settings : null;
+  }
+
+  private rememberCurrentRoborockCleanModeSettings(): void {
+    const fanPower = this.getNumberStatus("fan_power");
+    if (fanPower !== null && fanPower !== ROBOROCK_FAN_POWER_OFF) {
+      this.lastVacuumFanPower = fanPower;
+    }
+
+    const waterBoxMode =
+      this.getNumberStatus("water_box_custom_mode") ??
+      this.getNumberStatus("water_box_mode");
+    if (waterBoxMode !== null && waterBoxMode !== ROBOROCK_WATER_BOX_OFF) {
+      this.lastWaterBoxMode = waterBoxMode;
+    }
+  }
+
+  private getPreferredVacuumFanPower(): number {
+    const currentFanPower = this.getNumberStatus("fan_power");
+    if (
+      currentFanPower !== null &&
+      currentFanPower !== ROBOROCK_FAN_POWER_OFF
+    ) {
+      this.lastVacuumFanPower = currentFanPower;
+      return currentFanPower;
+    }
+
+    return this.lastVacuumFanPower ?? ROBOROCK_FAN_POWER_BALANCED;
+  }
+
+  private getPreferredWaterBoxMode(): number {
+    const currentWaterBoxMode =
+      this.getNumberStatus("water_box_custom_mode") ??
+      this.getNumberStatus("water_box_mode");
+    if (
+      currentWaterBoxMode !== null &&
+      currentWaterBoxMode !== ROBOROCK_WATER_BOX_OFF
+    ) {
+      this.lastWaterBoxMode = currentWaterBoxMode;
+      return currentWaterBoxMode;
+    }
+
+    return this.lastWaterBoxMode ?? ROBOROCK_WATER_BOX_MILD;
+  }
+
+  private getCleanModeLabel(cleanMode: number): string {
+    switch (cleanMode) {
+      case CLEAN_MODE_MOP:
+        return "Mop";
+      case CLEAN_MODE_VACUUM_AND_MOP:
+        return "Vacuum + Mop";
+      default:
+        return "Vacuum";
+    }
   }
 
   private buildOperationalStateCluster(): Record<string, unknown> {

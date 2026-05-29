@@ -89,6 +89,8 @@ class Roborock {
 
     this.name = "roborock";
     this.deviceNotify = null;
+    this.serviceAreaRoomMapRefreshAttempts = new Set();
+    this.matterUnsupportedSettingCommands = new Set();
     this.baseURL = options.baseURL || "usiot.roborock.com";
 
     this.userData = options.userData || null;
@@ -472,6 +474,16 @@ class Roborock {
     }
 
     return this.getFlattenedRoomMappings(mapping).map((room) => ({ ...room }));
+  }
+
+  getRoomMappingsForMap(duid, mapId) {
+    const mapping = this.roomMappings[duid];
+    if (!mapping || !mapping.roomsByMap) {
+      return [];
+    }
+
+    const rooms = mapping.roomsByMap[this.getRoomMappingMapKey(mapId)];
+    return this.normalizeArray(rooms).map((room) => ({ ...room }));
   }
 
   getMapListForDevice(duid) {
@@ -1603,6 +1615,195 @@ class Roborock {
     return productValue !== null ? productValue : null;
   }
 
+  getVacuumSchemaCodes(duid) {
+    const productId = this.getVacuumDeviceInfo(duid, "productId");
+    const product = this.getProductData(productId);
+    return this.normalizeArray(product?.schema)
+      .map((schema) => schema?.code)
+      .filter((code) => typeof code == "string" && code.trim());
+  }
+
+  hasVacuumSchemaCode(duid, codes) {
+    const requestedCodes = Array.isArray(codes) ? codes : [codes];
+    const schemaCodes = new Set(this.getVacuumSchemaCodes(duid));
+    return requestedCodes.some((code) => schemaCodes.has(code));
+  }
+
+  hasVacuumFeature(duid, features) {
+    const requestedFeatures = Array.isArray(features) ? features : [features];
+    const featureList = this.vacuums[duid]?.features?.getFeatureList?.();
+    if (!featureList) {
+      return false;
+    }
+
+    return requestedFeatures.some((feature) => Boolean(featureList[feature]));
+  }
+
+  getMatterCleanModeCapabilities(duid) {
+    const canControlFanPower =
+      this.hasVacuumSchemaCode(duid, "fan_power") ||
+      this.getVacuumDeviceStatus(duid, "fan_power") !== "";
+    const hasWaterModeSchema = this.hasVacuumSchemaCode(duid, [
+      "water_box_mode",
+      "water_box_custom_mode",
+    ]);
+    const hasMopSchema = this.hasVacuumSchemaCode(duid, [
+      "mop_mode",
+      "mop_forbidden_enable",
+    ]);
+    const hasMopFeature = this.hasVacuumFeature(duid, [
+      "isSupportedWaterMode",
+      "isShakeMopSetSupported",
+      "isElectronicWaterBoxSupported",
+      "isCleanRouteFastModeSupported",
+      "isMopForbiddenSupported",
+      "isShakeMopStrengthSupported",
+      "isWaterBoxSupported",
+    ]);
+
+    return {
+      canVacuum: true,
+      canMop: hasWaterModeSchema || hasMopSchema || hasMopFeature,
+      canControlFanPower,
+      canControlWater:
+        hasWaterModeSchema ||
+        this.hasVacuumFeature(duid, [
+          "isSupportedWaterMode",
+          "isShakeMopSetSupported",
+          "isElectronicWaterBoxSupported",
+          "isShakeMopStrengthSupported",
+        ]),
+    };
+  }
+
+  async applyMatterCleanModeSettings(duid, settings, options = {}) {
+    const waitForResult = Boolean(options.waitForResult);
+    const commandOptions = waitForResult
+      ? { ...options, throwOnError: true }
+      : options;
+
+    if (
+      Number.isInteger(settings?.fanPower) &&
+      this.getMatterCleanModeCapabilities(duid).canControlFanPower
+    ) {
+      await this.runMatterSettingCommand(
+        duid,
+        "set_custom_mode",
+        settings.fanPower,
+        commandOptions
+      );
+    }
+
+    if (!Number.isInteger(settings?.waterBoxMode)) {
+      return;
+    }
+
+    const waterCommands = this.getMatterWaterModeCommandCandidates(duid);
+    if (waterCommands.length === 0) {
+      this.log.debug(
+        `Matter clean mode requested water mode ${settings.waterBoxMode} for ${duid}, but no supported Roborock water command was detected.`
+      );
+      return;
+    }
+
+    await this.runFirstMatterSettingCommand(
+      duid,
+      waterCommands,
+      settings.waterBoxMode,
+      commandOptions
+    );
+  }
+
+  getMatterWaterModeCommandCandidates(duid) {
+    const commands = [];
+
+    if (this.hasVacuumSchemaCode(duid, "water_box_mode")) {
+      commands.push("set_water_box_mode");
+      commands.push("set_water_box_custom_mode");
+    }
+
+    if (
+      this.hasVacuumSchemaCode(duid, "water_box_custom_mode") ||
+      this.hasVacuumFeature(duid, [
+        "isSupportedWaterMode",
+        "isShakeMopSetSupported",
+        "isElectronicWaterBoxSupported",
+        "isShakeMopStrengthSupported",
+      ])
+    ) {
+      commands.push("set_water_box_custom_mode");
+    }
+
+    if (
+      commands.length === 0 &&
+      this.getMatterCleanModeCapabilities(duid).canControlWater
+    ) {
+      commands.push("set_water_box_custom_mode");
+    }
+
+    return [...new Set(commands)].filter(
+      (command) =>
+        !this.matterUnsupportedSettingCommands.has(
+          this.getMatterSettingCommandKey(duid, command)
+        )
+    );
+  }
+
+  async runFirstMatterSettingCommand(duid, commands, value, options = {}) {
+    let lastError = null;
+
+    for (const command of commands) {
+      try {
+        await this.runMatterSettingCommand(duid, command, value, options);
+        return;
+      } catch (error) {
+        lastError = error;
+        if (this.shouldRememberUnsupportedMatterCommand(error)) {
+          this.matterUnsupportedSettingCommands.add(
+            this.getMatterSettingCommandKey(duid, command)
+          );
+        }
+        this.log.debug(
+          `Matter clean mode command ${command} failed for ${duid}; trying another water command if available. ${error.message || error}`
+        );
+      }
+    }
+
+    if (lastError) {
+      throw lastError;
+    }
+  }
+
+  async runMatterSettingCommand(duid, command, value, options = {}) {
+    if (!this.isInited()) {
+      this.log.warn("Adapter not inited. Command not executed.");
+      return;
+    }
+
+    const vacuum = this.vacuums[duid];
+    if (!vacuum || typeof vacuum.command != "function") {
+      throw new Error(`Vacuum ${duid} is not initialized.`);
+    }
+
+    await vacuum.command(duid, command, value, options);
+  }
+
+  getMatterSettingCommandKey(duid, command) {
+    return `${duid}:${command}`;
+  }
+
+  shouldRememberUnsupportedMatterCommand(error) {
+    const message = `${error?.message || error || ""}`.toLowerCase();
+    return [
+      "unsupported",
+      "not supported",
+      "unknown method",
+      "method not found",
+      "invalid method",
+      "unknown parameter",
+    ].some((pattern) => message.includes(pattern));
+  }
+
   startMainUpdateInterval(duid, online) {
     if (!this.hasInitializedVacuum(duid)) {
       return;
@@ -1758,7 +1959,12 @@ class Roborock {
     this.log.debug(`Latest data requested`);
 
     if (this.isSupportedVacuumModel(robotModel)) {
-      await vacuum.getParameter(duid, "get_room_mapping");
+      const refreshedServiceAreaRooms =
+        await this.refreshMatterServiceAreaRoomMappings(duid, vacuum);
+
+      if (!refreshedServiceAreaRooms) {
+        await vacuum.getParameter(duid, "get_room_mapping");
+      }
 
       await vacuum.getParameter(duid, "get_consumable");
 
@@ -1811,6 +2017,102 @@ class Roborock {
         `Failed to get extra data for ${vacuum}: ${error.message}`
       );
     }
+  }
+
+  async refreshMatterServiceAreaRoomMappings(duid, vacuum) {
+    if (!this.config.enableMatterServiceAreaBeta) {
+      return false;
+    }
+
+    try {
+      await vacuum.getParameter(duid, "get_multi_maps_list");
+      await vacuum.getParameter(duid, "get_room_mapping");
+      await this.cacheMissingMatterServiceAreaRoomMappings(duid, vacuum);
+      return true;
+    } catch (error) {
+      this.log.debug(
+        `Failed to refresh Matter Service Area room mappings for ${duid}: ${error.message || error}`
+      );
+      return false;
+    }
+  }
+
+  async cacheMissingMatterServiceAreaRoomMappings(duid, vacuum) {
+    const maps = this.getMapListForDevice(duid);
+    if (maps.length < 2) {
+      return;
+    }
+
+    const missingMaps = maps.filter(
+      (map) =>
+        this.getRoomMappingsForMap(duid, map.mapId).length === 0 &&
+        !this.serviceAreaRoomMapRefreshAttempts.has(
+          this.getServiceAreaRoomMapRefreshKey(duid, map.mapId)
+        )
+    );
+    if (missingMaps.length === 0) {
+      return;
+    }
+
+    const state = this.getCachedVacuumState(duid);
+    if (this.isCleaning(state)) {
+      this.log.debug(
+        `Skipping Matter Service Area room-map refresh for ${duid}; robot is busy.`
+      );
+      return;
+    }
+
+    const originalMapId = this.getCurrentMapIdForDevice(duid);
+
+    for (const map of missingMaps) {
+      const refreshKey = this.getServiceAreaRoomMapRefreshKey(duid, map.mapId);
+      this.serviceAreaRoomMapRefreshAttempts.add(refreshKey);
+
+      if (map.mapId === originalMapId) {
+        await vacuum.getParameter(duid, "get_room_mapping");
+        continue;
+      }
+
+      this.log.info(
+        `Loading Roborock map '${map.name}' for ${duid} to cache Matter Service Area rooms.`
+      );
+      await vacuum.command(duid, "load_multi_map", map.mapId, {
+        throwOnError: true,
+      });
+    }
+
+    const currentMapId = this.getCurrentMapIdForDevice(duid);
+    if (
+      originalMapId !== null &&
+      currentMapId !== null &&
+      currentMapId !== originalMapId
+    ) {
+      const originalMap = maps.find((map) => map.mapId === originalMapId);
+      this.log.info(
+        `Restoring Roborock map '${originalMap?.name || originalMapId}' for ${duid} after caching Matter Service Area rooms.`
+      );
+      await vacuum.command(duid, "load_multi_map", originalMapId, {
+        throwOnError: true,
+      });
+    }
+  }
+
+  getCachedVacuumState(duid) {
+    const cachedState = this.getStateAsync(
+      `Devices.${duid}.deviceStatus.state`
+    );
+    const cachedValue = Number(cachedState?.val);
+    if (Number.isFinite(cachedValue)) {
+      return cachedValue;
+    }
+
+    const deviceStatus = this.getVacuumDeviceInfo(duid, "deviceStatus");
+    const homeDataValue = Number(deviceStatus?.state);
+    return Number.isFinite(homeDataValue) ? homeDataValue : null;
+  }
+
+  getServiceAreaRoomMapRefreshKey(duid, mapId) {
+    return `${duid}:${mapId}`;
   }
 
   clearTimersAndIntervals() {
@@ -2612,8 +2914,14 @@ class Roborock {
 
     const device = this.getVacuumDeviceData(duid);
 
-    if (device.deviceStatus && device.deviceStatus[propertyID] != undefined) {
-      return device.deviceStatus[propertyID];
+    if (device.deviceStatus) {
+      if (device.deviceStatus[propertyID] != undefined) {
+        return device.deviceStatus[propertyID];
+      }
+
+      if (device.deviceStatus[property] != undefined) {
+        return device.deviceStatus[property];
+      }
     }
 
     return "";

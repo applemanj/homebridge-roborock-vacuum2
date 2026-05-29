@@ -130,6 +130,8 @@ export default class RoborockPlatform implements DynamicPlatformPlugin {
       debug: debugMode,
       baseURL: baseURL,
       skipDevices: this.platformConfig.skipDevices,
+      enableMatterServiceAreaBeta:
+        this.platformConfig.enableMatterServiceAreaBeta,
       log: this.log,
       userData: decryptedSession,
       storagePath: storagePath,
@@ -269,6 +271,10 @@ export default class RoborockPlatform implements DynamicPlatformPlugin {
     }
 
     accessory.deviceType = matter.deviceTypes.RoboticVacuumCleaner;
+    this.applyMatterAccessoryIdentity(accessory, {
+      duid,
+      name: accessory.displayName,
+    });
     this.createOrUpdateMatterVacuum(
       { duid, name: accessory.displayName },
       accessory,
@@ -465,20 +471,37 @@ export default class RoborockPlatform implements DynamicPlatformPlugin {
 
   private createMatterAccessory(device: any, deviceType: unknown): any {
     const duid = String(device.duid);
-    const firmwareRevision = this.roborockAPI.getVacuumDeviceInfo(duid, "fv");
-
-    return {
+    const accessory = {
       UUID: this.generateMatterUuid(duid),
-      displayName: device.name || "Roborock Vacuum",
       deviceType,
-      serialNumber: this.roborockAPI.getVacuumDeviceInfo(duid, "sn") || duid,
-      manufacturer: "Roborock",
-      model:
-        this.roborockAPI.getProductAttribute(duid, "model") ||
-        "Roborock Vacuum",
-      ...(firmwareRevision ? { firmwareRevision } : {}),
       context: { duid },
     };
+
+    this.applyMatterAccessoryIdentity(accessory, device);
+    return accessory;
+  }
+
+  private applyMatterAccessoryIdentity(accessory: any, device: any): void {
+    const duid = String(device.duid);
+    const displayName =
+      this.roborockAPI.getVacuumDeviceInfo(duid, "name") ||
+      device.name ||
+      "Roborock Vacuum";
+    const firmwareRevision = this.roborockAPI.getVacuumDeviceInfo(duid, "fv");
+
+    accessory.displayName = displayName;
+    accessory.serialNumber =
+      this.roborockAPI.getVacuumDeviceInfo(duid, "sn") || duid;
+    accessory.manufacturer = "Roborock";
+    accessory.model =
+      this.roborockAPI.getProductAttribute(duid, "model") || "Roborock Vacuum";
+    accessory.context = { ...(accessory.context || {}), duid };
+
+    if (firmwareRevision) {
+      accessory.firmwareRevision = firmwareRevision;
+    } else {
+      delete accessory.firmwareRevision;
+    }
   }
 
   private createOrUpdateMatterVacuum(
