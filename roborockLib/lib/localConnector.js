@@ -66,6 +66,22 @@ class localConnector {
     this.l01HandshakeWaiters = new Map();
   }
 
+  async markLocalConnected(duid) {
+    if (this.adapter.remoteDevices?.delete(duid)) {
+      this.adapter.log.debug(
+        `Local TCP connected for ${duid}; clearing remote fallback marker.`
+      );
+    }
+
+    await this.adapter.updateTransportDiagnostics(duid, {
+      tcpConnectionState: "connected",
+      isRemote: false,
+      remoteReason: null,
+      lastTransport: "local",
+      lastTransportReason: "tcp-connected",
+    });
+  }
+
   async createClient(duid, ip) {
     const client = new EnhancedSocket();
     await this.adapter.updateTransportDiagnostics(duid, {
@@ -79,13 +95,7 @@ class localConnector {
       client
         .connect(58867, ip, async () => {
           this.adapter.log.debug(`tcp client for ${duid} connected`);
-          await this.adapter.updateTransportDiagnostics(duid, {
-            tcpConnectionState: "connected",
-            isRemote: false,
-            remoteReason: null,
-            lastTransport: "local",
-            lastTransportReason: "tcp-connected",
-          });
+          await this.markLocalConnected(duid);
           this.ensureL01Handshake(duid).catch((error) => {
             this.adapter.log.debug(
               `L01 handshake on connect failed for ${duid}: ${error.message}`
