@@ -490,6 +490,9 @@ export default class RoborockPlatform implements DynamicPlatformPlugin {
     const firmwareRevision = this.roborockAPI.getVacuumDeviceInfo(duid, "fv");
 
     accessory.displayName = displayName;
+    // Mirror the name so Matter layers that read `name` for the node label show
+    // the Roborock name instead of a generic "Matter Accessory" during pairing.
+    accessory.name = displayName;
     accessory.serialNumber =
       this.roborockAPI.getVacuumDeviceInfo(duid, "sn") || duid;
     accessory.manufacturer = "Roborock";

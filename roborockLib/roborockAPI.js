@@ -42,6 +42,10 @@ const dockingStationStates = [
 ];
 
 const TRANSIENT_ERROR_LOG_THROTTLE_MS = 6 * 60 * 60 * 1000;
+// How long to wait before retrying to cache rooms for a saved map that did not
+// return room segments. Retrying lets newly named/segmented maps appear without
+// switching maps on every poll cycle.
+const SERVICE_AREA_ROOM_MAP_REFRESH_TTL_MS = 6 * 60 * 60 * 1000;
 
 function md5hex(str) {
   return crypto.createHash("md5").update(str).digest("hex");
@@ -89,7 +93,7 @@ class Roborock {
 
     this.name = "roborock";
     this.deviceNotify = null;
-    this.serviceAreaRoomMapRefreshAttempts = new Set();
+    this.serviceAreaRoomMapRefreshAttempts = new Map();
     this.matterUnsupportedSettingCommands = new Set();
     this.baseURL = options.baseURL || "usiot.roborock.com";
 
@@ -2055,9 +2059,7 @@ class Roborock {
     const missingMaps = maps.filter(
       (map) =>
         this.getRoomMappingsForMap(duid, map.mapId).length === 0 &&
-        !this.serviceAreaRoomMapRefreshAttempts.has(
-          this.getServiceAreaRoomMapRefreshKey(duid, map.mapId)
-        )
+        this.shouldAttemptServiceAreaRoomMapRefresh(duid, map.mapId)
     );
     if (missingMaps.length === 0) {
       return;
@@ -2073,41 +2075,88 @@ class Roborock {
 
     const originalMapId = this.getCurrentMapIdForDevice(duid);
 
-    for (const map of missingMaps) {
-      const refreshKey = this.getServiceAreaRoomMapRefreshKey(duid, map.mapId);
-      this.serviceAreaRoomMapRefreshAttempts.add(refreshKey);
+    try {
+      for (const map of missingMaps) {
+        this.markServiceAreaRoomMapRefreshAttempt(duid, map.mapId);
 
-      if (map.mapId === originalMapId) {
-        await vacuum.getParameter(duid, "get_room_mapping");
-      } else {
-        this.log.info(
-          `Loading Roborock map '${map.name}' for ${duid} to cache Matter Service Area rooms.`
-        );
-        await vacuum.command(duid, "load_multi_map", map.mapId, {
-          throwOnError: true,
-        });
-      }
+        try {
+          if (map.mapId === originalMapId) {
+            await vacuum.getParameter(duid, "get_room_mapping");
+          } else {
+            this.log.info(
+              `Loading Roborock map '${map.name}' for ${duid} to cache Matter Service Area rooms.`
+            );
+            await vacuum.command(duid, "load_multi_map", map.mapId, {
+              throwOnError: true,
+            });
+          }
+        } catch (error) {
+          // A single slow/failed map switch must not abort the remaining maps
+          // or skip restoring the original map below.
+          this.log.debug(
+            `Failed to load Roborock map '${map.name}' for ${duid} while caching Matter Service Area rooms: ${error.message || error}`
+          );
+          continue;
+        }
 
-      if (this.getRoomMappingsForMap(duid, map.mapId).length === 0) {
-        this.log.info(
-          `Roborock map '${map.name}' for ${duid} did not return room mappings. It will appear in Matter once Roborock reports room segment IDs for that saved map.`
-        );
+        if (this.getRoomMappingsForMap(duid, map.mapId).length === 0) {
+          this.log.info(
+            `Roborock map '${map.name}' for ${duid} did not return room mappings. It will appear in Matter once Roborock reports room segment IDs for that saved map.`
+          );
+        }
       }
+    } finally {
+      // Always try to put the robot back on the map it started on, even if a
+      // load above timed out, so the refresh never leaves it on another map.
+      await this.restoreServiceAreaOriginalMap(
+        duid,
+        vacuum,
+        maps,
+        originalMapId
+      );
+    }
+  }
+
+  shouldAttemptServiceAreaRoomMapRefresh(duid, mapId) {
+    const key = this.getServiceAreaRoomMapRefreshKey(duid, mapId);
+    const lastAttempt = this.serviceAreaRoomMapRefreshAttempts.get(key);
+
+    return (
+      lastAttempt === undefined ||
+      this.now() - lastAttempt >= SERVICE_AREA_ROOM_MAP_REFRESH_TTL_MS
+    );
+  }
+
+  markServiceAreaRoomMapRefreshAttempt(duid, mapId) {
+    this.serviceAreaRoomMapRefreshAttempts.set(
+      this.getServiceAreaRoomMapRefreshKey(duid, mapId),
+      this.now()
+    );
+  }
+
+  async restoreServiceAreaOriginalMap(duid, vacuum, maps, originalMapId) {
+    if (originalMapId === null) {
+      return;
     }
 
     const currentMapId = this.getCurrentMapIdForDevice(duid);
-    if (
-      originalMapId !== null &&
-      currentMapId !== null &&
-      currentMapId !== originalMapId
-    ) {
-      const originalMap = maps.find((map) => map.mapId === originalMapId);
-      this.log.info(
-        `Restoring Roborock map '${originalMap?.name || originalMapId}' for ${duid} after caching Matter Service Area rooms.`
-      );
+    if (currentMapId === null || currentMapId === originalMapId) {
+      return;
+    }
+
+    const originalMap = maps.find((map) => map.mapId === originalMapId);
+    this.log.info(
+      `Restoring Roborock map '${originalMap?.name || originalMapId}' for ${duid} after caching Matter Service Area rooms.`
+    );
+
+    try {
       await vacuum.command(duid, "load_multi_map", originalMapId, {
         throwOnError: true,
       });
+    } catch (error) {
+      this.log.warn(
+        `Failed to restore Roborock map '${originalMap?.name || originalMapId}' for ${duid} after caching Matter Service Area rooms: ${error.message || error}. The robot may stay on another saved map until the next refresh.`
+      );
     }
   }
 

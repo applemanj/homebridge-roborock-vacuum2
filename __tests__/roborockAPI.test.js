@@ -245,6 +245,136 @@ describe("Roborock API model and diagnostics helpers", () => {
     ]);
   });
 
+  test("Matter Service Area beta restores the original map when a saved map load times out", async () => {
+    const api = createRoborock({ enableMatterServiceAreaBeta: true });
+    api.roomIDs = { 55: "Lower Level" };
+    await api.setStateAsync("HomeData", {
+      val: JSON.stringify({
+        products: [{ id: "product-1", model: "roborock.vacuum.a08" }],
+        devices: [
+          {
+            duid: "device-1",
+            productId: "product-1",
+            deviceStatus: { state: "8" },
+          },
+        ],
+        receivedDevices: [],
+      }),
+      ack: true,
+    });
+
+    const mapInfo = [
+      { mapFlag: 0, name: "Lower Level" },
+      { mapFlag: 1, name: "Upper Level" },
+    ];
+
+    const robot = {
+      getParameter: jest.fn(async (duid, parameter) => {
+        if (parameter === "get_multi_maps_list") {
+          api.updateMapListCache(duid, mapInfo);
+          return mapInfo;
+        }
+        if (parameter === "get_room_mapping") {
+          api.updateRoomMappingCache(duid, 0, [[16, 55]]);
+          return [[16, 55]];
+        }
+        return null;
+      }),
+      command: jest.fn(async (duid, parameter, mapId) => {
+        if (parameter !== "load_multi_map") {
+          return;
+        }
+        if (mapId === 1) {
+          // The robot switches to the saved map but the ack times out, exactly
+          // like the slow S6 Pure in the field logs.
+          api.updateRoomMappingCache(duid, 1, []);
+          throw new Error(
+            "Local request with id 6 with method load_multi_map timed out after 10 seconds"
+          );
+        }
+        // Restoring the original map succeeds.
+        api.updateRoomMappingCache(duid, 0, [[16, 55]]);
+      }),
+    };
+
+    await api.updateDataMinimumData("device-1", robot, "roborock.vacuum.a08");
+
+    const loadCalls = robot.command.mock.calls.filter(
+      ([, parameter]) => parameter === "load_multi_map"
+    );
+    // Attempted the missing map, then restored the original map despite the
+    // timeout so the robot is not left on the wrong saved map.
+    expect(loadCalls.map(([, , mapId]) => mapId)).toEqual([1, 0]);
+    expect(api.getCurrentMapIdForDevice("device-1")).toBe(0);
+  });
+
+  test("Matter Service Area beta retries an empty saved map only after the refresh TTL", async () => {
+    let now = 1_000_000;
+    const api = createRoborock({
+      enableMatterServiceAreaBeta: true,
+      now: () => now,
+    });
+    await api.setStateAsync("HomeData", {
+      val: JSON.stringify({
+        products: [{ id: "product-1", model: "roborock.vacuum.a08" }],
+        devices: [
+          {
+            duid: "device-1",
+            productId: "product-1",
+            deviceStatus: { state: "8" },
+          },
+        ],
+        receivedDevices: [],
+      }),
+      ack: true,
+    });
+
+    const mapInfo = [
+      { mapFlag: 0, name: "Lower Level" },
+      { mapFlag: 1, name: "Upper Level" },
+    ];
+    const robot = {
+      getParameter: jest.fn(async (duid, parameter) => {
+        if (parameter === "get_multi_maps_list") {
+          api.updateMapListCache(duid, mapInfo);
+          return mapInfo;
+        }
+        if (parameter === "get_room_mapping") {
+          api.updateRoomMappingCache(duid, 0, [[16, 55]]);
+          return [[16, 55]];
+        }
+        return null;
+      }),
+      // Upper Level keeps reporting no rooms; it switches the active map.
+      command: jest.fn(async (duid, parameter, mapId) => {
+        if (parameter === "load_multi_map") {
+          api.updateRoomMappingCache(
+            duid,
+            mapId,
+            mapId === 0 ? [[16, 55]] : []
+          );
+        }
+      }),
+    };
+
+    const countUpperLoads = () =>
+      robot.command.mock.calls.filter(
+        ([, parameter, mapId]) => parameter === "load_multi_map" && mapId === 1
+      ).length;
+
+    await api.updateDataMinimumData("device-1", robot, "roborock.vacuum.a08");
+    expect(countUpperLoads()).toBe(1);
+
+    // Within the TTL the still-empty map is not re-attempted.
+    await api.updateDataMinimumData("device-1", robot, "roborock.vacuum.a08");
+    expect(countUpperLoads()).toBe(1);
+
+    // After the TTL elapses it is retried.
+    now += 6 * 60 * 60 * 1000 + 1;
+    await api.updateDataMinimumData("device-1", robot, "roborock.vacuum.a08");
+    expect(countUpperLoads()).toBe(2);
+  });
+
   test("detects Matter mop clean mode support from schema capabilities", async () => {
     const api = createRoborock();
     await api.setStateAsync("HomeData", {

@@ -121,17 +121,17 @@ If you paired the experimental Matter vacuum before version 1.4.28 and Apple Hom
 
 The Matter vacuum controls map to the same Roborock commands used elsewhere in the plugin:
 
-| Matter control           | Behavior                                                                                                                                        |
-| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| Run mode: Cleaning       | Starts cleaning. If a Matter clean mode was selected, the plugin applies the matching Roborock suction/water settings first.                    |
-| Run mode: Idle           | Stops cleaning without automatically returning to the dock.                                                                                     |
-| Clean mode: Vacuum       | Uses Roborock vacuum/suction cleaning. On mop-capable models with controllable water flow, the plugin asks Roborock to turn water off.          |
-| Clean mode: Mop          | Shown only when the Roborock schema or feature list reports mop/water support. Uses mop cleaning and turns suction off where supported.         |
-| Clean mode: Vacuum + Mop | Shown only when mop/water support is detected. Uses Matter's VacuumThenMop tag and enables both suction and mop/water settings where supported. |
-| Pause                    | Sends Roborock's pause command.                                                                                                                 |
-| Resume                   | Sends Roborock's start command and reapplies the selected clean mode if needed.                                                                 |
-| Home / return to dock    | Sends Roborock's dock command.                                                                                                                  |
-| Battery and run status   | Mirrors the latest cached Roborock status where available.                                                                                      |
+| Matter control           | Behavior                                                                                                                                                                    |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Run mode: Cleaning       | Starts cleaning. If a Matter clean mode was selected, the plugin applies the matching Roborock suction/water settings first.                                                |
+| Run mode: Idle           | Stops cleaning without automatically returning to the dock.                                                                                                                 |
+| Clean mode: Vacuum       | Uses Roborock vacuum/suction cleaning. On mop-capable models with controllable water flow, the plugin asks Roborock to turn water off.                                      |
+| Clean mode: Mop          | Shown only when the Roborock schema or feature list reports mop/water support. Uses mop cleaning and turns suction off where supported.                                     |
+| Clean mode: Vacuum + Mop | Shown only when mop/water support is detected. Combines the standard Matter Vacuum and Mop clean-mode tags and enables both suction and mop/water settings where supported. |
+| Pause                    | Sends Roborock's pause command.                                                                                                                                             |
+| Resume                   | Sends Roborock's start command and reapplies the selected clean mode if needed.                                                                                             |
+| Home / return to dock    | Sends Roborock's dock command.                                                                                                                                              |
+| Battery and run status   | Mirrors the latest cached Roborock status where available.                                                                                                                  |
 
 Mop clean modes are capability-gated so vacuum-only models should continue to show only **Vacuum**. On models with a passive mop or limited water controls, Matter may still show mop modes when mop support is detected, but the plugin can only apply the Roborock settings the model exposes.
 
@@ -144,7 +144,7 @@ Known limits while this is beta:
 - Apple Home and other Matter controllers may not show Service Area controls yet, or may present them differently across app/OS versions.
 - If you enable or disable this beta after the Matter vacuum was already paired, remove the Matter vacuum from Apple Home, restart the Roborock child bridge, and pair it again using the fresh code from the Homebridge log. Matter controllers can cache the cluster list from the first pairing.
 - The plugin can expose saved Roborock maps, such as upper and lower floors, when Roborock reports multi-map metadata. Some Matter controllers do not show the separate map/floor picker yet, so when more than one map is available the plugin also prefixes room labels with the map name, such as `Upper Floor - Kitchen`.
-- Room mappings are cached per map as each map is seen. If a room is missing from a floor, load that floor's map in the Roborock app or the plugin's map command, let the child bridge refresh, and check the Homebridge log for room mapping updates.
+- Room mappings are cached per map as each map is seen. A saved map only appears once Roborock reports named room segments for it; a map that returns no room segments (for example a floor that has not been divided into named rooms in the Roborock app) cannot be exposed yet. While the robot is idle the plugin briefly loads other saved maps to cache their rooms, restores the map the robot started on afterward (even if a slow model is late to acknowledge the switch), and retries still-empty maps periodically so newly segmented floors appear without a Homebridge restart. If a room is missing from a floor, divide and name that floor's rooms in the Roborock app, then check the Homebridge log for room mapping updates.
 - Starting a selected room on a map that is not currently active will ask Roborock to load that map first, then send the room-clean command.
 - This does not replace the existing HomeKit scene switches. Those remain the most reliable way to expose saved Roborock routines while Service Area behavior is being tested.
 

@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.4.39
+
+- Always restored the saved Roborock map the robot started on after a Matter Service Area room refresh, even when a map switch timed out, so slow models like the S6 Pure are no longer left on the wrong map.
+- Retried caching rooms for saved maps that returned no room segments after a wait interval instead of skipping them permanently, so newly segmented maps can appear without a Homebridge restart.
+- Represented the Matter "Vacuum + Mop" clean mode with the two standard RVC clean-mode tags instead of an undefined tag value.
+- Returned a Matter INVALID_SET status (instead of throwing) when a room selection spans multiple Roborock maps, and cleaned only the first map's areas if asked to start such a selection.
+- Abandoned an optimistic Matter state after repeated contradicting Roborock updates so Apple Home no longer stays on a wrong state until the timeout when a command was acknowledged but had no effect.
+- Built only the requested Matter cluster when Apple Home reads a single attribute, and mirrored the Roborock name onto the accessory `name` to reduce generic "Matter Accessory" labels during pairing.
+
 ## 1.4.38
 
 - Ensured every Matter Service Area room advertises a matching saved-map entry, using Roborock map names when available and a generated label otherwise, so Apple Home no longer risks getting stuck on Updating when a room references a map without a reported name.

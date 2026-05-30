@@ -3,6 +3,7 @@ import RoborockPlatform from "./platform";
 type MatterAccessory = {
   UUID: string;
   displayName: string;
+  name?: string;
   deviceType: unknown;
   serialNumber: string;
   manufacturer: string;
@@ -56,7 +57,6 @@ const RVC_RUN_MODE_TAG_IDLE = 16384;
 const RVC_RUN_MODE_TAG_CLEANING = 16385;
 const RVC_CLEAN_MODE_TAG_VACUUM = 16385;
 const RVC_CLEAN_MODE_TAG_MOP = 16386;
-const RVC_CLEAN_MODE_TAG_VACUUM_THEN_MOP = 16387;
 
 const ROBOROCK_FAN_POWER_OFF = 105;
 const ROBOROCK_FAN_POWER_BALANCED = 102;
@@ -124,6 +124,10 @@ const MATTER_MAP_NAME_MAX_LENGTH = 64;
 const MATTER_AREA_ID_MAP_MULTIPLIER = 1_000_000;
 const MATTER_AREA_ID_MAX = 0xffffffff;
 const OPTIMISTIC_STATE_TTL_MS = 2 * 60 * 1000;
+// Number of consecutive contradicting live Roborock states to tolerate before
+// abandoning an optimistic state, so a command the robot acknowledged but did
+// not act on cannot keep Apple Home on a wrong state until the TTL expires.
+const OPTIMISTIC_CONTRADICTION_LIMIT = 2;
 const SLOW_MATTER_COMMAND_MS = 3000;
 
 /**
@@ -136,6 +140,7 @@ export default class RoborockMatterVacuumAccessory {
   private registered: boolean;
   private optimisticClusters: MatterClusterState | null = null;
   private optimisticExpiresAt = 0;
+  private contradictingLiveStateCount = 0;
   private selectedServiceAreaIds: number[] = [];
   private lastServiceAreaSummary = "";
   private selectedCleanMode = CLEAN_MODE_VACUUM;
@@ -165,6 +170,9 @@ export default class RoborockMatterVacuumAccessory {
       "Roborock Vacuum";
 
     this.accessory.displayName = displayName;
+    // Some Matter layers label the node from `name` rather than `displayName`;
+    // set both so Apple Home is less likely to show a generic name.
+    this.accessory.name = displayName;
     this.accessory.manufacturer = "Roborock";
     this.accessory.model =
       this.platform.roborockAPI.getProductAttribute(duid, "model") ||
@@ -185,7 +193,7 @@ export default class RoborockMatterVacuumAccessory {
     this.accessory.clusters = this.buildClusters();
     this.accessory.handlers = this.buildHandlers();
     this.accessory.getState = async (cluster, attribute) => {
-      const clusterState = this.buildClusters()[cluster];
+      const clusterState = this.buildCluster(cluster);
       return clusterState ? clusterState[attribute] : undefined;
     };
   }
@@ -267,16 +275,24 @@ export default class RoborockMatterVacuumAccessory {
       const selectedAreas = this.getSelectedServiceAreaSegments();
       if (selectedAreas.length > 0) {
         const selectedMapIds = this.getSelectedServiceAreaMapIds(selectedAreas);
+        const targetMapId = selectedMapIds[0] ?? null;
+        // Roborock can only clean room segments from one map at a time. Service
+        // area selection already constrains this to a single map, so this only
+        // guards an unexpected multi-map selection by cleaning the first map
+        // instead of throwing out of the Matter command handler.
+        const areasToClean =
+          selectedMapIds.length > 1
+            ? selectedAreas.filter((area) => area.mapId === targetMapId)
+            : selectedAreas;
         if (selectedMapIds.length > 1) {
-          throw new Error(
-            `Matter can only start room cleaning on one Roborock map at a time for ${name}.`
+          this.platform.log.warn(
+            `Matter requested room cleaning across multiple Roborock maps for ${name}; cleaning only the areas on map ${targetMapId}.`
           );
         }
 
-        const selectedAreaNames = selectedAreas.map((area) =>
+        const selectedAreaNames = areasToClean.map((area) =>
           this.formatServiceAreaName(area)
         );
-        const targetMapId = selectedMapIds[0] ?? null;
         this.platform.log.info(
           `Starting ${name} from Matter for selected service area(s): ${selectedAreaNames.join(", ")}.`
         );
@@ -293,7 +309,7 @@ export default class RoborockMatterVacuumAccessory {
           await this.loadMatterMapIfNeeded(duid, targetMapId);
           await this.platform.roborockAPI.app_segment_clean_by_ids(
             duid,
-            selectedAreas.map((area) => area.segmentId),
+            areasToClean.map((area) => area.segmentId),
             { waitForResult: true }
           );
         });
@@ -511,6 +527,41 @@ export default class RoborockMatterVacuumAccessory {
     return this.applyOptimisticState(clusters);
   }
 
+  private buildCluster(cluster: string): Record<string, unknown> | undefined {
+    let clusterState: Record<string, unknown> | undefined;
+
+    switch (cluster) {
+      case "rvcRunMode":
+        clusterState = this.buildRunModeCluster();
+        break;
+      case "rvcCleanMode":
+        clusterState = this.buildCleanModeCluster();
+        break;
+      case "rvcOperationalState":
+        clusterState = this.buildOperationalStateCluster();
+        break;
+      case "powerSource":
+        clusterState = this.buildPowerSourceCluster();
+        break;
+      case "serviceArea":
+        clusterState = this.isServiceAreaBetaEnabled()
+          ? this.buildServiceAreaCluster()
+          : undefined;
+        break;
+      default:
+        return undefined;
+    }
+
+    if (!clusterState) {
+      return undefined;
+    }
+
+    const optimisticCluster = this.getActiveOptimisticState()?.[cluster];
+    return optimisticCluster
+      ? { ...clusterState, ...optimisticCluster }
+      : clusterState;
+  }
+
   private buildRunModeCluster(): Record<string, unknown> {
     return {
       supportedModes: [
@@ -555,9 +606,14 @@ export default class RoborockMatterVacuumAccessory {
           modeTags: [{ value: RVC_CLEAN_MODE_TAG_MOP }],
         },
         {
+          // Matter has no dedicated "vacuum then mop" tag, so combine the two
+          // standard RVC Clean Mode tags instead of an undefined tag value.
           label: "Vacuum + Mop",
           mode: CLEAN_MODE_VACUUM_AND_MOP,
-          modeTags: [{ value: RVC_CLEAN_MODE_TAG_VACUUM_THEN_MOP }],
+          modeTags: [
+            { value: RVC_CLEAN_MODE_TAG_VACUUM },
+            { value: RVC_CLEAN_MODE_TAG_MOP },
+          ],
         }
       );
     }
@@ -830,9 +886,14 @@ export default class RoborockMatterVacuumAccessory {
         .filter((area): area is MatterServiceArea => area !== undefined)
     );
     if (selectedMapIds.length > 1) {
-      throw new Error(
-        `Select service areas from only one Roborock map at a time for ${this.getVacuumName()}.`
+      this.platform.log.warn(
+        `Ignoring Matter service area selection spanning multiple Roborock maps for ${this.getVacuumName()}; select areas from one map at a time.`
       );
+      return {
+        status: SERVICE_AREA_SELECT_STATUS.INVALID_SET,
+        statusText:
+          "Select service areas from only one Roborock map at a time.",
+      };
     }
 
     this.selectedServiceAreaIds = selectedAreas;
@@ -1364,6 +1425,7 @@ export default class RoborockMatterVacuumAccessory {
       partialClusters
     );
     this.optimisticExpiresAt = Date.now() + OPTIMISTIC_STATE_TTL_MS;
+    this.contradictingLiveStateCount = 0;
   }
 
   private shouldSuppressLiveState(operationalState: number): boolean {
@@ -1371,10 +1433,24 @@ export default class RoborockMatterVacuumAccessory {
     const expected = optimistic?.rvcOperationalState?.operationalState;
 
     if (typeof expected !== "number") {
+      this.contradictingLiveStateCount = 0;
       return false;
     }
 
     if (this.doesLiveStateConfirmOptimisticState(expected, operationalState)) {
+      this.clearOptimisticState();
+      return false;
+    }
+
+    // The command was acknowledged but the robot reports a different state.
+    // Tolerate a couple of transitional reports, then trust the live state so
+    // an optimistic value cannot stay stuck until the TTL expires (e.g. a start
+    // the robot ignored because the bin is full or it is off the dock).
+    this.contradictingLiveStateCount += 1;
+    if (this.contradictingLiveStateCount >= OPTIMISTIC_CONTRADICTION_LIMIT) {
+      this.platform.log.debug(
+        `Clearing optimistic Matter state for ${this.getVacuumName()} after ${this.contradictingLiveStateCount} contradicting Roborock updates (expected ${expected}, got ${operationalState}).`
+      );
       this.clearOptimisticState();
       return false;
     }
@@ -1434,6 +1510,7 @@ export default class RoborockMatterVacuumAccessory {
   private clearOptimisticState(): void {
     this.optimisticClusters = null;
     this.optimisticExpiresAt = 0;
+    this.contradictingLiveStateCount = 0;
   }
 
   private dispatchRoborockMatterCommand(
