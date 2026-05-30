@@ -158,32 +158,26 @@ describe("Matter service area selection", () => {
   });
 });
 
-describe("Matter operational state conformance", () => {
-  test("only manufacturer states carry labels and no reserved-range values are advertised", () => {
+describe("Matter operational state", () => {
+  test("advertises operational state IDs without labels (Apple Home compatibility)", () => {
     const platform = createPlatform();
     const { accessory } = createAccessory(platform);
 
     const list = accessory.clusters.rvcOperationalState.operationalStateList;
 
+    // Apple Home gets stuck on "Connecting" when the list carries labels, so
+    // every entry must be a bare { operationalStateId } with no label.
     for (const entry of list) {
-      if (entry.operationalStateId >= 0x80) {
-        // Manufacturer states (>= 0x80) must carry a label.
-        expect(typeof entry.operationalStateLabel).toBe("string");
-        expect(entry.operationalStateLabel.length).toBeGreaterThan(0);
-      } else {
-        // Standard/RVC states must not carry a label, which Matter rejects.
-        expect(entry).not.toHaveProperty("operationalStateLabel");
-        // Reserved RVC range (0x43-0x7F) must not be used.
-        expect(entry.operationalStateId).toBeLessThanOrEqual(0x42);
-      }
+      expect(entry).not.toHaveProperty("operationalStateLabel");
+      expect(typeof entry.operationalStateId).toBe("number");
     }
   });
 
-  test("maps Roborock dock/maintenance states to labeled manufacturer states", () => {
+  test("maps Roborock dock/maintenance states to their operational state IDs", () => {
     const cases = [
-      { state: 22, expected: 0x80 }, // emptying dust container
-      { state: 23, expected: 0x81 }, // washing the mop
-      { state: 29, expected: 0x82 }, // mapping
+      { state: 22, expected: 67 }, // emptying dust container
+      { state: 23, expected: 68 }, // washing the mop
+      { state: 29, expected: 70 }, // mapping
     ];
 
     for (const { state, expected } of cases) {

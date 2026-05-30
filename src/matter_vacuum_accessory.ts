@@ -114,42 +114,23 @@ const RVC_OPERATIONAL_STATE = {
   SEEKING_CHARGER: 64,
   CHARGING: 65,
   DOCKED: 66,
-  // Roborock-specific states use the Matter manufacturer range (0x80+), which
-  // requires a label. The reserved RVC range (0x43-0x7F) is intentionally
-  // avoided so the operational state list stays spec-conformant.
-  EMPTYING_DUST_BIN: 0x80,
-  CLEANING_MOP: 0x81,
-  UPDATING_MAPS: 0x82,
+  EMPTYING_DUST_BIN: 67,
+  CLEANING_MOP: 68,
+  UPDATING_MAPS: 70,
 } as const;
 
-type MatterOperationalStateEntry = {
-  operationalStateId: number;
-  operationalStateLabel?: string;
-};
-
-// Standard/RVC states (< 0x80) must not carry a label; manufacturer states
-// (>= 0x80) must. Only the manufacturer entries below include a label.
-const RVC_OPERATIONAL_STATE_LIST: MatterOperationalStateEntry[] = [
-  { operationalStateId: RVC_OPERATIONAL_STATE.STOPPED },
-  { operationalStateId: RVC_OPERATIONAL_STATE.RUNNING },
-  { operationalStateId: RVC_OPERATIONAL_STATE.PAUSED },
-  { operationalStateId: RVC_OPERATIONAL_STATE.ERROR },
-  { operationalStateId: RVC_OPERATIONAL_STATE.SEEKING_CHARGER },
-  { operationalStateId: RVC_OPERATIONAL_STATE.CHARGING },
-  { operationalStateId: RVC_OPERATIONAL_STATE.DOCKED },
-  {
-    operationalStateId: RVC_OPERATIONAL_STATE.EMPTYING_DUST_BIN,
-    operationalStateLabel: "Emptying Dust Bin",
-  },
-  {
-    operationalStateId: RVC_OPERATIONAL_STATE.CLEANING_MOP,
-    operationalStateLabel: "Cleaning Mop",
-  },
-  {
-    operationalStateId: RVC_OPERATIONAL_STATE.UPDATING_MAPS,
-    operationalStateLabel: "Updating Maps",
-  },
-];
+const RVC_OPERATIONAL_STATE_LIST = [
+  RVC_OPERATIONAL_STATE.STOPPED,
+  RVC_OPERATIONAL_STATE.RUNNING,
+  RVC_OPERATIONAL_STATE.PAUSED,
+  RVC_OPERATIONAL_STATE.ERROR,
+  RVC_OPERATIONAL_STATE.SEEKING_CHARGER,
+  RVC_OPERATIONAL_STATE.CHARGING,
+  RVC_OPERATIONAL_STATE.DOCKED,
+  RVC_OPERATIONAL_STATE.EMPTYING_DUST_BIN,
+  RVC_OPERATIONAL_STATE.CLEANING_MOP,
+  RVC_OPERATIONAL_STATE.UPDATING_MAPS,
+] as const;
 
 const RVC_ERROR_STATE = {
   NO_ERROR: 0,
@@ -837,11 +818,12 @@ export default class RoborockMatterVacuumAccessory {
       phaseList: null,
       currentPhase: null,
       countdownTime: null,
-      // Standard states are listed without a label; manufacturer states (>=
-      // 0x80) carry the label Matter requires for them.
-      operationalStateList: RVC_OPERATIONAL_STATE_LIST.map((entry) => ({
-        ...entry,
-      })),
+      // Advertise operational state IDs without labels. Apple Home stops
+      // commissioning ("Connecting" forever) when the list carries labels or
+      // manufacturer-range IDs, so only bare IDs are exposed here.
+      operationalStateList: RVC_OPERATIONAL_STATE_LIST.map(
+        (operationalStateId) => ({ operationalStateId })
+      ),
       operationalState,
       operationalError,
     };
