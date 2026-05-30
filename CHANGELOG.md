@@ -2,16 +2,10 @@
 
 ## 1.4.40
 
-- Moved the Roborock-specific Matter operational states (emptying dust bin, cleaning mop, updating maps) from the reserved RVC range into the manufacturer range with the labels Matter requires there, so the operational state list is spec-conformant. Standard states remain unlabeled. Isolated from 1.4.39 so the change can be validated against a real robot independently.
-
-## 1.4.39
-
-- Always restored the saved Roborock map the robot started on after a Matter Service Area room refresh, even when a map switch timed out, so slow models like the S6 Pure are no longer left on the wrong map.
-- Retried caching rooms for saved maps that returned no room segments after a wait interval instead of skipping them permanently, so newly segmented maps can appear without a Homebridge restart.
-- Represented the Matter "Vacuum + Mop" clean mode with the two standard RVC clean-mode tags instead of an undefined tag value.
-- Returned a Matter INVALID_SET status (instead of throwing) when a room selection spans multiple Roborock maps, and cleaned only the first map's areas if asked to start such a selection.
-- Abandoned an optimistic Matter state after repeated contradicting Roborock updates so Apple Home no longer stays on a wrong state until the timeout when a command was acknowledged but had no effect.
-- Built only the requested Matter cluster when Apple Home reads a single attribute, and mirrored the Roborock name onto the accessory `name` to reduce generic "Matter Accessory" labels during pairing.
+- Restored the original Roborock map after Matter Service Area room refreshes, even when another saved-map load times out, and retried empty saved maps periodically so newly segmented rooms can appear without restarting Homebridge.
+- Hardened Matter RVC conformance by using standard Vacuum and Mop clean-mode tags for Vacuum + Mop, moving Roborock-specific operational states into the labeled manufacturer range, and returning INVALID_SET for multi-map room selections.
+- Cleared optimistic Matter state after repeated contradicting Roborock updates so Apple Home does not stay on a wrong state until the timeout when a command is acknowledged but has no effect.
+- Built only the requested Matter cluster for single-attribute reads and mirrored the Roborock name onto the accessory `name` to reduce generic "Matter Accessory" labels during pairing.
 
 ## 1.4.38
 
