@@ -745,6 +745,21 @@ describe("Roborock API model and diagnostics helpers", () => {
     );
   });
 
+  test("classifies command timeouts regardless of the configured duration", () => {
+    const api = createRoborock();
+
+    expect(
+      api.getTransientErrorKind(
+        "Local request with id 6 with method load_multi_map timed out after 30 seconds Local connect state: true"
+      )
+    ).toBe("local timeout");
+    expect(
+      api.getTransientErrorKind(
+        "Cloud request with id 7 with method get_status timed out after 10 seconds. MQTT connection state: true"
+      )
+    ).toBe("cloud timeout");
+  });
+
   test("zero transient warning throttle moves transient warnings to debug only", async () => {
     const log = createLog();
     const api = createRoborock({

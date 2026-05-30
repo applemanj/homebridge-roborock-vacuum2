@@ -47,6 +47,49 @@ type RoborockCleanModeSettings = {
   waterBoxMode?: number | null;
 };
 
+type RoborockCommandOptions = {
+  waitForResult?: boolean;
+  throwOnError?: boolean;
+};
+
+/**
+ * The subset of the runtime Roborock API the Matter accessory depends on.
+ * Methods that may be absent on older API builds are optional and guarded with
+ * a `typeof === "function"` check before use.
+ */
+interface RoborockApi {
+  getVacuumDeviceInfo(duid: string, property: string): string | undefined;
+  getProductAttribute(
+    duid: string,
+    property: string
+  ): string | null | undefined;
+  getVacuumDeviceStatus(duid: string, property: string): unknown;
+  app_start(duid: string, options?: RoborockCommandOptions): Promise<void>;
+  app_stop(duid: string, options?: RoborockCommandOptions): Promise<void>;
+  app_pause(duid: string, options?: RoborockCommandOptions): Promise<void>;
+  app_charge(duid: string, options?: RoborockCommandOptions): Promise<void>;
+  app_segment_clean_by_ids(
+    duid: string,
+    segments: number[],
+    options?: RoborockCommandOptions
+  ): Promise<void>;
+  getRoomMappingsForDevice?(duid: string): unknown;
+  getMapListForDevice?(duid: string): unknown;
+  getCurrentMapIdForDevice?(duid: string): unknown;
+  getMatterCleanModeCapabilities?(duid: string): MatterCleanModeCapabilities;
+  applyMatterCleanModeSettings?(
+    duid: string,
+    settings: RoborockCleanModeSettings,
+    options?: RoborockCommandOptions
+  ): Promise<void>;
+  load_multi_map?(
+    duid: string,
+    mapId: number,
+    options?: RoborockCommandOptions
+  ): Promise<void>;
+  getTransportDiagnostics?(): Record<string, unknown> | null | undefined;
+}
+
 const RUN_MODE_IDLE = 0;
 const RUN_MODE_CLEANING = 1;
 const CLEAN_MODE_VACUUM = 0;
@@ -78,8 +121,6 @@ const RVC_OPERATIONAL_STATE = {
   CLEANING_MOP: 0x81,
   UPDATING_MAPS: 0x82,
 } as const;
-
-const RVC_OPERATIONAL_STATE_MANUFACTURER_MIN = 0x80;
 
 type MatterOperationalStateEntry = {
   operationalStateId: number;
@@ -168,6 +209,10 @@ export default class RoborockMatterVacuumAccessory {
   private selectedCleanModeNeedsApply = false;
   private lastVacuumFanPower: number | null = null;
   private lastWaterBoxMode: number | null = null;
+  // Freshest status values seen from live Roborock messages. Preferred over the
+  // slower HomeData snapshot when rebuilding clusters so registration snapshots
+  // and attribute reads do not lag behind the latest push.
+  private liveStatus: Map<string, number> = new Map();
 
   constructor(
     private readonly platform: RoborockPlatform,
@@ -179,6 +224,10 @@ export default class RoborockMatterVacuumAccessory {
     this.updateMetadata(device);
   }
 
+  private get api(): RoborockApi {
+    return this.platform.roborockAPI as RoborockApi;
+  }
+
   markRegistered(): void {
     this.registered = true;
   }
@@ -186,7 +235,7 @@ export default class RoborockMatterVacuumAccessory {
   updateMetadata(device: RoborockDevice): void {
     const duid = device.duid;
     const displayName =
-      this.platform.roborockAPI.getVacuumDeviceInfo(duid, "name") ||
+      this.api.getVacuumDeviceInfo(duid, "name") ||
       device.name ||
       "Roborock Vacuum";
 
@@ -196,15 +245,12 @@ export default class RoborockMatterVacuumAccessory {
     this.accessory.name = displayName;
     this.accessory.manufacturer = "Roborock";
     this.accessory.model =
-      this.platform.roborockAPI.getProductAttribute(duid, "model") ||
-      this.platform.roborockAPI.getVacuumDeviceInfo(duid, "model") ||
+      this.api.getProductAttribute(duid, "model") ||
+      this.api.getVacuumDeviceInfo(duid, "model") ||
       "Roborock Vacuum";
     this.accessory.serialNumber =
-      this.platform.roborockAPI.getVacuumDeviceInfo(duid, "sn") || duid;
-    const firmwareRevision = this.platform.roborockAPI.getVacuumDeviceInfo(
-      duid,
-      "fv"
-    );
+      this.api.getVacuumDeviceInfo(duid, "sn") || duid;
+    const firmwareRevision = this.api.getVacuumDeviceInfo(duid, "fv");
     if (firmwareRevision) {
       this.accessory.firmwareRevision = firmwareRevision;
     } else {
@@ -328,7 +374,7 @@ export default class RoborockMatterVacuumAccessory {
         this.dispatchRoborockMatterCommand("service area clean", async () => {
           await this.applySelectedCleanModeIfNeeded();
           await this.loadMatterMapIfNeeded(duid, targetMapId);
-          await this.platform.roborockAPI.app_segment_clean_by_ids(
+          await this.api.app_segment_clean_by_ids(
             duid,
             areasToClean.map((area) => area.segmentId),
             { waitForResult: true }
@@ -348,7 +394,7 @@ export default class RoborockMatterVacuumAccessory {
       this.scheduleMatterStateUpdate(state, "start");
       this.dispatchRoborockMatterCommand("start", async () => {
         await this.applySelectedCleanModeIfNeeded();
-        await this.platform.roborockAPI.app_start(duid, {
+        await this.api.app_start(duid, {
           waitForResult: true,
         });
       });
@@ -368,7 +414,7 @@ export default class RoborockMatterVacuumAccessory {
       this.setOptimisticState(state);
       this.scheduleMatterStateUpdate(state, "stop");
       this.dispatchRoborockMatterCommand("stop", () =>
-        this.platform.roborockAPI.app_stop(duid, { waitForResult: true })
+        this.api.app_stop(duid, { waitForResult: true })
       );
       return;
     }
@@ -412,7 +458,7 @@ export default class RoborockMatterVacuumAccessory {
     this.setOptimisticState(state);
     this.scheduleMatterStateUpdate(state, "pause");
     this.dispatchRoborockMatterCommand("pause", () =>
-      this.platform.roborockAPI.app_pause(this.getDuid(), {
+      this.api.app_pause(this.getDuid(), {
         waitForResult: true,
       })
     );
@@ -430,7 +476,7 @@ export default class RoborockMatterVacuumAccessory {
     this.scheduleMatterStateUpdate(state, "resume");
     this.dispatchRoborockMatterCommand("resume", async () => {
       await this.applySelectedCleanModeIfNeeded();
-      await this.platform.roborockAPI.app_start(this.getDuid(), {
+      await this.api.app_start(this.getDuid(), {
         waitForResult: true,
       });
     });
@@ -449,7 +495,7 @@ export default class RoborockMatterVacuumAccessory {
     this.setOptimisticState(state);
     this.scheduleMatterStateUpdate(state, "return to dock");
     this.dispatchRoborockMatterCommand("return to dock", () =>
-      this.platform.roborockAPI.app_charge(this.getDuid(), {
+      this.api.app_charge(this.getDuid(), {
         waitForResult: true,
       })
     );
@@ -504,6 +550,13 @@ export default class RoborockMatterVacuumAccessory {
     const state = this.getNumberFromValue(status.state);
     const chargeStatus = this.getNumberFromValue(status.charge_status);
     const battery = this.getNumberFromValue(status.battery);
+
+    // Remember the freshest live values so a later full cluster rebuild reflects
+    // them instead of the slower HomeData snapshot.
+    this.rememberLiveStatus("state", state);
+    this.rememberLiveStatus("charge_status", chargeStatus);
+    this.rememberLiveStatus("battery", battery);
+
     const clusters: MatterClusterState = {};
 
     if (state !== null || chargeStatus !== null) {
@@ -655,15 +708,14 @@ export default class RoborockMatterVacuumAccessory {
   }
 
   private getMatterCleanModeCapabilities(): MatterCleanModeCapabilities {
-    const getCapabilities =
-      this.platform.roborockAPI.getMatterCleanModeCapabilities;
+    const getCapabilities = this.api.getMatterCleanModeCapabilities;
 
     if (typeof getCapabilities !== "function") {
       return { canVacuum: true, canMop: false };
     }
 
     return getCapabilities.call(
-      this.platform.roborockAPI,
+      this.api,
       this.getDuid()
     ) as MatterCleanModeCapabilities;
   }
@@ -673,8 +725,7 @@ export default class RoborockMatterVacuumAccessory {
       return;
     }
 
-    const applySettings =
-      this.platform.roborockAPI.applyMatterCleanModeSettings;
+    const applySettings = this.api.applyMatterCleanModeSettings;
     if (typeof applySettings !== "function") {
       this.selectedCleanModeNeedsApply = false;
       return;
@@ -691,14 +742,9 @@ export default class RoborockMatterVacuumAccessory {
     this.platform.log.info(
       `Applying ${this.getCleanModeLabel(this.getCurrentCleanMode())} mode to ${this.getVacuumName()} before starting.`
     );
-    await applySettings.call(
-      this.platform.roborockAPI,
-      this.getDuid(),
-      settings,
-      {
-        waitForResult: true,
-      }
-    );
+    await applySettings.call(this.api, this.getDuid(), settings, {
+      waitForResult: true,
+    });
     this.selectedCleanModeNeedsApply = false;
   }
 
@@ -947,16 +993,12 @@ export default class RoborockMatterVacuumAccessory {
   }
 
   private getMatterServiceAreas(): MatterServiceArea[] {
-    const getRoomMappingsForDevice =
-      this.platform.roborockAPI.getRoomMappingsForDevice;
+    const getRoomMappingsForDevice = this.api.getRoomMappingsForDevice;
     if (typeof getRoomMappingsForDevice !== "function") {
       return [];
     }
 
-    const rooms = getRoomMappingsForDevice.call(
-      this.platform.roborockAPI,
-      this.getDuid()
-    );
+    const rooms = getRoomMappingsForDevice.call(this.api, this.getDuid());
     if (!Array.isArray(rooms)) {
       return [];
     }
@@ -1031,15 +1073,12 @@ export default class RoborockMatterVacuumAccessory {
   }
 
   private getMatterServiceAreaMapsFromRoborock(): MatterServiceAreaMap[] {
-    const getMapListForDevice = this.platform.roborockAPI.getMapListForDevice;
+    const getMapListForDevice = this.api.getMapListForDevice;
     if (typeof getMapListForDevice !== "function") {
       return [];
     }
 
-    const maps = getMapListForDevice.call(
-      this.platform.roborockAPI,
-      this.getDuid()
-    );
+    const maps = getMapListForDevice.call(this.api, this.getDuid());
     if (!Array.isArray(maps)) {
       return [];
     }
@@ -1180,27 +1219,34 @@ export default class RoborockMatterVacuumAccessory {
     return selectedAreas;
   }
 
-  private toMatterLocationName(name: unknown, areaId: number): string {
-    const fallbackName = `Room ${areaId}`;
+  private clampMatterName(
+    name: unknown,
+    maxLength: number,
+    fallback: string
+  ): string {
     const normalizedName =
       typeof name === "string" ? name.replace(/\s+/g, " ").trim() : "";
-    const locationName = normalizedName || fallbackName;
+    const value = normalizedName || fallback;
 
-    return locationName.length > MATTER_LOCATION_NAME_MAX_LENGTH
-      ? locationName.slice(0, MATTER_LOCATION_NAME_MAX_LENGTH).trim() ||
-          fallbackName
-      : locationName;
+    return value.length > maxLength
+      ? value.slice(0, maxLength).trim() || fallback
+      : value;
+  }
+
+  private toMatterLocationName(name: unknown, areaId: number): string {
+    return this.clampMatterName(
+      name,
+      MATTER_LOCATION_NAME_MAX_LENGTH,
+      `Room ${areaId}`
+    );
   }
 
   private toMatterMapName(name: unknown, mapId: number): string {
-    const fallbackName = `Roborock Map ${mapId}`;
-    const normalizedName =
-      typeof name === "string" ? name.replace(/\s+/g, " ").trim() : "";
-    const mapName = normalizedName || fallbackName;
-
-    return mapName.length > MATTER_MAP_NAME_MAX_LENGTH
-      ? mapName.slice(0, MATTER_MAP_NAME_MAX_LENGTH).trim() || fallbackName
-      : mapName;
+    return this.clampMatterName(
+      name,
+      MATTER_MAP_NAME_MAX_LENGTH,
+      `Roborock Map ${mapId}`
+    );
   }
 
   private formatServiceAreaName(area: MatterServiceArea): string {
@@ -1215,13 +1261,17 @@ export default class RoborockMatterVacuumAccessory {
       return area.name;
     }
 
-    const fallbackName = `${area.mapName} - Room ${area.segmentId}`;
-    const displayName = `${area.mapName} - ${area.name}`;
+    const fallbackName = this.clampMatterName(
+      `${area.mapName} - Room ${area.segmentId}`,
+      MATTER_LOCATION_NAME_MAX_LENGTH,
+      area.name
+    );
 
-    return displayName.length > MATTER_LOCATION_NAME_MAX_LENGTH
-      ? displayName.slice(0, MATTER_LOCATION_NAME_MAX_LENGTH).trim() ||
-          fallbackName.slice(0, MATTER_LOCATION_NAME_MAX_LENGTH).trim()
-      : displayName;
+    return this.clampMatterName(
+      `${area.mapName} - ${area.name}`,
+      MATTER_LOCATION_NAME_MAX_LENGTH,
+      fallbackName
+    );
   }
 
   private getSelectedServiceAreaMapIds(
@@ -1250,7 +1300,7 @@ export default class RoborockMatterVacuumAccessory {
       return;
     }
 
-    const loadMap = this.platform.roborockAPI.load_multi_map;
+    const loadMap = this.api.load_multi_map;
     if (typeof loadMap !== "function") {
       throw new Error(
         `Roborock map ${targetMapId} is not currently loaded and this plugin cannot switch maps.`
@@ -1260,20 +1310,19 @@ export default class RoborockMatterVacuumAccessory {
     this.platform.log.info(
       `Loading Roborock map ${targetMapId} for ${this.getVacuumName()} before selected-area cleaning.`
     );
-    await loadMap.call(this.platform.roborockAPI, duid, targetMapId, {
+    await loadMap.call(this.api, duid, targetMapId, {
       waitForResult: true,
     });
   }
 
   private getCurrentMatterMapId(): number | null {
-    const getCurrentMapIdForDevice =
-      this.platform.roborockAPI.getCurrentMapIdForDevice;
+    const getCurrentMapIdForDevice = this.api.getCurrentMapIdForDevice;
     if (typeof getCurrentMapIdForDevice !== "function") {
       return null;
     }
 
     const currentMapId = getCurrentMapIdForDevice.call(
-      this.platform.roborockAPI,
+      this.api,
       this.getDuid()
     );
 
@@ -1379,11 +1428,21 @@ export default class RoborockMatterVacuumAccessory {
     }
   }
 
+  private rememberLiveStatus(property: string, value: number | null): void {
+    if (value !== null) {
+      this.liveStatus.set(property, value);
+    }
+  }
+
   private getNumberStatus(property: string): number | null {
-    const value = this.platform.roborockAPI.getVacuumDeviceStatus(
-      this.getDuid(),
-      property
-    );
+    // Prefer the freshest value from a live message, falling back to the
+    // HomeData snapshot for properties live messages do not carry.
+    const liveValue = this.liveStatus.get(property);
+    if (liveValue !== undefined) {
+      return liveValue;
+    }
+
+    const value = this.api.getVacuumDeviceStatus(this.getDuid(), property);
 
     return this.getNumberFromValue(value);
   }
@@ -1571,8 +1630,8 @@ export default class RoborockMatterVacuumAccessory {
 
   private getTransportDescription(): string {
     const diagnostics =
-      typeof this.platform.roborockAPI.getTransportDiagnostics === "function"
-        ? this.platform.roborockAPI.getTransportDiagnostics()
+      typeof this.api.getTransportDiagnostics === "function"
+        ? this.api.getTransportDiagnostics()
         : null;
     const transport =
       diagnostics && typeof diagnostics === "object"
@@ -1619,7 +1678,7 @@ export default class RoborockMatterVacuumAccessory {
 
   private getVacuumName(): string {
     return (
-      this.platform.roborockAPI.getVacuumDeviceInfo(this.getDuid(), "name") ||
+      this.api.getVacuumDeviceInfo(this.getDuid(), "name") ||
       this.accessory.displayName ||
       "Roborock vacuum"
     );

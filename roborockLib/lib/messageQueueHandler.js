@@ -1,7 +1,22 @@
 // @ts-check
 "use strict";
 
-const requestTimeout = 10000; // 10s
+const DEFAULT_REQUEST_TIMEOUT = 10000; // 10s
+// Some commands legitimately take longer to acknowledge. Switching the active
+// saved map (load_multi_map) can take well over the default timeout on older
+// models such as the S6 Pure, so give it more headroom before timing out.
+/** @type {Record<string, number>} */
+const METHOD_REQUEST_TIMEOUTS = {
+  load_multi_map: 30000, // 30s
+};
+
+/**
+ * @param {string} method
+ * @returns {number}
+ */
+function getRequestTimeout(method) {
+  return METHOD_REQUEST_TIMEOUTS[method] || DEFAULT_REQUEST_TIMEOUT;
+}
 
 /**
  * @typedef {Object} PendingRequest
@@ -167,19 +182,21 @@ class messageQueueHandler {
           reject();
         } else {
           // setup Timeout
+          const requestTimeout = getRequestTimeout(method);
+          const timeoutSeconds = Math.round(requestTimeout / 1000);
           const timeout = this.adapter.setTimeout(() => {
             this.adapter.pendingRequests.delete(messageID);
             this.adapter.localConnector.clearChunkBuffer(duid);
             if (useCloudConnection) {
               reject(
                 new Error(
-                  `Cloud request with id ${messageID} with method ${method} timed out after 10 seconds. MQTT connection state: ${mqttConnectionState}`
+                  `Cloud request with id ${messageID} with method ${method} timed out after ${timeoutSeconds} seconds. MQTT connection state: ${mqttConnectionState}`
                 )
               );
             } else {
               reject(
                 new Error(
-                  `Local request with id ${messageID} with method ${method} timed out after 10 seconds Local connect state: ${localConnectionState}`
+                  `Local request with id ${messageID} with method ${method} timed out after ${timeoutSeconds} seconds Local connect state: ${localConnectionState}`
                 )
               );
             }
@@ -246,4 +263,6 @@ class messageQueueHandler {
 
 module.exports = {
   messageQueueHandler,
+  getRequestTimeout,
+  DEFAULT_REQUEST_TIMEOUT,
 };

@@ -2791,7 +2791,7 @@ class Roborock {
   getTransientErrorKind(errorText) {
     const text = String(errorText || "");
 
-    if (text.includes("timed out after 10 seconds")) {
+    if (/timed out after \d+ seconds/.test(text)) {
       if (text.includes("Local request")) {
         return "local timeout";
       }

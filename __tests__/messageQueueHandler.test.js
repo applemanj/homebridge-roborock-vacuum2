@@ -1,5 +1,7 @@
 const {
   messageQueueHandler,
+  getRequestTimeout,
+  DEFAULT_REQUEST_TIMEOUT,
 } = require("../roborockLib/lib/messageQueueHandler");
 
 function createAdapter(overrides = {}) {
@@ -35,6 +37,20 @@ function createAdapter(overrides = {}) {
 
   return adapter;
 }
+
+describe("messageQueueHandler request timeouts", () => {
+  test("gives slow map switches a longer timeout than the default", () => {
+    expect(getRequestTimeout("load_multi_map")).toBe(30000);
+    expect(getRequestTimeout("load_multi_map")).toBeGreaterThan(
+      DEFAULT_REQUEST_TIMEOUT
+    );
+  });
+
+  test("uses the default timeout for ordinary commands", () => {
+    expect(getRequestTimeout("get_status")).toBe(DEFAULT_REQUEST_TIMEOUT);
+    expect(getRequestTimeout("app_start")).toBe(DEFAULT_REQUEST_TIMEOUT);
+  });
+});
 
 describe("messageQueueHandler transport selection", () => {
   test("falls back to cloud when local transport is unavailable", async () => {

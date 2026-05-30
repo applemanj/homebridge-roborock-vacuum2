@@ -196,6 +196,27 @@ describe("Matter operational state conformance", () => {
   });
 });
 
+describe("Matter live status cache", () => {
+  test("prefers the freshest live message value over the HomeData snapshot", async () => {
+    // HomeData reports the vacuum docked/charging (state 8 -> CHARGING).
+    const platform = createPlatform({ status: { state: 8, battery: 50 } });
+    const { accessory, vacuum } = createAccessory(platform, true);
+
+    expect(
+      await accessory.getState("rvcOperationalState", "operationalState")
+    ).toBe(RVC_OPERATIONAL_STATE_CHARGING);
+
+    // A live message says it is now cleaning (state 5 -> RUNNING).
+    await vacuum.notifyDeviceUpdater("LocalMessage", [
+      { state: 5, battery: 50 },
+    ]);
+
+    expect(
+      await accessory.getState("rvcOperationalState", "operationalState")
+    ).toBe(1); // RUNNING, sourced from the live cache rather than HomeData
+  });
+});
+
 describe("Matter optimistic state", () => {
   test("abandons an optimistic state after repeated contradicting live updates", async () => {
     const matterUpdates = [];
