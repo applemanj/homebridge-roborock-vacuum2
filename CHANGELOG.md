@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.36
+
+- Reloaded saved Roborock maps during Matter Service Area refresh even when Roborock reports the map is already active, giving multi-floor rooms another chance to expose segment IDs.
+- Published saved Matter Service Area map names as soon as Roborock reports them, even while rooms for a map are still being resolved.
+- Documented Matter pairing-name behavior and why Apple Home may ask to add the external vacuum accessory after the bridge is commissioned.
+
 ## 1.4.35
 
 - Added capability-gated Matter clean modes for Vacuum, Mop, and Vacuum + Mop on Roborock models that report mop or water support.

@@ -115,6 +115,8 @@ To set it up:
 
 Treat the Matter QR code and manual pairing code like temporary setup secrets; avoid posting logs that include them publicly.
 
+Apple Home may show a generic **Matter Accessory** label during commissioning. The plugin sends the Roborock vacuum name to Homebridge, but the bridge name shown during pairing is controlled by Homebridge's Matter bridge/child-bridge configuration. If you want the pairing bridge to read like **Matter Roborock Bridge**, rename the Roborock child bridge/daughter bridge in Homebridge before pairing. Robotic vacuum cleaners are published by Homebridge as dedicated external Matter accessories for Apple Home compatibility, so Apple Home may ask you to add the vacuum after the bridge is commissioned; the plugin cannot force that second accessory confirmation to be skipped.
+
 If you paired the experimental Matter vacuum before version 1.4.28 and Apple Home keeps showing the accessory as **Updating**, remove the Matter vacuum from Apple Home, restart the Roborock child bridge, and pair it again using the fresh code from the log.
 
 The Matter vacuum controls map to the same Roborock commands used elsewhere in the plugin:

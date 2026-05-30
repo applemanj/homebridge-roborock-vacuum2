@@ -917,11 +917,13 @@ export default class RoborockMatterVacuumAccessory {
   private getMatterServiceAreaMaps(
     areas: MatterServiceArea[]
   ): MatterServiceAreaMap[] {
+    const knownMaps = this.getMatterServiceAreaMapsFromRoborock();
+    if (knownMaps.length > 0) {
+      return knownMaps;
+    }
+
     const maps: MatterServiceAreaMap[] = [];
     const seenMapIds = new Set<number>();
-    const knownMapsById = new Map(
-      this.getMatterServiceAreaMapsFromRoborock().map((map) => [map.mapId, map])
-    );
 
     for (const area of areas) {
       if (area.mapId === null || seenMapIds.has(area.mapId)) {
@@ -931,10 +933,7 @@ export default class RoborockMatterVacuumAccessory {
       seenMapIds.add(area.mapId);
       maps.push({
         mapId: area.mapId,
-        name:
-          area.mapName ||
-          knownMapsById.get(area.mapId)?.name ||
-          `Roborock Map ${area.mapId}`,
+        name: area.mapName || `Roborock Map ${area.mapId}`,
       });
     }
 

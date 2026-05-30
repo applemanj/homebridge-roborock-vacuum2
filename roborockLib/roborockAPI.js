@@ -2068,17 +2068,18 @@ class Roborock {
       const refreshKey = this.getServiceAreaRoomMapRefreshKey(duid, map.mapId);
       this.serviceAreaRoomMapRefreshAttempts.add(refreshKey);
 
-      if (map.mapId === originalMapId) {
-        await vacuum.getParameter(duid, "get_room_mapping");
-        continue;
-      }
-
       this.log.info(
         `Loading Roborock map '${map.name}' for ${duid} to cache Matter Service Area rooms.`
       );
       await vacuum.command(duid, "load_multi_map", map.mapId, {
         throwOnError: true,
       });
+
+      if (this.getRoomMappingsForMap(duid, map.mapId).length === 0) {
+        this.log.info(
+          `Roborock map '${map.name}' for ${duid} did not return room mappings. It will appear in Matter once Roborock reports room segment IDs for that saved map.`
+        );
+      }
     }
 
     const currentMapId = this.getCurrentMapIdForDevice(duid);

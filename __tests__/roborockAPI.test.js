@@ -187,6 +187,71 @@ describe("Roborock API model and diagnostics helpers", () => {
     ]);
   });
 
+  test("Matter Service Area beta reloads the active map when its rooms are missing", async () => {
+    const api = createRoborock({ enableMatterServiceAreaBeta: true });
+    api.roomIDs = {
+      55: "Lower Level",
+      77: "Upper Hallway",
+    };
+    await api.setStateAsync("HomeData", {
+      val: JSON.stringify({
+        products: [{ id: "product-1", model: "roborock.vacuum.a08" }],
+        devices: [
+          {
+            duid: "device-1",
+            productId: "product-1",
+            deviceStatus: { state: "8" },
+          },
+        ],
+        receivedDevices: [],
+      }),
+      ack: true,
+    });
+
+    const mapInfo = [
+      { mapFlag: 0, name: "Lower Floor" },
+      { mapFlag: 1, name: "Upper Floor" },
+    ];
+    api.updateMapListCache("device-1", mapInfo);
+    api.updateRoomMappingCache("device-1", 0, [[16, 55]]);
+
+    const robot = {
+      getParameter: jest.fn(async (duid, parameter) => {
+        if (parameter === "get_multi_maps_list") {
+          api.updateMapListCache(duid, mapInfo);
+          return mapInfo;
+        }
+
+        if (parameter === "get_room_mapping") {
+          api.updateRoomMappingCache(duid, 1, []);
+          return [];
+        }
+
+        return null;
+      }),
+      command: jest.fn(async (duid, parameter, mapId) => {
+        if (parameter === "load_multi_map" && mapId === 1) {
+          api.updateRoomMappingCache(duid, 1, [[17, 77]]);
+        }
+      }),
+    };
+
+    await api.updateDataMinimumData("device-1", robot, "roborock.vacuum.a08");
+
+    expect(robot.command).toHaveBeenCalledWith(
+      "device-1",
+      "load_multi_map",
+      1,
+      {
+        throwOnError: true,
+      }
+    );
+    expect(api.getRoomMappingsForDevice("device-1")).toEqual([
+      { segmentId: 16, roomId: 55, mapId: 0, name: "Lower Level" },
+      { segmentId: 17, roomId: 77, mapId: 1, name: "Upper Hallway" },
+    ]);
+  });
+
   test("detects Matter mop clean mode support from schema capabilities", async () => {
     const api = createRoborock();
     await api.setStateAsync("HomeData", {
