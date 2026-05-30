@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.38
+
+- Ensured every Matter Service Area room advertises a matching saved-map entry, using Roborock map names when available and a generated label otherwise, so Apple Home no longer risks getting stuck on Updating when a room references a map without a reported name.
+- Cached persisted Roborock state (HomeData, room mappings, transport diagnostics) in memory after the first read to cut repeated disk reads on every status lookup and command while preserving the on-disk file format and legacy migration.
+- Removed an unreachable internal command branch and a duplicate status helper, and ignored local tooling files during lint.
+
 ## 1.4.37
 
 - Kept unresolved Roborock maps out of Matter Service Area metadata until they have matching room segment IDs, avoiding Apple Home getting stuck on Updating with incomplete map data.

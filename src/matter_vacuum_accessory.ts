@@ -917,19 +917,14 @@ export default class RoborockMatterVacuumAccessory {
   private getMatterServiceAreaMaps(
     areas: MatterServiceArea[]
   ): MatterServiceAreaMap[] {
-    const mapIdsWithAreas = new Set(
-      areas
-        .map((area) => area.mapId)
-        .filter((mapId): mapId is number => mapId !== null)
+    // Matter controllers can hang if supportedMaps advertises maps with no
+    // matching supportedAreas, or if supportedAreas reference a mapId that has
+    // no supportedMaps entry. Build supportedMaps from exactly the maps that
+    // have areas, preferring Roborock-reported map names and falling back to
+    // the area's map name or a generated label.
+    const roborockMapsById = new Map(
+      this.getMatterServiceAreaMapsFromRoborock().map((map) => [map.mapId, map])
     );
-    const knownMaps = this.getMatterServiceAreaMapsFromRoborock().filter(
-      (map) => mapIdsWithAreas.has(map.mapId)
-    );
-    if (knownMaps.length > 0) {
-      // Matter controllers can hang if supportedMaps advertises maps with no
-      // matching supportedAreas, so keep unresolved Roborock maps internal.
-      return knownMaps;
-    }
 
     const maps: MatterServiceAreaMap[] = [];
     const seenMapIds = new Set<number>();
@@ -942,7 +937,10 @@ export default class RoborockMatterVacuumAccessory {
       seenMapIds.add(area.mapId);
       maps.push({
         mapId: area.mapId,
-        name: area.mapName || `Roborock Map ${area.mapId}`,
+        name:
+          roborockMapsById.get(area.mapId)?.name ||
+          area.mapName ||
+          `Roborock Map ${area.mapId}`,
       });
     }
 

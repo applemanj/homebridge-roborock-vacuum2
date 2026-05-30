@@ -144,24 +144,17 @@ class Roborock {
   getStateAsync(id) {
     try {
       if (PERSISTED_STATE_IDS.has(id)) {
-        const persistPath = this.getPersistPath(id);
-        if (fs.existsSync(persistPath)) {
-          return JSON.parse(fs.readFileSync(persistPath, "utf8"));
+        // Cache persisted state in memory after the first disk read so repeated
+        // reads (HomeData, RoomMappings, TransportDiagnostics) do not re-read and
+        // re-parse the file on every status lookup or command. setStateAsync and
+        // deleteStateAsync keep this cache in sync with the persisted file.
+        if (Object.prototype.hasOwnProperty.call(this.states, id)) {
+          return this.states[id];
         }
 
-        const legacyPath = this.getLegacyPersistPath(id);
-        if (legacyPath && fs.existsSync(legacyPath)) {
-          const legacyState = JSON.parse(fs.readFileSync(legacyPath, "utf8"));
-          this.tryMigrateLegacyStateFile(
-            id,
-            legacyState,
-            legacyPath,
-            persistPath
-          );
-          return legacyState;
-        }
-
-        return null;
+        const loaded = this.readPersistedState(id);
+        this.states[id] = loaded;
+        return loaded;
       }
 
       return this.states[id];
@@ -170,6 +163,22 @@ class Roborock {
         return null;
       }
       this.log.error(`getStateAsync: ${error}`);
+    }
+
+    return null;
+  }
+
+  readPersistedState(id) {
+    const persistPath = this.getPersistPath(id);
+    if (fs.existsSync(persistPath)) {
+      return JSON.parse(fs.readFileSync(persistPath, "utf8"));
+    }
+
+    const legacyPath = this.getLegacyPersistPath(id);
+    if (legacyPath && fs.existsSync(legacyPath)) {
+      const legacyState = JSON.parse(fs.readFileSync(legacyPath, "utf8"));
+      this.tryMigrateLegacyStateFile(id, legacyState, legacyPath, persistPath);
+      return legacyState;
     }
 
     return null;
@@ -2608,27 +2617,6 @@ class Roborock {
       case "get_photo":
         this.vacuums[duid].getParameter(duid, "get_photo", parameters);
         break;
-      case "sniffing_decrypt":
-        await this.getStateAsync("HomeData")
-          .then((homedata) => {
-            if (homedata) {
-              const homedataVal = homedata.val;
-              if (typeof homedataVal == "string") {
-                // this.log.debug("Sniffing message received!");
-                const homedataParsed = JSON.parse(homedataVal);
-
-                this.decodeSniffedMessage(data, homedataParsed.devices);
-                this.decodeSniffedMessage(data, homedataParsed.receivedDevices);
-              }
-            }
-          })
-          .catch((error) => {
-            this.log.error(
-              "Failed to decode/decrypt sniffing message. " + error
-            );
-          });
-
-        break;
       default:
         this.log.warn(`Command ${command} not found.`);
     }
@@ -2860,10 +2848,6 @@ class Roborock {
 
   async load_multi_map(duid, mapId, options = {}) {
     await this.startCommand(duid, "load_multi_map", mapId, options);
-  }
-
-  async getStatus(duid, vacuum) {
-    await vacuum.getParameter(duid, "get_status");
   }
 
   async getStatus(duid) {

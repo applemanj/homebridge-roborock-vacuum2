@@ -423,6 +423,43 @@ describe("Roborock API model and diagnostics helpers", () => {
     });
   });
 
+  test("caches persisted state in memory after the first disk read", () => {
+    const api = createRoborock();
+    const persistPath = api.getPersistPath("HomeData");
+    const original = {
+      val: JSON.stringify({ devices: [{ duid: "device-1" }] }),
+      ack: true,
+    };
+    fs.writeFileSync(persistPath, JSON.stringify(original));
+
+    // The first read loads and parses the persisted file from disk.
+    expect(api.getStateAsync("HomeData")).toEqual(original);
+
+    // A later external change to the file is intentionally not observed because
+    // the parsed value is now served from the in-memory cache.
+    fs.writeFileSync(
+      persistPath,
+      JSON.stringify({ val: "changed", ack: true })
+    );
+    expect(api.getStateAsync("HomeData")).toEqual(original);
+  });
+
+  test("keeps the in-memory cache in sync with writes and deletes", async () => {
+    const api = createRoborock();
+
+    await api.setStateAsync("TransportDiagnostics", { val: "x", ack: true });
+    // Served from the cache that setStateAsync populated, without a disk read.
+    expect(api.getStateAsync("TransportDiagnostics")).toEqual({
+      val: "x",
+      ack: true,
+    });
+
+    await api.deleteStateAsync("TransportDiagnostics");
+    // Deleting persisted state clears the cache entry so the next read reflects
+    // the removed file instead of returning a stale cached value.
+    expect(api.getStateAsync("TransportDiagnostics")).toBeNull();
+  });
+
   test("transport diagnostics debug-log cloud fallback and local recovery", async () => {
     const log = createLog();
     const api = createRoborock({ log });

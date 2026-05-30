@@ -34,5 +34,6 @@ ROADMAP.md
 roborockLib/data/
 
 # Local artifacts
+.claude/
 *.log
 *.tgz
