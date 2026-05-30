@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.40
+
+- Moved the Roborock-specific Matter operational states (emptying dust bin, cleaning mop, updating maps) from the reserved RVC range into the manufacturer range with the labels Matter requires there, so the operational state list is spec-conformant. Standard states remain unlabeled. Isolated from 1.4.39 so the change can be validated against a real robot independently.
+
 ## 1.4.39
 
 - Always restored the saved Roborock map the robot started on after a Matter Service Area room refresh, even when a map switch timed out, so slow models like the S6 Pure are no longer left on the wrong map.

@@ -158,6 +158,44 @@ describe("Matter service area selection", () => {
   });
 });
 
+describe("Matter operational state conformance", () => {
+  test("only manufacturer states carry labels and no reserved-range values are advertised", () => {
+    const platform = createPlatform();
+    const { accessory } = createAccessory(platform);
+
+    const list = accessory.clusters.rvcOperationalState.operationalStateList;
+
+    for (const entry of list) {
+      if (entry.operationalStateId >= 0x80) {
+        // Manufacturer states (>= 0x80) must carry a label.
+        expect(typeof entry.operationalStateLabel).toBe("string");
+        expect(entry.operationalStateLabel.length).toBeGreaterThan(0);
+      } else {
+        // Standard/RVC states must not carry a label, which Matter rejects.
+        expect(entry).not.toHaveProperty("operationalStateLabel");
+        // Reserved RVC range (0x43-0x7F) must not be used.
+        expect(entry.operationalStateId).toBeLessThanOrEqual(0x42);
+      }
+    }
+  });
+
+  test("maps Roborock dock/maintenance states to labeled manufacturer states", () => {
+    const cases = [
+      { state: 22, expected: 0x80 }, // emptying dust container
+      { state: 23, expected: 0x81 }, // washing the mop
+      { state: 29, expected: 0x82 }, // mapping
+    ];
+
+    for (const { state, expected } of cases) {
+      const platform = createPlatform({ status: { state } });
+      const { accessory } = createAccessory(platform);
+      expect(accessory.clusters.rvcOperationalState.operationalState).toBe(
+        expected
+      );
+    }
+  });
+});
+
 describe("Matter optimistic state", () => {
   test("abandons an optimistic state after repeated contradicting live updates", async () => {
     const matterUpdates = [];
