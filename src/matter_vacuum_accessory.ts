@@ -917,8 +917,17 @@ export default class RoborockMatterVacuumAccessory {
   private getMatterServiceAreaMaps(
     areas: MatterServiceArea[]
   ): MatterServiceAreaMap[] {
-    const knownMaps = this.getMatterServiceAreaMapsFromRoborock();
+    const mapIdsWithAreas = new Set(
+      areas
+        .map((area) => area.mapId)
+        .filter((mapId): mapId is number => mapId !== null)
+    );
+    const knownMaps = this.getMatterServiceAreaMapsFromRoborock().filter(
+      (map) => mapIdsWithAreas.has(map.mapId)
+    );
     if (knownMaps.length > 0) {
+      // Matter controllers can hang if supportedMaps advertises maps with no
+      // matching supportedAreas, so keep unresolved Roborock maps internal.
       return knownMaps;
     }
 

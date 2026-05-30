@@ -2068,12 +2068,16 @@ class Roborock {
       const refreshKey = this.getServiceAreaRoomMapRefreshKey(duid, map.mapId);
       this.serviceAreaRoomMapRefreshAttempts.add(refreshKey);
 
-      this.log.info(
-        `Loading Roborock map '${map.name}' for ${duid} to cache Matter Service Area rooms.`
-      );
-      await vacuum.command(duid, "load_multi_map", map.mapId, {
-        throwOnError: true,
-      });
+      if (map.mapId === originalMapId) {
+        await vacuum.getParameter(duid, "get_room_mapping");
+      } else {
+        this.log.info(
+          `Loading Roborock map '${map.name}' for ${duid} to cache Matter Service Area rooms.`
+        );
+        await vacuum.command(duid, "load_multi_map", map.mapId, {
+          throwOnError: true,
+        });
+      }
 
       if (this.getRoomMappingsForMap(duid, map.mapId).length === 0) {
         this.log.info(

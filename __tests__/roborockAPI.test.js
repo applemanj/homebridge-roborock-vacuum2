@@ -187,7 +187,7 @@ describe("Roborock API model and diagnostics helpers", () => {
     ]);
   });
 
-  test("Matter Service Area beta reloads the active map when its rooms are missing", async () => {
+  test("Matter Service Area beta does not reload the active map when its rooms are missing", async () => {
     const api = createRoborock({ enableMatterServiceAreaBeta: true });
     api.roomIDs = {
       55: "Lower Level",
@@ -229,26 +229,19 @@ describe("Roborock API model and diagnostics helpers", () => {
 
         return null;
       }),
-      command: jest.fn(async (duid, parameter, mapId) => {
-        if (parameter === "load_multi_map" && mapId === 1) {
-          api.updateRoomMappingCache(duid, 1, [[17, 77]]);
-        }
-      }),
+      command: jest.fn(),
     };
 
     await api.updateDataMinimumData("device-1", robot, "roborock.vacuum.a08");
 
-    expect(robot.command).toHaveBeenCalledWith(
-      "device-1",
-      "load_multi_map",
-      1,
-      {
-        throwOnError: true,
-      }
-    );
+    expect(robot.command).not.toHaveBeenCalled();
+    expect(
+      robot.getParameter.mock.calls.filter(
+        ([, parameter]) => parameter === "get_room_mapping"
+      )
+    ).toHaveLength(2);
     expect(api.getRoomMappingsForDevice("device-1")).toEqual([
       { segmentId: 16, roomId: 55, mapId: 0, name: "Lower Level" },
-      { segmentId: 17, roomId: 77, mapId: 1, name: "Upper Hallway" },
     ]);
   });
 
