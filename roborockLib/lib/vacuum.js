@@ -220,6 +220,7 @@ class vacuum {
             // this is needed to update the states instantly after sending a command
             const getCommand = parameter.replace("set", "get");
             await this.getParameter(duid, getCommand);
+            return result;
           } else {
             const result = await this.adapter.messageQueueHandler.sendRequest(
               duid,
@@ -227,6 +228,7 @@ class vacuum {
               []
             );
             this.adapter.log.debug(`Command: ${parameter} result: ${result}`);
+            return result;
           }
       }
     } catch (error) {

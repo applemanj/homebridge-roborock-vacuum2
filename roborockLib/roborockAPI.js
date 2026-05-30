@@ -1699,12 +1699,23 @@ class Roborock {
       Number.isInteger(settings?.fanPower) &&
       this.getMatterCleanModeCapabilities(duid).canControlFanPower
     ) {
-      await this.runMatterSettingCommand(
-        duid,
-        "set_custom_mode",
-        settings.fanPower,
-        commandOptions
-      );
+      try {
+        await this.runMatterSettingCommand(
+          duid,
+          "set_custom_mode",
+          settings.fanPower,
+          commandOptions
+        );
+      } catch (error) {
+        this.rememberUnsupportedMatterSettingCommand(
+          duid,
+          "set_custom_mode",
+          error
+        );
+        this.log.debug(
+          `Matter clean mode fan command failed for ${duid}; continuing with start command. ${error.message || error}`
+        );
+      }
     }
 
     if (!Number.isInteger(settings?.waterBoxMode)) {
@@ -1719,12 +1730,18 @@ class Roborock {
       return;
     }
 
-    await this.runFirstMatterSettingCommand(
-      duid,
-      waterCommands,
-      settings.waterBoxMode,
-      commandOptions
-    );
+    try {
+      await this.runFirstMatterSettingCommand(
+        duid,
+        waterCommands,
+        settings.waterBoxMode,
+        commandOptions
+      );
+    } catch (error) {
+      this.log.debug(
+        `Matter clean mode water commands failed for ${duid}; continuing with start command. ${error.message || error}`
+      );
+    }
   }
 
   getMatterWaterModeCommandCandidates(duid) {
@@ -1772,9 +1789,7 @@ class Roborock {
       } catch (error) {
         lastError = error;
         if (this.shouldRememberUnsupportedMatterCommand(error)) {
-          this.matterUnsupportedSettingCommands.add(
-            this.getMatterSettingCommandKey(duid, command)
-          );
+          this.rememberUnsupportedMatterSettingCommand(duid, command, error);
         }
         this.log.debug(
           `Matter clean mode command ${command} failed for ${duid}; trying another water command if available. ${error.message || error}`
@@ -1798,11 +1813,25 @@ class Roborock {
       throw new Error(`Vacuum ${duid} is not initialized.`);
     }
 
-    await vacuum.command(duid, command, value, options);
+    const result = await vacuum.command(duid, command, value, options);
+    if (this.shouldRememberUnsupportedMatterCommand(result)) {
+      throw new Error(
+        `${command} returned unsupported result: ${JSON.stringify(result)}`
+      );
+    }
+    return result;
   }
 
   getMatterSettingCommandKey(duid, command) {
     return `${duid}:${command}`;
+  }
+
+  rememberUnsupportedMatterSettingCommand(duid, command, error) {
+    if (this.shouldRememberUnsupportedMatterCommand(error)) {
+      this.matterUnsupportedSettingCommands.add(
+        this.getMatterSettingCommandKey(duid, command)
+      );
+    }
   }
 
   shouldRememberUnsupportedMatterCommand(error) {
@@ -1811,6 +1840,7 @@ class Roborock {
       "unsupported",
       "not supported",
       "unknown method",
+      "unknown_method",
       "method not found",
       "invalid method",
       "unknown parameter",

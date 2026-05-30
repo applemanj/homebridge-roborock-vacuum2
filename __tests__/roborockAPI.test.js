@@ -537,6 +537,70 @@ describe("Roborock API model and diagnostics helpers", () => {
     ]);
   });
 
+  test("does not block Matter clean mode when water commands return unsupported results", async () => {
+    const log = createLog();
+    const api = createRoborock({ log });
+    await api.setStateAsync("HomeData", {
+      val: JSON.stringify({
+        products: [
+          {
+            id: "product-1",
+            schema: [
+              { id: 123, code: "fan_power" },
+              { id: 124, code: "water_box_mode" },
+            ],
+          },
+        ],
+        devices: [{ duid: "device-1", productId: "product-1" }],
+        receivedDevices: [],
+      }),
+      ack: true,
+    });
+    api.bInited = true;
+    api.vacuums["device-1"] = {
+      command: jest.fn(async (duid, command) => {
+        if (
+          command === "set_water_box_mode" ||
+          command === "set_water_box_custom_mode"
+        ) {
+          return "unknown_method";
+        }
+        return ["ok"];
+      }),
+    };
+
+    await expect(
+      api.applyMatterCleanModeSettings(
+        "device-1",
+        { fanPower: 104, waterBoxMode: 200 },
+        { waitForResult: true }
+      )
+    ).resolves.toBeUndefined();
+
+    expect(api.vacuums["device-1"].command).toHaveBeenCalledWith(
+      "device-1",
+      "set_custom_mode",
+      104,
+      { waitForResult: true, throwOnError: true }
+    );
+    expect(api.vacuums["device-1"].command).toHaveBeenCalledWith(
+      "device-1",
+      "set_water_box_mode",
+      200,
+      { waitForResult: true, throwOnError: true }
+    );
+    expect(api.vacuums["device-1"].command).toHaveBeenCalledWith(
+      "device-1",
+      "set_water_box_custom_mode",
+      200,
+      { waitForResult: true, throwOnError: true }
+    );
+    expect(api.getMatterWaterModeCommandCandidates("device-1")).toEqual([]);
+    expect(log.debug).toHaveBeenCalledWith(
+      expect.stringContaining("continuing with start command")
+    );
+  });
+
   test("transport diagnostics are persisted per device", async () => {
     const api = createRoborock();
 
