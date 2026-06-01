@@ -51,6 +51,18 @@ class vacuum {
 
   async command(duid, parameter, value, options = {}) {
     try {
+      const sendCommandRequest = (method, params) =>
+        options.preferCloud
+          ? this.adapter.messageQueueHandler.sendRequest(
+              duid,
+              method,
+              params,
+              false,
+              false,
+              { preferCloud: true }
+            )
+          : this.adapter.messageQueueHandler.sendRequest(duid, method, params);
+
       switch (parameter) {
         case "app_segment_clean": {
           this.adapter.log.debug("Start room cleaning");
@@ -60,12 +72,10 @@ class vacuum {
           const roomFloor = await this.adapter.getStateAsync(
             `Devices.${duid}.deviceStatus.map_status`
           );
-          const mappedRoomList =
-            await this.adapter.messageQueueHandler.sendRequest(
-              duid,
-              "get_room_mapping",
-              []
-            );
+          const mappedRoomList = await sendCommandRequest(
+            "get_room_mapping",
+            []
+          );
 
           if (mappedRoomList) {
             for (const mappedRoom in mappedRoomList) {
@@ -84,11 +94,9 @@ class vacuum {
           );
           roomList["repeat"] = cleanCount.val;
 
-          const result = await this.adapter.messageQueueHandler.sendRequest(
-            duid,
-            "app_segment_clean",
-            [roomList]
-          );
+          const result = await sendCommandRequest("app_segment_clean", [
+            roomList,
+          ]);
           this.adapter.log.debug(
             `app_segment_clean with roomIDs: ${JSON.stringify(roomList)} result: ${result}`
           );
@@ -122,11 +130,9 @@ class vacuum {
             break;
           }
 
-          const result = await this.adapter.messageQueueHandler.sendRequest(
-            duid,
-            "app_segment_clean",
-            [roomList]
-          );
+          const result = await sendCommandRequest("app_segment_clean", [
+            roomList,
+          ]);
           this.adapter.log.debug(
             `app_segment_clean_by_ids with roomIDs: ${JSON.stringify(roomList)} result: ${result}`
           );
@@ -134,30 +140,20 @@ class vacuum {
           break;
         }
         case "reset_consumable":
-          await this.adapter.messageQueueHandler.sendRequest(duid, parameter, [
-            value,
-          ]);
+          await sendCommandRequest(parameter, [value]);
           this.adapter.log.info(`Consumable ${parameter} successfully reset.`);
 
           break;
 
         case "app_set_dryer_status": {
-          const result = await this.adapter.messageQueueHandler.sendRequest(
-            duid,
-            parameter,
-            JSON.parse(value)
-          );
+          const result = await sendCommandRequest(parameter, JSON.parse(value));
           this.adapter.log.debug(`Command: ${parameter} result: ${result}`);
 
           break;
         }
         case "app_goto_target":
         case "app_zoned_clean": {
-          const result = await this.adapter.messageQueueHandler.sendRequest(
-            duid,
-            parameter,
-            value
-          );
+          const result = await sendCommandRequest(parameter, value);
           this.adapter.log.debug(
             `Command: ${parameter} with value: ${JSON.stringify(value)} result: ${result}`
           );
@@ -173,11 +169,7 @@ class vacuum {
             break;
           }
 
-          const result = await this.adapter.messageQueueHandler.sendRequest(
-            duid,
-            parameter,
-            [mapId]
-          );
+          const result = await sendCommandRequest(parameter, [mapId]);
           this.adapter.log.debug(
             `Command: ${parameter} with value: ${mapId} result: ${result}`
           );
@@ -187,11 +179,7 @@ class vacuum {
           const mappedValue = ((value - 1) / (30 - 1)) * (60 - 205) + 205;
           const parameterValue = { distance_off: mappedValue };
 
-          const result = await this.adapter.messageQueueHandler.sendRequest(
-            duid,
-            parameter,
-            parameterValue
-          );
+          const result = await sendCommandRequest(parameter, parameterValue);
           this.adapter.log.debug(
             `Command: ${parameter} with value: ${JSON.stringify(parameterValue)} result: ${result}`
           );
@@ -208,11 +196,7 @@ class vacuum {
             }
 
             // await is important here!!! Wait for the command to finish before sending the request to update deviceConfig!!!
-            const result = await this.adapter.messageQueueHandler.sendRequest(
-              duid,
-              parameter,
-              value
-            );
+            const result = await sendCommandRequest(parameter, value);
             this.adapter.log.debug(
               `Command: ${parameter} with value: ${JSON.stringify(value)} result: ${result}`
             );
@@ -222,11 +206,7 @@ class vacuum {
             await this.getParameter(duid, getCommand);
             return result;
           } else {
-            const result = await this.adapter.messageQueueHandler.sendRequest(
-              duid,
-              parameter,
-              []
-            );
+            const result = await sendCommandRequest(parameter, []);
             this.adapter.log.debug(`Command: ${parameter} result: ${result}`);
             return result;
           }
@@ -288,8 +268,10 @@ class vacuum {
       } else if (parameter == "get_status") {
         const now = new Date();
         const seconds = now.getSeconds();
+        const force = attribute == "force";
 
         if (
+          force ||
           this.adapter.socket ||
           seconds % this.adapter.config.updateInterval == 0
         ) {

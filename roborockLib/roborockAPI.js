@@ -776,6 +776,7 @@ class Roborock {
       "network-info-cloud-only",
       "secure-command",
       "photo-command",
+      "preferred-cloud-command",
     ].includes(String(reason));
   }
 
@@ -796,6 +797,8 @@ class Roborock {
       "network-info-cloud-only":
         "Roborock network information must be fetched through the cloud",
       "photo-command": "photo requests require Roborock cloud transport",
+      "preferred-cloud-command":
+        "Matter commands are configured to prefer Roborock cloud transport",
       "received-device":
         "the vacuum is shared into this account as a received device",
       "remote-device": "the vacuum is marked remote",
@@ -2929,9 +2932,10 @@ class Roborock {
     await this.startCommand(duid, "load_multi_map", mapId, options);
   }
 
-  async getStatus(duid) {
+  async getStatus(duid, options = {}) {
     try {
-      await this.vacuums[duid].getParameter(duid, "get_status", "state");
+      const attribute = options.force ? "force" : "state";
+      await this.vacuums[duid].getParameter(duid, "get_status", attribute);
     } catch (error) {
       this.catchError(error, "getStatus", duid);
     }

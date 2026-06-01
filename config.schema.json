@@ -73,6 +73,12 @@
         "description": "Beta/work in progress. Adds the Matter Service Area cluster to the experimental Matter vacuum so supported clients can select Roborock rooms from the current room map. Requires Enable Matter Vacuum and a current Roborock room map; client support may vary.",
         "type": "boolean",
         "default": false
+      },
+      "preferCloudForMatterCommands": {
+        "title": "Prefer Roborock Cloud for Matter Commands",
+        "description": "Sends Matter vacuum commands through the Roborock cloud when cloud transport is connected. This can avoid local LAN command timeouts on some models, such as S8, while keeping the legacy HomeKit accessories unchanged.",
+        "type": "boolean",
+        "default": false
       }
     },
     "required": ["email"]

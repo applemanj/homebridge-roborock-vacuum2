@@ -9,6 +9,9 @@ const elements = {
   enableMatterServiceAreaBeta: document.getElementById(
     "enable-matter-service-area-beta"
   ),
+  preferCloudForMatterCommands: document.getElementById(
+    "prefer-cloud-for-matter-commands"
+  ),
   transientWarningThrottleHours: document.getElementById(
     "transient-warning-throttle-hours"
   ),
@@ -102,6 +105,9 @@ async function loadConfig() {
   elements.enableMatterServiceAreaBeta.checked = Boolean(
     config.enableMatterServiceAreaBeta
   );
+  elements.preferCloudForMatterCommands.checked = Boolean(
+    config.preferCloudForMatterCommands
+  );
   elements.transientWarningThrottleHours.value =
     config.transientWarningThrottleHours ?? 6;
 
@@ -139,6 +145,10 @@ function getEnableMatterServiceAreaBeta() {
   return Boolean(elements.enableMatterServiceAreaBeta.checked);
 }
 
+function getPreferCloudForMatterCommands() {
+  return Boolean(elements.preferCloudForMatterCommands.checked);
+}
+
 function getTransientWarningThrottleHours() {
   const value = elements.transientWarningThrottleHours.value.trim();
   if (value === "") {
@@ -165,6 +175,7 @@ async function saveCredentials(showSuccess = false) {
   const debugMode = getDebugMode();
   const enableMatter = getEnableMatter();
   const enableMatterServiceAreaBeta = getEnableMatterServiceAreaBeta();
+  const preferCloudForMatterCommands = getPreferCloudForMatterCommands();
   const transientWarningThrottleHours = getTransientWarningThrottleHours();
   if (!email) {
     showToast("error", "Email is required.");
@@ -178,6 +189,7 @@ async function saveCredentials(showSuccess = false) {
     debugMode,
     enableMatter,
     enableMatterServiceAreaBeta,
+    preferCloudForMatterCommands,
     transientWarningThrottleHours,
   };
 
@@ -206,6 +218,7 @@ async function login() {
   const debugMode = getDebugMode();
   const enableMatter = getEnableMatter();
   const enableMatterServiceAreaBeta = getEnableMatterServiceAreaBeta();
+  const preferCloudForMatterCommands = getPreferCloudForMatterCommands();
   const transientWarningThrottleHours = getTransientWarningThrottleHours();
 
   if (!email || !password) {
@@ -224,6 +237,7 @@ async function login() {
       debugMode,
       enableMatter,
       enableMatterServiceAreaBeta,
+      preferCloudForMatterCommands,
       transientWarningThrottleHours,
       encryptedToken: result.encryptedToken,
     });
@@ -271,6 +285,7 @@ async function verifyTwoFactorCode() {
   const debugMode = getDebugMode();
   const enableMatter = getEnableMatter();
   const enableMatterServiceAreaBeta = getEnableMatterServiceAreaBeta();
+  const preferCloudForMatterCommands = getPreferCloudForMatterCommands();
   const transientWarningThrottleHours = getTransientWarningThrottleHours();
   if (!email) {
     showToast("error", "Email is required.");
@@ -294,6 +309,7 @@ async function verifyTwoFactorCode() {
       debugMode,
       enableMatter,
       enableMatterServiceAreaBeta,
+      preferCloudForMatterCommands,
       transientWarningThrottleHours,
       encryptedToken: result.encryptedToken,
     });
@@ -825,6 +841,9 @@ function init() {
     saveCredentials(false)
   );
   elements.enableMatterServiceAreaBeta.addEventListener("change", () =>
+    saveCredentials(false)
+  );
+  elements.preferCloudForMatterCommands.addEventListener("change", () =>
     saveCredentials(false)
   );
   elements.transientWarningThrottleHours.addEventListener("change", () =>

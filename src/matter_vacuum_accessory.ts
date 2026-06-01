@@ -50,6 +50,11 @@ type RoborockCleanModeSettings = {
 type RoborockCommandOptions = {
   waitForResult?: boolean;
   throwOnError?: boolean;
+  preferCloud?: boolean;
+};
+
+type RoborockStatusRefreshOptions = {
+  force?: boolean;
 };
 
 /**
@@ -86,6 +91,10 @@ interface RoborockApi {
     duid: string,
     mapId: number,
     options?: RoborockCommandOptions
+  ): Promise<void>;
+  getStatus?(
+    duid: string,
+    options?: RoborockStatusRefreshOptions
   ): Promise<void>;
   getTransportDiagnostics?(): Record<string, unknown> | null | undefined;
 }
@@ -172,6 +181,7 @@ const OPTIMISTIC_STATE_TTL_MS = 2 * 60 * 1000;
 // not act on cannot keep Apple Home on a wrong state until the TTL expires.
 const OPTIMISTIC_CONTRADICTION_LIMIT = 2;
 const SLOW_MATTER_COMMAND_MS = 3000;
+const MATTER_COMMAND_STATUS_REFRESH_DELAYS_MS = [2000, 15000] as const;
 
 /**
  * Optional Homebridge 2 Matter exposure for Apple Home's native vacuum UI.
@@ -207,6 +217,15 @@ export default class RoborockMatterVacuumAccessory {
 
   private get api(): RoborockApi {
     return this.platform.roborockAPI as RoborockApi;
+  }
+
+  private getMatterCommandOptions(): RoborockCommandOptions {
+    const options: RoborockCommandOptions = { waitForResult: true };
+    if (this.platform.platformConfig.preferCloudForMatterCommands) {
+      options.preferCloud = true;
+    }
+
+    return options;
   }
 
   markRegistered(): void {
@@ -358,7 +377,7 @@ export default class RoborockMatterVacuumAccessory {
           await this.api.app_segment_clean_by_ids(
             duid,
             areasToClean.map((area) => area.segmentId),
-            { waitForResult: true }
+            this.getMatterCommandOptions()
           );
         });
         return;
@@ -375,9 +394,7 @@ export default class RoborockMatterVacuumAccessory {
       this.scheduleMatterStateUpdate(state, "start");
       this.dispatchRoborockMatterCommand("start", async () => {
         await this.applySelectedCleanModeIfNeeded();
-        await this.api.app_start(duid, {
-          waitForResult: true,
-        });
+        await this.api.app_start(duid, this.getMatterCommandOptions());
       });
       return;
     }
@@ -395,7 +412,7 @@ export default class RoborockMatterVacuumAccessory {
       this.setOptimisticState(state);
       this.scheduleMatterStateUpdate(state, "stop");
       this.dispatchRoborockMatterCommand("stop", () =>
-        this.api.app_stop(duid, { waitForResult: true })
+        this.api.app_stop(duid, this.getMatterCommandOptions())
       );
       return;
     }
@@ -439,9 +456,7 @@ export default class RoborockMatterVacuumAccessory {
     this.setOptimisticState(state);
     this.scheduleMatterStateUpdate(state, "pause");
     this.dispatchRoborockMatterCommand("pause", () =>
-      this.api.app_pause(this.getDuid(), {
-        waitForResult: true,
-      })
+      this.api.app_pause(this.getDuid(), this.getMatterCommandOptions())
     );
   }
 
@@ -457,9 +472,7 @@ export default class RoborockMatterVacuumAccessory {
     this.scheduleMatterStateUpdate(state, "resume");
     this.dispatchRoborockMatterCommand("resume", async () => {
       await this.applySelectedCleanModeIfNeeded();
-      await this.api.app_start(this.getDuid(), {
-        waitForResult: true,
-      });
+      await this.api.app_start(this.getDuid(), this.getMatterCommandOptions());
     });
   }
 
@@ -476,9 +489,7 @@ export default class RoborockMatterVacuumAccessory {
     this.setOptimisticState(state);
     this.scheduleMatterStateUpdate(state, "return to dock");
     this.dispatchRoborockMatterCommand("return to dock", () =>
-      this.api.app_charge(this.getDuid(), {
-        waitForResult: true,
-      })
+      this.api.app_charge(this.getDuid(), this.getMatterCommandOptions())
     );
   }
 
@@ -723,9 +734,12 @@ export default class RoborockMatterVacuumAccessory {
     this.platform.log.info(
       `Applying ${this.getCleanModeLabel(this.getCurrentCleanMode())} mode to ${this.getVacuumName()} before starting.`
     );
-    await applySettings.call(this.api, this.getDuid(), settings, {
-      waitForResult: true,
-    });
+    await applySettings.call(
+      this.api,
+      this.getDuid(),
+      settings,
+      this.getMatterCommandOptions()
+    );
     this.selectedCleanModeNeedsApply = false;
   }
 
@@ -1292,9 +1306,12 @@ export default class RoborockMatterVacuumAccessory {
     this.platform.log.info(
       `Loading Roborock map ${targetMapId} for ${this.getVacuumName()} before selected-area cleaning.`
     );
-    await loadMap.call(this.api, duid, targetMapId, {
-      waitForResult: true,
-    });
+    await loadMap.call(
+      this.api,
+      duid,
+      targetMapId,
+      this.getMatterCommandOptions()
+    );
   }
 
   private getCurrentMatterMapId(): number | null {
@@ -1585,6 +1602,7 @@ export default class RoborockMatterVacuumAccessory {
     void command()
       .then(() => {
         this.logMatterCommandDuration(action, startedAt);
+        this.schedulePostCommandStatusRefresh(action);
       })
       .catch((error) => {
         this.platform.log.error(
@@ -1608,6 +1626,26 @@ export default class RoborockMatterVacuumAccessory {
     }
 
     this.platform.log.info(message);
+  }
+
+  private schedulePostCommandStatusRefresh(action: string): void {
+    const refreshStatus = this.api.getStatus;
+    if (!this.registered || typeof refreshStatus !== "function") {
+      return;
+    }
+
+    for (const delayMs of MATTER_COMMAND_STATUS_REFRESH_DELAYS_MS) {
+      setTimeout(() => {
+        void refreshStatus
+          .call(this.api, this.getDuid(), { force: true })
+          .then(() => this.updateMatterStateFromRoborock())
+          .catch((error) => {
+            this.platform.log.debug(
+              `Unable to refresh Matter status after ${action} for ${this.getVacuumName()}: ${this.getErrorMessage(error)}`
+            );
+          });
+      }, delayMs);
+    }
   }
 
   private getTransportDescription(): string {

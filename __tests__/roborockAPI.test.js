@@ -60,6 +60,22 @@ describe("Roborock API model and diagnostics helpers", () => {
     ]);
   });
 
+  test("getStatus can force an immediate status poll", async () => {
+    const api = createRoborock();
+    const getParameter = jest.fn().mockResolvedValue(undefined);
+    api.vacuums = {
+      "device-1": { getParameter },
+    };
+
+    await api.getStatus("device-1", { force: true });
+
+    expect(getParameter).toHaveBeenCalledWith(
+      "device-1",
+      "get_status",
+      "force"
+    );
+  });
+
   test("stores room mapping cache for Matter service areas", () => {
     const api = createRoborock();
     const notify = jest.fn();

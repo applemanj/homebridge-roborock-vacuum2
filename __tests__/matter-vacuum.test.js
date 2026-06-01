@@ -10,17 +10,24 @@ function flush() {
 
 function createPlatform({
   serviceAreaBeta = false,
+  preferCloudForMatterCommands = false,
   capabilities = { canVacuum: true, canMop: false },
   rooms = [],
   maps = [],
   status = {},
   matterUpdates = [],
   appStart = jest.fn().mockResolvedValue(undefined),
+  appCharge = jest.fn().mockResolvedValue(undefined),
+  appStop = jest.fn().mockResolvedValue(undefined),
+  appPause = jest.fn().mockResolvedValue(undefined),
+  appSegmentCleanByIds = jest.fn().mockResolvedValue(undefined),
+  getStatus = jest.fn().mockResolvedValue(undefined),
 } = {}) {
   return {
     platformConfig: {
       enableMatter: true,
       enableMatterServiceAreaBeta: serviceAreaBeta,
+      preferCloudForMatterCommands,
     },
     log: {
       debug: jest.fn(),
@@ -42,6 +49,11 @@ function createPlatform({
       getMapListForDevice: () => maps.map((map) => ({ ...map })),
       getMatterCleanModeCapabilities: () => capabilities,
       app_start: appStart,
+      app_stop: appStop,
+      app_pause: appPause,
+      app_charge: appCharge,
+      app_segment_clean_by_ids: appSegmentCleanByIds,
+      getStatus,
     },
   };
 }
@@ -159,6 +171,10 @@ describe("Matter service area selection", () => {
 });
 
 describe("Matter operational state", () => {
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
   test("advertises operational state IDs without labels (Apple Home compatibility)", () => {
     const platform = createPlatform();
     const { accessory } = createAccessory(platform);
@@ -187,6 +203,47 @@ describe("Matter operational state", () => {
         expected
       );
     }
+  });
+
+  test("forces follow-up status refreshes after returning to dock", async () => {
+    jest.useFakeTimers();
+    const appCharge = jest.fn().mockResolvedValue(undefined);
+    const getStatus = jest.fn().mockResolvedValue(undefined);
+    const platform = createPlatform({ appCharge, getStatus });
+    const { accessory } = createAccessory(platform, true);
+
+    await accessory.handlers.rvcOperationalState.goHome();
+    await Promise.resolve();
+
+    expect(appCharge).toHaveBeenCalledWith("device-1", {
+      waitForResult: true,
+    });
+    expect(getStatus).not.toHaveBeenCalled();
+
+    await jest.advanceTimersByTimeAsync(2000);
+    expect(getStatus).toHaveBeenCalledWith("device-1", { force: true });
+
+    await jest.advanceTimersByTimeAsync(13000);
+    expect(getStatus).toHaveBeenCalledTimes(2);
+  });
+
+  test("passes cloud preference through Matter commands when enabled", async () => {
+    const appStart = jest.fn().mockResolvedValue(undefined);
+    const platform = createPlatform({
+      preferCloudForMatterCommands: true,
+      appStart,
+    });
+    const { accessory } = createAccessory(platform, true);
+
+    await accessory.handlers.rvcRunMode.changeToMode({
+      newMode: RUN_MODE_CLEANING,
+    });
+    await flush();
+
+    expect(appStart).toHaveBeenCalledWith("device-1", {
+      waitForResult: true,
+      preferCloud: true,
+    });
   });
 });
 

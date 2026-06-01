@@ -10,4 +10,5 @@ export interface RoborockPlatformConfig extends PlatformConfig {
   transientWarningThrottleHours?: number;
   enableMatter?: boolean;
   enableMatterServiceAreaBeta?: boolean;
+  preferCloudForMatterCommands?: boolean;
 }

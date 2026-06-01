@@ -108,4 +108,38 @@ describe("messageQueueHandler transport selection", () => {
       })
     );
   });
+
+  test("prefers cloud transport when requested and cloud is connected", async () => {
+    const adapter = createAdapter({
+      localConnector: {
+        isConnected: jest.fn().mockReturnValue(true),
+        sendMessage: jest.fn(),
+        clearChunkBuffer: jest.fn(),
+      },
+    });
+    adapter.rr_mqtt_connector.sendMessage.mockImplementation(() => {
+      const pending = adapter.pendingRequests.get(42);
+      adapter.clearTimeout(pending.timeout);
+      adapter.pendingRequests.delete(42);
+      pending.resolve(["ok"]);
+    });
+
+    const handler = new messageQueueHandler(adapter);
+    await expect(
+      handler.sendRequest("device-1", "app_start", [], false, false, {
+        preferCloud: true,
+      })
+    ).resolves.toEqual(["ok"]);
+
+    expect(adapter.rr_mqtt_connector.sendMessage).toHaveBeenCalled();
+    expect(adapter.localConnector.sendMessage).not.toHaveBeenCalled();
+    expect(adapter.updateTransportDiagnostics).toHaveBeenCalledWith(
+      "device-1",
+      expect.objectContaining({
+        lastTransport: "cloud",
+        lastTransportReason: "preferred-cloud-command",
+        lastCommandMethod: "app_start",
+      })
+    );
+  });
 });

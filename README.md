@@ -82,6 +82,7 @@ Use the Homebridge plugin settings UI to sign in, save account settings, and ins
 | `transientWarningThrottleHours` | No             | Hours between repeated transient timeout warnings for each vacuum. Defaults to `6`. Use `0` to hide recurring transient warnings unless debug logging is enabled.                                     |
 | `enableMatter`                  | No             | Experimental. Also exposes each vacuum as a Matter robotic vacuum when running Homebridge 2 with Matter enabled for the Roborock child bridge. Defaults to `false`.                                   |
 | `enableMatterServiceAreaBeta`   | No             | Beta/work in progress. Adds Matter Service Area room selection to the experimental Matter vacuum. Requires `enableMatter`, Homebridge 2 Matter, and a current Roborock room map. Defaults to `false`. |
+| `preferCloudForMatterCommands`  | No             | Sends Matter vacuum commands through the Roborock cloud when cloud transport is connected. Useful for models whose local LAN command acknowledgements time out. Defaults to `false`.                  |
 
 The plugin needs either a valid `encryptedToken` or a `password` to start. A saved token is preferred because it avoids repeated password login attempts.
 
@@ -134,6 +135,8 @@ The Matter vacuum controls map to the same Roborock commands used elsewhere in t
 | Battery and run status   | Mirrors the latest cached Roborock status where available.                                                                                                                  |
 
 Mop clean modes are capability-gated so vacuum-only models should continue to show only **Vacuum**. On models with a passive mop or limited water controls, Matter may still show mop modes when mop support is detected, but the plugin can only apply the Roborock settings the model exposes.
+
+If Matter commands consistently wait on local LAN timeouts before succeeding through cloud fallback, enable **Prefer Roborock cloud for Matter commands**. This only changes commands sent by the experimental Matter vacuum; the existing HomeKit fan/switch accessories keep their normal transport behavior.
 
 ### Matter Service Area Beta
 
