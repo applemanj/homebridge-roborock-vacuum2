@@ -55,6 +55,7 @@ type RoborockCommandOptions = {
 
 type RoborockStatusRefreshOptions = {
   force?: boolean;
+  preferCloud?: boolean;
 };
 
 /**
@@ -1660,7 +1661,7 @@ export default class RoborockMatterVacuumAccessory {
     for (const delayMs of MATTER_COMMAND_STATUS_REFRESH_DELAYS_MS) {
       setTimeout(() => {
         void refreshStatus
-          .call(this.api, this.getDuid(), { force: true })
+          .call(this.api, this.getDuid(), this.getMatterStatusRefreshOptions())
           .then(() => this.updateMatterStateFromRoborock())
           .catch((error) => {
             this.platform.log.debug(
@@ -1669,6 +1670,15 @@ export default class RoborockMatterVacuumAccessory {
           });
       }, delayMs);
     }
+  }
+
+  private getMatterStatusRefreshOptions(): RoborockStatusRefreshOptions {
+    const options: RoborockStatusRefreshOptions = { force: true };
+    if (this.platform.platformConfig.preferCloudForMatterCommands) {
+      options.preferCloud = true;
+    }
+
+    return options;
   }
 
   private getTransportDescription(): string {

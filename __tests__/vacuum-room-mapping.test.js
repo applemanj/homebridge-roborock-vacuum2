@@ -10,6 +10,9 @@ function createAdapter(mappedRooms, multiMapResponse = []) {
     },
     messageQueueHandler: {
       sendRequest: jest.fn((duid, method) => {
+        if (method === "get_prop") {
+          return Promise.resolve([{ state: 8, battery: 100 }]);
+        }
         if (method === "get_status") {
           return Promise.resolve([{ map_status: 8 }]);
         }
@@ -22,11 +25,19 @@ function createAdapter(mappedRooms, multiMapResponse = []) {
         return Promise.resolve([]);
       }),
     },
+    config: { updateInterval: 60 },
+    socket: null,
+    getObjectAsync: jest.fn().mockResolvedValue({}),
     roomIDs: {},
+    isCleaning: jest.fn().mockReturnValue(false),
+    startMapUpdater: jest.fn(),
+    stopMapUpdater: jest.fn(),
+    manageDeviceIntervals: jest.fn(),
     updateRoomMappingCache: jest.fn(),
     updateMapListCache: jest.fn(),
     createStateObjectHelper: jest.fn().mockResolvedValue(undefined),
     setStateAsync: jest.fn().mockResolvedValue(undefined),
+    setStateChangedAsync: jest.fn().mockResolvedValue(undefined),
     setObjectAsync: jest.fn().mockResolvedValue(undefined),
     delObjectAsync: jest.fn().mockResolvedValue(undefined),
     vacuums: {
@@ -148,5 +159,23 @@ describe("vacuum room mapping", () => {
     expect(adapter.updateRoomMappingCache).toHaveBeenCalledWith("device-1", 2, [
       [101, 55],
     ]);
+  });
+
+  test("uses cloud preference for forced status refreshes when requested", async () => {
+    const adapter = createAdapter([]);
+    const robot = new vacuum(adapter, "roborock.vacuum.a08");
+
+    await robot.getParameter("device-1", "get_status", "force", {
+      preferCloud: true,
+    });
+
+    expect(adapter.messageQueueHandler.sendRequest).toHaveBeenCalledWith(
+      "device-1",
+      "get_prop",
+      ["get_status"],
+      false,
+      false,
+      { preferCloud: true }
+    );
   });
 });

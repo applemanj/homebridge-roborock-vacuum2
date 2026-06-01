@@ -343,6 +343,27 @@ describe("Matter operational state", () => {
       preferCloud: true,
     });
   });
+
+  test("passes cloud preference through Matter follow-up status refreshes when enabled", async () => {
+    jest.useFakeTimers();
+    const appCharge = jest.fn().mockResolvedValue(undefined);
+    const getStatus = jest.fn().mockResolvedValue(undefined);
+    const platform = createPlatform({
+      preferCloudForMatterCommands: true,
+      appCharge,
+      getStatus,
+    });
+    const { accessory } = createAccessory(platform, true);
+
+    await accessory.handlers.rvcOperationalState.goHome();
+    await Promise.resolve();
+
+    await jest.advanceTimersByTimeAsync(2000);
+    expect(getStatus).toHaveBeenCalledWith("device-1", {
+      force: true,
+      preferCloud: true,
+    });
+  });
 });
 
 describe("Matter live status cache", () => {

@@ -219,7 +219,7 @@ class vacuum {
     }
   }
 
-  async getParameter(duid, parameter, attribute) {
+  async getParameter(duid, parameter, attribute, options = {}) {
     let mode;
 
     try {
@@ -278,11 +278,17 @@ class vacuum {
           // only send status every minute or if websocket is connected
 
           // const deviceStatus = await this.adapter.messageQueueHandler.sendRequest(duid, "get_status", []);
+          const requestOptions = options.preferCloud
+            ? { preferCloud: true }
+            : {};
           const deviceStatus =
             await this.adapter.messageQueueHandler.sendRequest(
               duid,
               "get_prop",
-              ["get_status"]
+              ["get_status"],
+              false,
+              false,
+              requestOptions
             );
 
           for (const attribute in deviceStatus[0]) {

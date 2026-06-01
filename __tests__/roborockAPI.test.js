@@ -76,6 +76,23 @@ describe("Roborock API model and diagnostics helpers", () => {
     );
   });
 
+  test("getStatus passes cloud preference to the vacuum status poll", async () => {
+    const api = createRoborock();
+    const getParameter = jest.fn().mockResolvedValue(undefined);
+    api.vacuums = {
+      "device-1": { getParameter },
+    };
+
+    await api.getStatus("device-1", { force: true, preferCloud: true });
+
+    expect(getParameter).toHaveBeenCalledWith(
+      "device-1",
+      "get_status",
+      "force",
+      { preferCloud: true }
+    );
+  });
+
   test("stores room mapping cache for Matter service areas", () => {
     const api = createRoborock();
     const notify = jest.fn();

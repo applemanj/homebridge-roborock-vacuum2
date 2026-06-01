@@ -2935,6 +2935,19 @@ class Roborock {
   async getStatus(duid, options = {}) {
     try {
       const attribute = options.force ? "force" : "state";
+      const parameterOptions = options.preferCloud
+        ? { preferCloud: true }
+        : undefined;
+      if (parameterOptions) {
+        await this.vacuums[duid].getParameter(
+          duid,
+          "get_status",
+          attribute,
+          parameterOptions
+        );
+        return;
+      }
+
       await this.vacuums[duid].getParameter(duid, "get_status", attribute);
     } catch (error) {
       this.catchError(error, "getStatus", duid);

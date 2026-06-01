@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.48
+
+- Applied **Prefer Roborock cloud for Matter commands** to Matter follow-up status refreshes as well as commands, so S8-style local status timeouts do not leave Apple Home stuck on Cleaning after the robot returns to dock.
+- Passed the Matter cloud preference through the Roborock status polling stack down to the underlying `get_prop/get_status` request.
+
 ## 1.4.47
 
 - Kept the Matter vacuum run mode active while Roborock is returning to dock, avoiding an inconsistent Idle/Returning state combination that could make Apple Home show "No Response" during the charging transition.
