@@ -1,7 +1,9 @@
 const RoborockMatterVacuumAccessory =
   require("../src/matter_vacuum_accessory").default;
 
+const RUN_MODE_IDLE = 0;
 const RUN_MODE_CLEANING = 1;
+const RVC_OPERATIONAL_STATE_SEEKING_CHARGER = 64;
 const RVC_OPERATIONAL_STATE_CHARGING = 65;
 
 function flush() {
@@ -279,6 +281,26 @@ describe("Matter operational state", () => {
         expected
       );
     }
+  });
+
+  test("keeps Matter run mode active while Roborock is returning to dock", () => {
+    const platform = createPlatform({ status: { state: 6, battery: 100 } });
+    const { accessory } = createAccessory(platform);
+
+    expect(accessory.clusters.rvcRunMode.currentMode).toBe(RUN_MODE_CLEANING);
+    expect(accessory.clusters.rvcOperationalState.operationalState).toBe(
+      RVC_OPERATIONAL_STATE_SEEKING_CHARGER
+    );
+  });
+
+  test("returns Matter run mode to idle once Roborock reports charging", () => {
+    const platform = createPlatform({ status: { state: 8, battery: 100 } });
+    const { accessory } = createAccessory(platform);
+
+    expect(accessory.clusters.rvcRunMode.currentMode).toBe(RUN_MODE_IDLE);
+    expect(accessory.clusters.rvcOperationalState.operationalState).toBe(
+      RVC_OPERATIONAL_STATE_CHARGING
+    );
   });
 
   test("forces follow-up status refreshes after returning to dock", async () => {

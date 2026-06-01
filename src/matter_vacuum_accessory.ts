@@ -491,7 +491,7 @@ export default class RoborockMatterVacuumAccessory {
       `Sending ${this.getVacuumName()} back to dock from Matter.`
     );
     const state = {
-      rvcRunMode: { currentMode: RUN_MODE_IDLE },
+      rvcRunMode: { currentMode: RUN_MODE_CLEANING },
       rvcOperationalState: {
         operationalState: RVC_OPERATIONAL_STATE.SEEKING_CHARGER,
       },
@@ -1440,6 +1440,7 @@ export default class RoborockMatterVacuumAccessory {
     switch (operationalState) {
       case RVC_OPERATIONAL_STATE.RUNNING:
       case RVC_OPERATIONAL_STATE.PAUSED:
+      case RVC_OPERATIONAL_STATE.SEEKING_CHARGER:
       case RVC_OPERATIONAL_STATE.EMPTYING_DUST_BIN:
       case RVC_OPERATIONAL_STATE.CLEANING_MOP:
       case RVC_OPERATIONAL_STATE.UPDATING_MAPS:
