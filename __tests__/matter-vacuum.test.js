@@ -14,6 +14,7 @@ function createPlatform({
   capabilities = { canVacuum: true, canMop: false },
   rooms = [],
   maps = [],
+  currentMapId = null,
   status = {},
   matterUpdates = [],
   appStart = jest.fn().mockResolvedValue(undefined),
@@ -21,6 +22,7 @@ function createPlatform({
   appStop = jest.fn().mockResolvedValue(undefined),
   appPause = jest.fn().mockResolvedValue(undefined),
   appSegmentCleanByIds = jest.fn().mockResolvedValue(undefined),
+  loadMultiMap = jest.fn().mockResolvedValue(undefined),
   getStatus = jest.fn().mockResolvedValue(undefined),
 } = {}) {
   return {
@@ -47,12 +49,15 @@ function createPlatform({
       getVacuumDeviceStatus: (duid, property) => status[property] ?? "",
       getRoomMappingsForDevice: () => rooms.map((room) => ({ ...room })),
       getMapListForDevice: () => maps.map((map) => ({ ...map })),
+      getCurrentMapIdForDevice: () =>
+        typeof currentMapId === "function" ? currentMapId() : currentMapId,
       getMatterCleanModeCapabilities: () => capabilities,
       app_start: appStart,
       app_stop: appStop,
       app_pause: appPause,
       app_charge: appCharge,
       app_segment_clean_by_ids: appSegmentCleanByIds,
+      load_multi_map: loadMultiMap,
       getStatus,
     },
   };
@@ -167,6 +172,77 @@ describe("Matter service area selection", () => {
     });
 
     expect(result.status).toBe(0); // SUCCESS
+  });
+
+  test("uses cloud-preferred map switching before selected-area cleaning", async () => {
+    const loadMultiMap = jest.fn().mockResolvedValue(undefined);
+    const appSegmentCleanByIds = jest.fn().mockResolvedValue(undefined);
+    const platform = createPlatform({
+      serviceAreaBeta: true,
+      currentMapId: 1,
+      rooms: [{ segmentId: 16, mapId: 0, name: "Kitchen" }],
+      maps: [
+        { mapId: 0, name: "Lower Level" },
+        { mapId: 1, name: "Upper Level" },
+      ],
+      appSegmentCleanByIds,
+      loadMultiMap,
+    });
+    const { accessory } = createAccessory(platform, true);
+
+    await accessory.handlers.serviceArea.selectAreas({ newAreas: [16] });
+    await accessory.handlers.rvcRunMode.changeToMode({
+      newMode: RUN_MODE_CLEANING,
+    });
+    await flush();
+    await flush();
+
+    expect(loadMultiMap).toHaveBeenCalledWith("device-1", 0, {
+      waitForResult: true,
+      preferCloud: true,
+    });
+    expect(appSegmentCleanByIds).toHaveBeenCalledWith("device-1", [16], {
+      waitForResult: true,
+    });
+  });
+
+  test("continues selected-area cleaning when the map switch timed out after taking effect", async () => {
+    let currentMapId = 1;
+    const loadMultiMap = jest.fn().mockImplementation(async () => {
+      currentMapId = 0;
+      throw new Error(
+        "Local request with id 28 with method load_multi_map timed out after 30 seconds"
+      );
+    });
+    const appSegmentCleanByIds = jest.fn().mockResolvedValue(undefined);
+    const platform = createPlatform({
+      serviceAreaBeta: true,
+      currentMapId: () => currentMapId,
+      rooms: [{ segmentId: 16, mapId: 0, name: "Kitchen" }],
+      maps: [
+        { mapId: 0, name: "Lower Level" },
+        { mapId: 1, name: "Upper Level" },
+      ],
+      appSegmentCleanByIds,
+      loadMultiMap,
+    });
+    const { accessory } = createAccessory(platform, true);
+
+    await accessory.handlers.serviceArea.selectAreas({ newAreas: [16] });
+    await accessory.handlers.rvcRunMode.changeToMode({
+      newMode: RUN_MODE_CLEANING,
+    });
+    await flush();
+    await flush();
+
+    expect(appSegmentCleanByIds).toHaveBeenCalledWith("device-1", [16], {
+      waitForResult: true,
+    });
+    expect(platform.log.warn).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "became active even though the map-load acknowledgement failed"
+      )
+    );
   });
 });
 

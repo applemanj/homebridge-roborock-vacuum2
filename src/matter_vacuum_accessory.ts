@@ -228,6 +228,16 @@ export default class RoborockMatterVacuumAccessory {
     return options;
   }
 
+  private getMatterMapLoadCommandOptions(): RoborockCommandOptions {
+    return {
+      ...this.getMatterCommandOptions(),
+      // Some older Roborock models apply load_multi_map but never complete the
+      // local pending request. The cloud path gives Matter room cleaning a
+      // reliable acknowledgement without forcing all Matter commands to cloud.
+      preferCloud: true,
+    };
+  }
+
   markRegistered(): void {
     this.registered = true;
   }
@@ -1306,12 +1316,24 @@ export default class RoborockMatterVacuumAccessory {
     this.platform.log.info(
       `Loading Roborock map ${targetMapId} for ${this.getVacuumName()} before selected-area cleaning.`
     );
-    await loadMap.call(
-      this.api,
-      duid,
-      targetMapId,
-      this.getMatterCommandOptions()
-    );
+    try {
+      await loadMap.call(
+        this.api,
+        duid,
+        targetMapId,
+        this.getMatterMapLoadCommandOptions()
+      );
+    } catch (error) {
+      const currentMapIdAfterError = this.getCurrentMatterMapId();
+      if (currentMapIdAfterError === targetMapId) {
+        this.platform.log.warn(
+          `Roborock map ${targetMapId} for ${this.getVacuumName()} became active even though the map-load acknowledgement failed: ${this.getErrorMessage(error)}`
+        );
+        return;
+      }
+
+      throw error;
+    }
   }
 
   private getCurrentMatterMapId(): number | null {
