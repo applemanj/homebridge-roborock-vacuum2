@@ -565,6 +565,18 @@ class RoborockUiServer {
       transport.lastTransportReason || transport.remoteReason || null;
     const hasLocalIp = Boolean(transport.localIp);
 
+    if (
+      lastTransportReason === "cloud-only-mode" ||
+      transport.localDiscoveryState === "disabled" ||
+      tcpState === "disabled"
+    ) {
+      return {
+        status: "Cloud only",
+        health: "good",
+        hint: "Cloud-only mode is enabled, so local LAN discovery and local TCP control are disabled for this plugin.",
+      };
+    }
+
     if (tcpState === "connected") {
       return {
         status: "Local connected",

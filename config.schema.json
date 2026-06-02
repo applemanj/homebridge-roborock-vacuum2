@@ -64,13 +64,13 @@
       },
       "enableMatter": {
         "title": "Enable Matter Vacuum",
-        "description": "Experimental. When running Homebridge 2 with Matter enabled for the Roborock child bridge, also exposes each Roborock as a Matter robotic vacuum cleaner. Pairing codes are printed in the Homebridge log. The existing HomeKit fan/switch accessory remains available for backwards compatibility.",
+        "description": "Experimental. When running Homebridge 2 with Matter enabled for the Roborock child bridge, also exposes each Roborock as a Matter robotic vacuum cleaner with Service Area room selection for clients that support it. Pairing codes are printed in the Homebridge log. The existing HomeKit fan/switch accessory remains available for backwards compatibility.",
         "type": "boolean",
         "default": false
       },
-      "enableMatterServiceAreaBeta": {
-        "title": "Enable Matter Service Area Beta",
-        "description": "Beta/work in progress. Adds the Matter Service Area cluster to the experimental Matter vacuum so supported clients can select Roborock rooms from the current room map. Requires Enable Matter Vacuum and a current Roborock room map; client support may vary.",
+      "cloudOnlyMode": {
+        "title": "Use Roborock Cloud Only",
+        "description": "Disables local LAN discovery and local TCP commands for this plugin, routing commands and status polling through Roborock cloud when available. Useful when local LAN connections appear connected but consistently time out. Restart the Roborock child bridge after changing this setting.",
         "type": "boolean",
         "default": false
       },

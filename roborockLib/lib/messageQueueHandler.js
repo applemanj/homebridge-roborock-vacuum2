@@ -59,7 +59,13 @@ function getRequestTimeout(method) {
  */
 
 /**
+ * @typedef {Object} RoborockConfig
+ * @property {boolean} [cloudOnlyMode]
+ */
+
+/**
  * @typedef {Object} MessageQueueAdapter
+ * @property {RoborockConfig} [config]
  * @property {(duid: string) => Promise<boolean>} isRemoteDevice
  * @property {(duid: string) => Promise<string>} getRobotVersion
  * @property {(duid: string) => Promise<boolean>} onlineChecker
@@ -111,10 +117,12 @@ class messageQueueHandler {
     const deviceOnline = await this.adapter.onlineChecker(duid);
     const mqttConnectionState = this.adapter.rr_mqtt_connector.isConnected();
     const localConnectionState = this.adapter.localConnector.isConnected(duid);
+    const cloudOnlyConnection = Boolean(this.adapter.config?.cloudOnlyMode);
     const preferCloudConnection =
       Boolean(options.preferCloud) && mqttConnectionState;
 
     let useCloudConnection =
+      cloudOnlyConnection ||
       preferCloudConnection ||
       remoteConnection ||
       secure ||
@@ -181,8 +189,11 @@ class messageQueueHandler {
           reject();
         } else if (!mqttConnectionState && useCloudConnection) {
           this.adapter.updateTransportDiagnostics(duid, {
+            lastTransport: "cloud",
             lastCommandMethod: method,
-            lastTransportReason: "mqtt-unavailable",
+            lastTransportReason: cloudOnlyConnection
+              ? "cloud-only-mqtt-unavailable"
+              : "mqtt-unavailable",
           });
           this.adapter.pendingRequests.delete(messageID);
           this.adapter.log.debug(
@@ -236,13 +247,15 @@ class messageQueueHandler {
                 ? "secure-command"
                 : photo
                   ? "photo-command"
-                  : preferCloudConnection
-                    ? "preferred-cloud-command"
-                    : remoteConnection
-                      ? "remote-device"
-                      : method == "get_network_info"
-                        ? "network-info-cloud-only"
-                        : "cloud-request",
+                  : cloudOnlyConnection
+                    ? "cloud-only-mode"
+                    : preferCloudConnection
+                      ? "preferred-cloud-command"
+                      : remoteConnection
+                        ? "remote-device"
+                        : method == "get_network_info"
+                          ? "network-info-cloud-only"
+                          : "cloud-request",
               lastCommandMethod: method,
             });
             this.adapter.log.debug(

@@ -11,7 +11,7 @@ function flush() {
 }
 
 function createPlatform({
-  serviceAreaBeta = false,
+  enableMatter = true,
   preferCloudForMatterCommands = false,
   capabilities = { canVacuum: true, canMop: false },
   rooms = [],
@@ -29,8 +29,7 @@ function createPlatform({
 } = {}) {
   return {
     platformConfig: {
-      enableMatter: true,
-      enableMatterServiceAreaBeta: serviceAreaBeta,
+      enableMatter,
       preferCloudForMatterCommands,
     },
     log: {
@@ -133,9 +132,19 @@ describe("Matter getState", () => {
 });
 
 describe("Matter service area selection", () => {
+  test("is exposed whenever Matter is enabled", () => {
+    const platform = createPlatform({
+      rooms: [{ segmentId: 16, mapId: 0, name: "Kitchen" }],
+      maps: [{ mapId: 0, name: "Lower Level" }],
+    });
+    const { accessory } = createAccessory(platform, true);
+
+    expect(accessory.clusters.serviceArea).toBeDefined();
+    expect(accessory.handlers.serviceArea).toBeDefined();
+  });
+
   test("rejects selections spanning multiple maps with INVALID_SET", async () => {
     const platform = createPlatform({
-      serviceAreaBeta: true,
       rooms: [
         { segmentId: 16, mapId: 0, name: "Kitchen" },
         { segmentId: 17, mapId: 1, name: "Bedroom" },
@@ -160,7 +169,6 @@ describe("Matter service area selection", () => {
 
   test("accepts a single-map selection with SUCCESS", async () => {
     const platform = createPlatform({
-      serviceAreaBeta: true,
       rooms: [
         { segmentId: 16, mapId: 0, name: "Kitchen" },
         { segmentId: 18, mapId: 0, name: "Office" },
@@ -180,7 +188,6 @@ describe("Matter service area selection", () => {
     const loadMultiMap = jest.fn().mockResolvedValue(undefined);
     const appSegmentCleanByIds = jest.fn().mockResolvedValue(undefined);
     const platform = createPlatform({
-      serviceAreaBeta: true,
       currentMapId: 1,
       rooms: [{ segmentId: 16, mapId: 0, name: "Kitchen" }],
       maps: [
@@ -218,7 +225,6 @@ describe("Matter service area selection", () => {
     });
     const appSegmentCleanByIds = jest.fn().mockResolvedValue(undefined);
     const platform = createPlatform({
-      serviceAreaBeta: true,
       currentMapId: () => currentMapId,
       rooms: [{ segmentId: 16, mapId: 0, name: "Kitchen" }],
       maps: [

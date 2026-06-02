@@ -13,6 +13,7 @@ function createAdapter(overrides = {}) {
       isConnected: jest.fn().mockReturnValue(true),
       sendMessage: jest.fn(),
     },
+    config: {},
     localConnector: {
       isConnected: jest.fn().mockReturnValue(false),
       sendMessage: jest.fn(),
@@ -139,6 +140,70 @@ describe("messageQueueHandler transport selection", () => {
         lastTransport: "cloud",
         lastTransportReason: "preferred-cloud-command",
         lastCommandMethod: "app_start",
+      })
+    );
+  });
+
+  test("uses cloud transport in cloud-only mode even when local is connected", async () => {
+    const adapter = createAdapter({
+      config: { cloudOnlyMode: true },
+      localConnector: {
+        isConnected: jest.fn().mockReturnValue(true),
+        sendMessage: jest.fn(),
+        clearChunkBuffer: jest.fn(),
+      },
+    });
+    adapter.rr_mqtt_connector.sendMessage.mockImplementation(() => {
+      const pending = adapter.pendingRequests.get(42);
+      adapter.clearTimeout(pending.timeout);
+      adapter.pendingRequests.delete(42);
+      pending.resolve(["ok"]);
+    });
+
+    const handler = new messageQueueHandler(adapter);
+    await expect(
+      handler.sendRequest("device-1", "get_status", [])
+    ).resolves.toEqual(["ok"]);
+
+    expect(adapter.rr_mqtt_connector.sendMessage).toHaveBeenCalled();
+    expect(adapter.localConnector.sendMessage).not.toHaveBeenCalled();
+    expect(adapter.updateTransportDiagnostics).toHaveBeenCalledWith(
+      "device-1",
+      expect.objectContaining({
+        lastTransport: "cloud",
+        lastTransportReason: "cloud-only-mode",
+        lastCommandMethod: "get_status",
+      })
+    );
+  });
+
+  test("does not fall back to local when cloud-only mode has no MQTT connection", async () => {
+    const adapter = createAdapter({
+      config: { cloudOnlyMode: true },
+      rr_mqtt_connector: {
+        isConnected: jest.fn().mockReturnValue(false),
+        sendMessage: jest.fn(),
+      },
+      localConnector: {
+        isConnected: jest.fn().mockReturnValue(true),
+        sendMessage: jest.fn(),
+        clearChunkBuffer: jest.fn(),
+      },
+    });
+
+    const handler = new messageQueueHandler(adapter);
+    await expect(
+      handler.sendRequest("device-1", "get_status", [])
+    ).rejects.toBeUndefined();
+
+    expect(adapter.rr_mqtt_connector.sendMessage).not.toHaveBeenCalled();
+    expect(adapter.localConnector.sendMessage).not.toHaveBeenCalled();
+    expect(adapter.updateTransportDiagnostics).toHaveBeenCalledWith(
+      "device-1",
+      expect.objectContaining({
+        lastTransport: "cloud",
+        lastTransportReason: "cloud-only-mqtt-unavailable",
+        lastCommandMethod: "get_status",
       })
     );
   });

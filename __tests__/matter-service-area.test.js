@@ -5,7 +5,6 @@ function createPlatform({ rooms = [], maps = [] } = {}) {
   return {
     platformConfig: {
       enableMatter: true,
-      enableMatterServiceAreaBeta: true,
     },
     log: {
       debug: jest.fn(),

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.49
+
+- Added **Use Roborock cloud only** to disable local LAN discovery and local TCP commands for installations where local sockets appear connected but repeatedly time out; commands and status polling now route through Roborock cloud when available.
+- Updated diagnostics and copied reports to show cloud-only mode clearly instead of stale local connection state.
+- Graduated Matter Service Area room selection from a separate beta checkbox so it is included automatically whenever the Matter vacuum is enabled.
+
 ## 1.4.48
 
 - Applied **Prefer Roborock cloud for Matter commands** to Matter follow-up status refreshes as well as commands, so S8-style local status timeouts do not leave Apple Home stuck on Cleaning after the robot returns to dock.

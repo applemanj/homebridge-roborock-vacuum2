@@ -55,7 +55,10 @@ class Roborock {
   constructor(options) {
     this.bInited = false;
 
-    this.config = options;
+    this.config = {
+      ...options,
+      cloudOnlyMode: Boolean(options.cloudOnlyMode),
+    };
 
     this.updateInterval = options.updateInterval || 180;
     this.log = options.log || console;
@@ -115,6 +118,10 @@ class Roborock {
 
   isInited() {
     return this.bInited;
+  }
+
+  isCloudOnlyModeEnabled() {
+    return Boolean(this.config.cloudOnlyMode);
   }
 
   setInterval(callback, interval, ...args) {
@@ -713,6 +720,8 @@ class Roborock {
         return `Opening local LAN TCP connection to ${deviceLabel}${ip ? ` at ${ip}` : ""}.`;
       case "connected":
         return `Local LAN TCP connected to ${deviceLabel}${ip ? ` at ${ip}` : ""}; commands can use local transport.`;
+      case "disabled":
+        return `Local LAN TCP disabled for ${deviceLabel}; using Roborock cloud transport because ${reason}.`;
       case "connect-failed":
         return `Local LAN TCP connection failed for ${deviceLabel}${ip ? ` at ${ip}` : ""}; ${reason}. Cloud transport will be used when available.`;
       case "disconnected":
@@ -734,6 +743,10 @@ class Roborock {
   }
 
   describeLocalDiscoveryChange(deviceLabel, current) {
+    if (current.localDiscoveryState === "disabled") {
+      return `Local discovery disabled for ${deviceLabel}; using Roborock cloud transport because ${this.describeTransportReason(current.lastTransportReason)}.`;
+    }
+
     if (current.localDiscoveryState === "not-discovered") {
       return `No local IP is cached for ${deviceLabel}; the plugin will use cloud transport until discovery succeeds.`;
     }
@@ -773,6 +786,8 @@ class Roborock {
 
   isCloudOnlyTransportReason(reason) {
     return [
+      "cloud-only-mode",
+      "cloud-only-mqtt-unavailable",
       "network-info-cloud-only",
       "secure-command",
       "photo-command",
@@ -782,6 +797,9 @@ class Roborock {
 
   describeTransportReason(reason) {
     const reasons = {
+      "cloud-only-mode": "cloud-only mode is enabled",
+      "cloud-only-mqtt-unavailable":
+        "cloud-only mode is enabled but Roborock cloud MQTT is unavailable",
       "cloud-request": "cloud transport was selected for this command",
       "device-offline": "Roborock currently reports the vacuum offline",
       "device-offline-during-connect":
@@ -1053,12 +1071,28 @@ class Roborock {
             localKeyDevices.map((device) => [device.duid, device.localKey])
           );
 
-          for (const device of managedDevicesForDiagnostics) {
-            if (!device.localKey) {
+          if (this.isCloudOnlyModeEnabled()) {
+            this.log.info(
+              "Roborock cloud-only mode is enabled; local LAN discovery and TCP connections will be skipped."
+            );
+
+            for (const device of managedDevicesForDiagnostics) {
               await this.updateTransportDiagnostics(device.duid, {
                 lastTransport: "cloud",
-                lastTransportReason: "missing-local-key",
+                lastTransportReason: "cloud-only-mode",
+                localIp: null,
+                localDiscoveryState: "disabled",
+                tcpConnectionState: "disabled",
               });
+            }
+          } else {
+            for (const device of managedDevicesForDiagnostics) {
+              if (!device.localKey) {
+                await this.updateTransportDiagnostics(device.duid, {
+                  lastTransport: "cloud",
+                  lastTransportReason: "missing-local-key",
+                });
+              }
             }
           }
 
@@ -1094,44 +1128,50 @@ class Roborock {
           );
           await this.updateHomeData(homeId);
 
-          const discoveredDevices = await this.localConnector.getLocalDevices();
+          const discoveredDevices = this.isCloudOnlyModeEnabled()
+            ? {}
+            : await this.localConnector.getLocalDevices();
 
           await this.createDevices();
           await this.getNetworkInfo();
 
-          // merge udp discovered devices with local devices found via mqtt
-          Object.entries(discoveredDevices).forEach(([duid, ip]) => {
-            if (
-              !Object.prototype.hasOwnProperty.call(this.localDevices, duid)
-            ) {
-              this.localDevices[duid] = ip;
-            }
-          });
-          this.log.debug(`localDevices: ${JSON.stringify(this.localDevices)}`);
-
-          for (const device of localKeyDevices) {
-            if (
-              !Object.prototype.hasOwnProperty.call(
-                this.localDevices,
-                device.duid
-              )
-            ) {
-              await this.updateTransportDiagnostics(device.duid, {
-                localDiscoveryState: "not-discovered",
-                lastTransportReason: "missing-local-ip",
-              });
-            }
-          }
-
-          for (const device in this.localDevices) {
-            const duid = device;
-            const ip = this.localDevices[device];
-
-            await this.updateTransportDiagnostics(duid, {
-              localIp: ip,
-              localDiscoveryState: "discovered",
+          if (!this.isCloudOnlyModeEnabled()) {
+            // merge udp discovered devices with local devices found via mqtt
+            Object.entries(discoveredDevices).forEach(([duid, ip]) => {
+              if (
+                !Object.prototype.hasOwnProperty.call(this.localDevices, duid)
+              ) {
+                this.localDevices[duid] = ip;
+              }
             });
-            await this.localConnector.createClient(duid, ip);
+            this.log.debug(
+              `localDevices: ${JSON.stringify(this.localDevices)}`
+            );
+
+            for (const device of localKeyDevices) {
+              if (
+                !Object.prototype.hasOwnProperty.call(
+                  this.localDevices,
+                  device.duid
+                )
+              ) {
+                await this.updateTransportDiagnostics(device.duid, {
+                  localDiscoveryState: "not-discovered",
+                  lastTransportReason: "missing-local-ip",
+                });
+              }
+            }
+
+            for (const device in this.localDevices) {
+              const duid = device;
+              const ip = this.localDevices[device];
+
+              await this.updateTransportDiagnostics(duid, {
+                localIp: ip,
+                localDiscoveryState: "discovered",
+              });
+              await this.localConnector.createClient(duid, ip);
+            }
           }
 
           await this.initializeDeviceUpdates();
@@ -2066,7 +2106,10 @@ class Roborock {
   }
 
   async refreshMatterServiceAreaRoomMappings(duid, vacuum) {
-    if (!this.config.enableMatterServiceAreaBeta) {
+    if (
+      !this.config.enableMatterServiceArea &&
+      !this.config.enableMatterServiceAreaBeta
+    ) {
       return false;
     }
 

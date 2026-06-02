@@ -232,7 +232,11 @@ class vacuum {
         );
 
         for (const attribute in networkInfo) {
-          if (attribute == "ip" && !(await this.adapter.isRemoteDevice(duid))) {
+          if (
+            attribute == "ip" &&
+            !this.adapter.isCloudOnlyModeEnabled?.() &&
+            !(await this.adapter.isRemoteDevice(duid))
+          ) {
             this.adapter.localDevices[duid] = networkInfo[attribute];
           }
           this.adapter.setStateAsync(

@@ -330,7 +330,7 @@ export default class RoborockMatterVacuumAccessory {
       },
     };
 
-    if (this.isServiceAreaBetaEnabled()) {
+    if (this.isServiceAreaEnabled()) {
       handlers.serviceArea = {
         selectAreas: async (request?: { newAreas?: unknown }) => {
           return await this.selectServiceAreas(request?.newAreas);
@@ -597,7 +597,7 @@ export default class RoborockMatterVacuumAccessory {
       powerSource: this.buildPowerSourceCluster(),
     };
 
-    if (this.isServiceAreaBetaEnabled()) {
+    if (this.isServiceAreaEnabled()) {
       clusters.serviceArea = this.buildServiceAreaCluster();
     }
 
@@ -621,7 +621,7 @@ export default class RoborockMatterVacuumAccessory {
         clusterState = this.buildPowerSourceCluster();
         break;
       case "serviceArea":
-        clusterState = this.isServiceAreaBetaEnabled()
+        clusterState = this.isServiceAreaEnabled()
           ? this.buildServiceAreaCluster()
           : undefined;
         break;
@@ -1173,13 +1173,13 @@ export default class RoborockMatterVacuumAccessory {
 
     if (areas.length === 0) {
       this.platform.log.info(
-        `Matter Service Area beta is enabled for ${this.getVacuumName()}, but no Roborock rooms are available to expose yet.`
+        `Matter Service Area is enabled for ${this.getVacuumName()}, but no Roborock rooms are available to expose yet.`
       );
       return;
     }
 
     this.platform.log.info(
-      `Matter Service Area beta for ${this.getVacuumName()}: exposing ${areas.length} room(s)` +
+      `Matter Service Area for ${this.getVacuumName()}: exposing ${areas.length} room(s)` +
         `${maps.length > 0 ? ` on ${maps.length} map(s)` : ""}: ${areas
           .map((area) =>
             this.getMatterLocationDisplayName(area, maps.length > 1)
@@ -1189,7 +1189,7 @@ export default class RoborockMatterVacuumAccessory {
   }
 
   private getSelectedServiceAreaSegments(): MatterServiceArea[] {
-    if (!this.isServiceAreaBetaEnabled()) {
+    if (!this.isServiceAreaEnabled()) {
       return [];
     }
 
@@ -1351,11 +1351,8 @@ export default class RoborockMatterVacuumAccessory {
     return this.getMatterMapId(currentMapId);
   }
 
-  private isServiceAreaBetaEnabled(): boolean {
-    return Boolean(
-      this.platform.platformConfig.enableMatter &&
-        this.platform.platformConfig.enableMatterServiceAreaBeta
-    );
+  private isServiceAreaEnabled(): boolean {
+    return Boolean(this.platform.platformConfig.enableMatter);
   }
 
   private getBatteryChargeLevel(battery: number | null): number {

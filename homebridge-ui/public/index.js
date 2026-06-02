@@ -6,12 +6,10 @@ const elements = {
   skipDevices: document.getElementById("skip-devices"),
   debugMode: document.getElementById("debug-mode"),
   enableMatter: document.getElementById("enable-matter"),
-  enableMatterServiceAreaBeta: document.getElementById(
-    "enable-matter-service-area-beta"
-  ),
   preferCloudForMatterCommands: document.getElementById(
     "prefer-cloud-for-matter-commands"
   ),
+  cloudOnlyMode: document.getElementById("cloud-only-mode"),
   transientWarningThrottleHours: document.getElementById(
     "transient-warning-throttle-hours"
   ),
@@ -40,6 +38,7 @@ const state = {
   lastLocalTest: null,
   diagnosticsRefreshTimer: null,
   diagnosticsAutoRefreshAttempts: 0,
+  cloudOnlyMode: false,
 };
 
 const DIAGNOSTICS_AUTO_REFRESH_DELAY_MS = 3000;
@@ -102,12 +101,11 @@ async function loadConfig() {
   }
   elements.debugMode.checked = Boolean(config.debugMode);
   elements.enableMatter.checked = Boolean(config.enableMatter);
-  elements.enableMatterServiceAreaBeta.checked = Boolean(
-    config.enableMatterServiceAreaBeta
-  );
   elements.preferCloudForMatterCommands.checked = Boolean(
     config.preferCloudForMatterCommands
   );
+  elements.cloudOnlyMode.checked = Boolean(config.cloudOnlyMode);
+  state.cloudOnlyMode = Boolean(config.cloudOnlyMode);
   elements.transientWarningThrottleHours.value =
     config.transientWarningThrottleHours ?? 6;
 
@@ -141,12 +139,12 @@ function getEnableMatter() {
   return Boolean(elements.enableMatter.checked);
 }
 
-function getEnableMatterServiceAreaBeta() {
-  return Boolean(elements.enableMatterServiceAreaBeta.checked);
-}
-
 function getPreferCloudForMatterCommands() {
   return Boolean(elements.preferCloudForMatterCommands.checked);
+}
+
+function getCloudOnlyMode() {
+  return Boolean(elements.cloudOnlyMode.checked);
 }
 
 function getTransientWarningThrottleHours() {
@@ -174,8 +172,8 @@ async function saveCredentials(showSuccess = false) {
   const skipDevices = getSkipDevices();
   const debugMode = getDebugMode();
   const enableMatter = getEnableMatter();
-  const enableMatterServiceAreaBeta = getEnableMatterServiceAreaBeta();
   const preferCloudForMatterCommands = getPreferCloudForMatterCommands();
+  const cloudOnlyMode = getCloudOnlyMode();
   const transientWarningThrottleHours = getTransientWarningThrottleHours();
   if (!email) {
     showToast("error", "Email is required.");
@@ -188,8 +186,9 @@ async function saveCredentials(showSuccess = false) {
     skipDevices,
     debugMode,
     enableMatter,
-    enableMatterServiceAreaBeta,
+    enableMatterServiceAreaBeta: undefined,
     preferCloudForMatterCommands,
+    cloudOnlyMode,
     transientWarningThrottleHours,
   };
 
@@ -198,6 +197,7 @@ async function saveCredentials(showSuccess = false) {
   }
 
   await updatePluginConfig(patch);
+  state.cloudOnlyMode = cloudOnlyMode;
 
   if (password) {
     state.hasPassword = true;
@@ -217,8 +217,8 @@ async function login() {
   const skipDevices = getSkipDevices();
   const debugMode = getDebugMode();
   const enableMatter = getEnableMatter();
-  const enableMatterServiceAreaBeta = getEnableMatterServiceAreaBeta();
   const preferCloudForMatterCommands = getPreferCloudForMatterCommands();
+  const cloudOnlyMode = getCloudOnlyMode();
   const transientWarningThrottleHours = getTransientWarningThrottleHours();
 
   if (!email || !password) {
@@ -236,11 +236,13 @@ async function login() {
       skipDevices,
       debugMode,
       enableMatter,
-      enableMatterServiceAreaBeta,
+      enableMatterServiceAreaBeta: undefined,
       preferCloudForMatterCommands,
+      cloudOnlyMode,
       transientWarningThrottleHours,
       encryptedToken: result.encryptedToken,
     });
+    state.cloudOnlyMode = cloudOnlyMode;
     showToast("success", result.message || "Login successful.");
     state.hasEncryptedToken = true;
     state.hasPassword = true;
@@ -284,8 +286,8 @@ async function verifyTwoFactorCode() {
   const skipDevices = getSkipDevices();
   const debugMode = getDebugMode();
   const enableMatter = getEnableMatter();
-  const enableMatterServiceAreaBeta = getEnableMatterServiceAreaBeta();
   const preferCloudForMatterCommands = getPreferCloudForMatterCommands();
+  const cloudOnlyMode = getCloudOnlyMode();
   const transientWarningThrottleHours = getTransientWarningThrottleHours();
   if (!email) {
     showToast("error", "Email is required.");
@@ -308,11 +310,13 @@ async function verifyTwoFactorCode() {
       skipDevices,
       debugMode,
       enableMatter,
-      enableMatterServiceAreaBeta,
+      enableMatterServiceAreaBeta: undefined,
       preferCloudForMatterCommands,
+      cloudOnlyMode,
       transientWarningThrottleHours,
       encryptedToken: result.encryptedToken,
     });
+    state.cloudOnlyMode = cloudOnlyMode;
     showToast("success", result.message || "Verification successful.");
     state.hasEncryptedToken = true;
     setLoggedInState(true, state.hasPassword);
@@ -587,6 +591,7 @@ function buildDiagnosticsReport(result) {
     `nodeVersion: ${result.nodeVersion || "unknown"}`,
     `token: ${hasToken ? "present" : "missing"}`,
     `homeData: ${result.hasHomeData ? "present" : "missing"}`,
+    `cloudOnlyMode: ${state.cloudOnlyMode ? "enabled" : "disabled"}`,
     `deviceCount: ${result.deviceCount ?? "unknown"}`,
     "",
   ];
@@ -840,10 +845,10 @@ function init() {
   elements.enableMatter.addEventListener("change", () =>
     saveCredentials(false)
   );
-  elements.enableMatterServiceAreaBeta.addEventListener("change", () =>
+  elements.preferCloudForMatterCommands.addEventListener("change", () =>
     saveCredentials(false)
   );
-  elements.preferCloudForMatterCommands.addEventListener("change", () =>
+  elements.cloudOnlyMode.addEventListener("change", () =>
     saveCredentials(false)
   );
   elements.transientWarningThrottleHours.addEventListener("change", () =>

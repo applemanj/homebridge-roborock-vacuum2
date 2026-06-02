@@ -144,8 +144,8 @@ describe("Roborock API model and diagnostics helpers", () => {
     expect(api.getCurrentMapIdForDevice("device-1")).toBe(1);
   });
 
-  test("Matter Service Area beta caches rooms from missing saved maps while idle", async () => {
-    const api = createRoborock({ enableMatterServiceAreaBeta: true });
+  test("Matter Service Area caches rooms from missing saved maps while idle", async () => {
+    const api = createRoborock({ enableMatterServiceArea: true });
     api.roomIDs = {
       55: "Lower Level",
       77: "Upper Hallway",
@@ -220,8 +220,8 @@ describe("Roborock API model and diagnostics helpers", () => {
     ]);
   });
 
-  test("Matter Service Area beta does not reload the active map when its rooms are missing", async () => {
-    const api = createRoborock({ enableMatterServiceAreaBeta: true });
+  test("Matter Service Area does not reload the active map when its rooms are missing", async () => {
+    const api = createRoborock({ enableMatterServiceArea: true });
     api.roomIDs = {
       55: "Lower Level",
       77: "Upper Hallway",
@@ -278,8 +278,8 @@ describe("Roborock API model and diagnostics helpers", () => {
     ]);
   });
 
-  test("Matter Service Area beta restores the original map when a saved map load times out", async () => {
-    const api = createRoborock({ enableMatterServiceAreaBeta: true });
+  test("Matter Service Area restores the original map when a saved map load times out", async () => {
+    const api = createRoborock({ enableMatterServiceArea: true });
     api.roomIDs = { 55: "Lower Level" };
     await api.setStateAsync("HomeData", {
       val: JSON.stringify({
@@ -341,10 +341,10 @@ describe("Roborock API model and diagnostics helpers", () => {
     expect(api.getCurrentMapIdForDevice("device-1")).toBe(0);
   });
 
-  test("Matter Service Area beta retries an empty saved map only after the refresh TTL", async () => {
+  test("Matter Service Area retries an empty saved map only after the refresh TTL", async () => {
     let now = 1_000_000;
     const api = createRoborock({
-      enableMatterServiceAreaBeta: true,
+      enableMatterServiceArea: true,
       now: () => now,
     });
     await api.setStateAsync("HomeData", {
@@ -772,12 +772,15 @@ describe("Roborock API model and diagnostics helpers", () => {
 
     await api.updateTransportDiagnostics("device-1", {
       lastTransport: "cloud",
-      lastTransportReason: "network-info-cloud-only",
+      lastTransportReason: "cloud-only-mode",
       lastCommandMethod: "get_network_info",
     });
 
     expect(log.debug).toHaveBeenCalledWith(
       expect.stringContaining("Using Roborock cloud transport")
+    );
+    expect(log.debug).toHaveBeenCalledWith(
+      expect.stringContaining("cloud-only mode is enabled")
     );
     expect(log.debug).not.toHaveBeenCalledWith(
       expect.stringContaining("Falling back")

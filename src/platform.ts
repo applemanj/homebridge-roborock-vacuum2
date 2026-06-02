@@ -130,8 +130,8 @@ export default class RoborockPlatform implements DynamicPlatformPlugin {
       debug: debugMode,
       baseURL: baseURL,
       skipDevices: this.platformConfig.skipDevices,
-      enableMatterServiceAreaBeta:
-        this.platformConfig.enableMatterServiceAreaBeta,
+      enableMatterServiceArea: Boolean(this.platformConfig.enableMatter),
+      cloudOnlyMode: Boolean(this.platformConfig.cloudOnlyMode),
       log: this.log,
       userData: decryptedSession,
       storagePath: storagePath,

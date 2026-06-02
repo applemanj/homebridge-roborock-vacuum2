@@ -99,19 +99,8 @@
         Enable experimental Matter vacuum
         <small
           >Requires Homebridge 2 with Matter enabled. Adds a native Matter robot
-          vacuum while keeping the current HomeKit fan and helper
-          switches.</small
-        >
-      </span>
-    </label>
-
-    <label class="checkbox">
-      <input id="enable-matter-service-area-beta" type="checkbox" />
-      <span>
-        Enable Matter Service Area beta
-        <small
-          >Work in progress. Adds room selection to the Matter vacuum for
-          clients that support Service Area.</small
+          vacuum with Service Area room selection while keeping the current
+          HomeKit fan and helper switches.</small
         >
       </span>
     </label>
@@ -123,6 +112,17 @@
         <small
           >Use cloud transport for Matter vacuum commands when available. This
           can avoid local LAN command timeouts on some models.</small
+        >
+      </span>
+    </label>
+
+    <label class="checkbox">
+      <input id="cloud-only-mode" type="checkbox" />
+      <span>
+        Use Roborock cloud only
+        <small
+          >Disables local LAN discovery and local TCP commands for this plugin.
+          Restart the Roborock child bridge after changing this setting.</small
         >
       </span>
     </label>
