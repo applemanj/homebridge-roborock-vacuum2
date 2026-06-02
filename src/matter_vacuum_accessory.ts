@@ -1,3 +1,5 @@
+import { setTimeout as nodeSetTimeout } from "node:timers";
+
 import RoborockPlatform from "./platform";
 
 type MatterAccessory = {
@@ -57,6 +59,18 @@ type RoborockStatusRefreshOptions = {
   force?: boolean;
   preferCloud?: boolean;
 };
+
+function scheduleTimer(
+  callback: () => void,
+  delayMs: number
+): ReturnType<typeof nodeSetTimeout> {
+  const setTimer =
+    typeof globalThis.setTimeout === "function"
+      ? globalThis.setTimeout
+      : nodeSetTimeout;
+
+  return setTimer(callback, delayMs);
+}
 
 /**
  * The subset of the runtime Roborock API the Matter accessory depends on.
@@ -512,7 +526,7 @@ export default class RoborockMatterVacuumAccessory {
       return;
     }
 
-    setTimeout(() => {
+    scheduleTimer(() => {
       void this.updateMatterState(partialClusters).catch((error) => {
         this.platform.log.warn(
           `Unable to update Matter state after ${reason} for ${this.getVacuumName()}: ${this.getErrorMessage(error)}`
@@ -1656,7 +1670,7 @@ export default class RoborockMatterVacuumAccessory {
     }
 
     for (const delayMs of MATTER_COMMAND_STATUS_REFRESH_DELAYS_MS) {
-      setTimeout(() => {
+      scheduleTimer(() => {
         void refreshStatus
           .call(this.api, this.getDuid(), this.getMatterStatusRefreshOptions())
           .then(() => this.updateMatterStateFromRoborock())
