@@ -1,5 +1,6 @@
 const RoborockMatterVacuumAccessory =
   require("../src/matter_vacuum_accessory").default;
+const { setTimeout: realSetTimeout } = require("node:timers");
 
 const RUN_MODE_IDLE = 0;
 const RUN_MODE_CLEANING = 1;
@@ -7,8 +8,12 @@ const RVC_OPERATIONAL_STATE_SEEKING_CHARGER = 64;
 const RVC_OPERATIONAL_STATE_CHARGING = 65;
 
 function flush() {
-  return new Promise((resolve) => setTimeout(resolve, 0));
+  return new Promise((resolve) => realSetTimeout(resolve, 0));
 }
+
+afterEach(() => {
+  jest.useRealTimers();
+});
 
 function createPlatform({
   enableMatter = true,
@@ -255,10 +260,6 @@ describe("Matter service area selection", () => {
 });
 
 describe("Matter operational state", () => {
-  afterEach(() => {
-    jest.useRealTimers();
-  });
-
   test("advertises operational state IDs without labels (Apple Home compatibility)", () => {
     const platform = createPlatform();
     const { accessory } = createAccessory(platform);
