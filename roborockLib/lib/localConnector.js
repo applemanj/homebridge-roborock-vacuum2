@@ -184,7 +184,10 @@ class localConnector {
                     resolve(result);
 
                     if (this.adapter.deviceNotify !== undefined) {
-                      this.adapter.deviceNotify("LocalMessage", result);
+                      this.adapter.deviceNotify("LocalMessage", {
+                        duid,
+                        payload: result,
+                      });
                     }
                   }
                 }

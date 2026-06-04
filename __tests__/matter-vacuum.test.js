@@ -392,6 +392,29 @@ describe("Matter live status cache", () => {
       await accessory.getState("rvcOperationalState", "operationalState")
     ).toBe(1); // RUNNING, sourced from the live cache rather than HomeData
   });
+
+  test("ignores device-scoped live messages for other vacuums", async () => {
+    const platform = createPlatform({ status: { state: 8, battery: 50 } });
+    const { accessory, vacuum } = createAccessory(platform, true);
+
+    await vacuum.notifyDeviceUpdater("CloudMessage", {
+      duid: "other-device",
+      payload: [{ state: 5, battery: 50 }],
+    });
+
+    expect(
+      await accessory.getState("rvcOperationalState", "operationalState")
+    ).toBe(RVC_OPERATIONAL_STATE_CHARGING);
+
+    await vacuum.notifyDeviceUpdater("CloudMessage", {
+      duid: "device-1",
+      payload: [{ state: 5, battery: 50 }],
+    });
+
+    expect(
+      await accessory.getState("rvcOperationalState", "operationalState")
+    ).toBe(1); // RUNNING
+  });
 });
 
 describe("Matter optimistic state", () => {
@@ -425,5 +448,40 @@ describe("Matter optimistic state", () => {
     expect(operationalUpdate.attributes.operationalState).toBe(
       RVC_OPERATIONAL_STATE_CHARGING
     );
+  });
+
+  test("keeps optimistic state when a Matter command acknowledgement times out", async () => {
+    const matterUpdates = [];
+    const getStatus = jest.fn().mockResolvedValue(undefined);
+    const appStart = jest
+      .fn()
+      .mockRejectedValue(
+        new Error(
+          "Cloud request with id 1748 with method app_start timed out after 10 seconds. MQTT connection state: true"
+        )
+      );
+    const platform = createPlatform({
+      appStart,
+      getStatus,
+      matterUpdates,
+      status: { state: 8, battery: 100 },
+    });
+    const { vacuum } = createAccessory(platform, true);
+
+    await vacuum.accessory.handlers.rvcRunMode.changeToMode({
+      newMode: RUN_MODE_CLEANING,
+    });
+    await flush();
+    await flush();
+
+    const operationalUpdates = matterUpdates.filter(
+      (update) => update.cluster === "rvcOperationalState"
+    );
+    expect(operationalUpdates).toHaveLength(1);
+    expect(operationalUpdates[0].attributes.operationalState).toBe(1);
+    expect(platform.log.warn).toHaveBeenCalledWith(
+      expect.stringContaining("Keeping the optimistic Matter state")
+    );
+    expect(getStatus).not.toHaveBeenCalled();
   });
 });

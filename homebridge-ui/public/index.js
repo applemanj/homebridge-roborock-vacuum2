@@ -64,9 +64,24 @@ function showToast(type, message) {
   }, 4000);
 }
 
-async function request(path, body) {
+async function request(path, body, options = {}) {
   try {
-    return await window.homebridge.request(path, body);
+    const requestPromise = window.homebridge.request(path, body);
+    if (!options.timeoutMs) {
+      return await requestPromise;
+    }
+
+    return await Promise.race([
+      requestPromise,
+      new Promise((resolve) => {
+        setTimeout(() => {
+          resolve({
+            ok: false,
+            message: `Request timed out after ${Math.round(options.timeoutMs / 1000)} seconds.`,
+          });
+        }, options.timeoutMs);
+      }),
+    ]);
   } catch (error) {
     return { ok: false, message: error.message || "Request failed." };
   }
@@ -469,7 +484,11 @@ async function testLocalConnections() {
   elements.testLocal.textContent = "Testing...";
 
   try {
-    const result = await request("/diagnostics/test-local", {});
+    const result = await request(
+      "/diagnostics/test-local",
+      { cloudOnlyMode: getCloudOnlyMode() },
+      { timeoutMs: 10000 }
+    );
     if (!result.ok) {
       renderLocalTestResults(null, result.message || "Local test failed.");
       showToast("error", result.message || "Local test failed.");

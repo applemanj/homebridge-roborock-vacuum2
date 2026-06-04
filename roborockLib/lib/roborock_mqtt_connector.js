@@ -246,7 +246,10 @@ class roborock_mqtt_connector {
               `Cloud message with protocol 102 and id ${dps.id} received. Result: ${JSON.stringify(dps.result)}`
             );
             if (typeof dps.result !== "undefined") {
-              this.adapter.setStateAsync("CloudMessage", dps.result);
+              this.adapter.setStateAsync("CloudMessage", {
+                duid,
+                payload: dps.result,
+              });
             }
           } else {
             this.adapter.log.debug(
@@ -254,10 +257,10 @@ class roborock_mqtt_connector {
             );
 
             if (this.adapter.deviceNotify !== undefined) {
-              this.adapter.deviceNotify(
-                "CloudMessage",
-                JSON.parse(data.payload)
-              );
+              this.adapter.deviceNotify("CloudMessage", {
+                duid,
+                payload: JSON.parse(data.payload),
+              });
             }
           }
 

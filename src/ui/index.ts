@@ -348,7 +348,10 @@ class RoborockUiServer {
     }
   }
 
-  private async testLocalConnections(payload?: { duid?: string }) {
+  private async testLocalConnections(payload?: {
+    duid?: string;
+    cloudOnlyMode?: boolean;
+  }) {
     const startedAt = Date.now();
     const diagnostics = await this.getDiagnostics();
 
@@ -371,7 +374,7 @@ class RoborockUiServer {
 
     const results = await Promise.all(
       devices.map((device: Record<string, any>) =>
-        this.testLocalConnection(device)
+        this.testLocalConnection(device, Boolean(payload?.cloudOnlyMode))
       )
     );
 
@@ -384,7 +387,10 @@ class RoborockUiServer {
     };
   }
 
-  private async testLocalConnection(device: Record<string, any>) {
+  private async testLocalConnection(
+    device: Record<string, any>,
+    cloudOnlyMode: boolean
+  ) {
     const localIp = device.localIp;
     const port = 58867;
     const cloudFallbackLikely =
@@ -404,6 +410,16 @@ class RoborockUiServer {
       cachedTransportUpdatedAt: device.transportUpdatedAt || null,
       latencyMs: null as number | null,
     };
+
+    if (cloudOnlyMode) {
+      return {
+        ...baseResult,
+        status: "skipped",
+        health: "warn",
+        message:
+          "Use Roborock cloud only is enabled, so local LAN probing is skipped until cloud-only mode is disabled and Homebridge is restarted.",
+      };
+    }
 
     if (!device.hasLocalKey) {
       return {

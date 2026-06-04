@@ -437,13 +437,23 @@ export default class RoborockVacuumAccessory {
   notifyDeviceUpdater(id: string, data) {
     try {
       if (id == "CloudMessage" || id == "LocalMessage") {
-        const rootMessage = data && typeof data === "object" ? data : null;
+        const liveData = this.getLiveMessageForThisAccessory(data);
+        if (liveData === null) {
+          return;
+        }
+
+        const rootMessage: any =
+          liveData && typeof liveData === "object" ? liveData : null;
 
         this.platform.log.debug(
-          `Updating accessory with ${id} data: ` + JSON.stringify(data)
+          `Updating accessory with ${id} data: ` + JSON.stringify(liveData)
         );
 
-        const payload = Array.isArray(data) ? data : data ? [data] : [];
+        const payload = Array.isArray(liveData)
+          ? liveData
+          : liveData
+            ? [liveData]
+            : [];
         if (payload.length > 0) {
           const messages = payload[0];
           if (!messages || typeof messages !== "object") {
@@ -524,6 +534,25 @@ export default class RoborockVacuumAccessory {
     } catch (e) {
       this.platform.log.error("Error notifying device updater: " + e);
     }
+  }
+
+  private getLiveMessageForThisAccessory(data): unknown | null {
+    if (!data || typeof data !== "object" || Array.isArray(data)) {
+      return data;
+    }
+
+    if (
+      Object.prototype.hasOwnProperty.call(data, "duid") &&
+      Object.prototype.hasOwnProperty.call(data, "payload")
+    ) {
+      if (String(data.duid) !== String(this.accessory.context)) {
+        return null;
+      }
+
+      return data.payload;
+    }
+
+    return data;
   }
 
   async setActive(value: CharacteristicValue) {

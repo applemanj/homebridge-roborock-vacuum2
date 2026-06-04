@@ -297,7 +297,12 @@ export default class RoborockMatterVacuumAccessory {
     }
 
     if (id === "CloudMessage" || id === "LocalMessage") {
-      await this.updateMatterStateFromMessage(data);
+      const liveData = this.getLiveMessageForThisAccessory(data);
+      if (liveData === null) {
+        return;
+      }
+
+      await this.updateMatterStateFromMessage(liveData);
     }
   }
 
@@ -1528,6 +1533,26 @@ export default class RoborockMatterVacuumAccessory {
     return hasStatus ? message : null;
   }
 
+  private getLiveMessageForThisAccessory(data: unknown): unknown | null {
+    if (!data || typeof data !== "object" || Array.isArray(data)) {
+      return data;
+    }
+
+    const message = data as Record<string, unknown>;
+    if (
+      Object.prototype.hasOwnProperty.call(message, "duid") &&
+      Object.prototype.hasOwnProperty.call(message, "payload")
+    ) {
+      if (String(message.duid) !== this.getDuid()) {
+        return null;
+      }
+
+      return message.payload;
+    }
+
+    return data;
+  }
+
   private asRecord(value: unknown): Record<string, unknown> | null {
     return value !== null && typeof value === "object"
       ? (value as Record<string, unknown>)
@@ -1640,12 +1665,24 @@ export default class RoborockMatterVacuumAccessory {
         this.schedulePostCommandStatusRefresh(action);
       })
       .catch((error) => {
+        if (this.isMatterCommandTimeoutError(error)) {
+          this.platform.log.warn(
+            `Matter ${action} command for ${this.getVacuumName()} was sent but Roborock did not acknowledge it before timeout: ${this.getErrorMessage(error)}. Keeping the optimistic Matter state while waiting for live status updates.`
+          );
+          this.schedulePostCommandStatusRefresh(action);
+          return;
+        }
+
         this.platform.log.error(
           `Error sending Matter ${action} command to ${this.getVacuumName()}: ${this.getErrorMessage(error)}`
         );
         this.clearOptimisticState();
         void this.updateMatterStateFromRoborock();
       });
+  }
+
+  private isMatterCommandTimeoutError(error: unknown): boolean {
+    return /timed out after \d+ seconds/.test(this.getErrorMessage(error));
   }
 
   private logMatterCommandDuration(action: string, startedAt: number): void {
