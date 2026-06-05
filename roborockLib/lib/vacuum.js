@@ -49,6 +49,17 @@ class vacuum {
     };
   }
 
+  async updateDiagnosticSnapshot(duid, key, payload) {
+    if (typeof this.adapter.updateRoborockDiagnostics !== "function") {
+      return;
+    }
+
+    await this.adapter.updateRoborockDiagnostics(duid, key, {
+      capturedAt: new Date().toISOString(),
+      payload,
+    });
+  }
+
   async command(duid, parameter, value, options = {}) {
     try {
       const sendCommandRequest = (method, params) =>
@@ -294,6 +305,11 @@ class vacuum {
               false,
               requestOptions
             );
+
+          await this.updateDiagnosticSnapshot(duid, "lastStatus", {
+            method: "get_status",
+            status: deviceStatus[0] || null,
+          });
 
           for (const attribute in deviceStatus[0]) {
             const isCleaning = this.adapter.isCleaning(
@@ -569,17 +585,36 @@ class vacuum {
           });
         }
       } else if (parameter == "get_server_timer") {
-        // const serverTimers = await this.adapter.messageQueueHandler.sendRequest(duid, parameter, []);
-        // if (typeof(attribute_val[0]) == "object") {
-        // attribute_val[0] = JSON.stringify(attribute_val[0]);
-        // }
-        // this.adapter.setStateAsync("Devices." + duid + "." + targetFolder + "." + mode, { val: attribute_val[0], ack: true });
+        if (this.adapter.config.debug) {
+          const serverTimers =
+            await this.adapter.messageQueueHandler.sendRequest(
+              duid,
+              parameter,
+              []
+            );
+          await this.updateDiagnosticSnapshot(duid, "lastServerTimer", {
+            method: parameter,
+            response: serverTimers,
+          });
+          this.adapter.log.debug(
+            `Roborock ${parameter} diagnostic for ${duid}: ${JSON.stringify(this.adapter.compactDiagnosticPayload(serverTimers))}`
+          );
+        }
       } else if (parameter == "get_timer") {
-        // const timers = await this.adapter.messageQueueHandler.sendRequest(duid, parameter, []);
-        // if (typeof(attribute_val[0]) == "object") {
-        // attribute_val[0] = JSON.stringify(attribute_val[0]);
-        // }
-        // this.adapter.setStateAsync("Devices." + duid + "." + targetFolder + "." + mode, { val: attribute_val[0], ack: true });
+        if (this.adapter.config.debug) {
+          const timers = await this.adapter.messageQueueHandler.sendRequest(
+            duid,
+            parameter,
+            []
+          );
+          await this.updateDiagnosticSnapshot(duid, "lastTimer", {
+            method: parameter,
+            response: timers,
+          });
+          this.adapter.log.debug(
+            `Roborock ${parameter} diagnostic for ${duid}: ${JSON.stringify(this.adapter.compactDiagnosticPayload(timers))}`
+          );
+        }
       } else if (parameter == "get_photo") {
         const photoresponse =
           await this.adapter.messageQueueHandler.sendRequest(

@@ -30,6 +30,7 @@ const PERSISTED_STATE_IDS = new Set([
   "HomeData",
   "RoomMappings",
   "TransportDiagnostics",
+  "RoborockDiagnostics",
 ]);
 
 const dockingStationStates = [
@@ -605,6 +606,119 @@ class Roborock {
     }
 
     return {};
+  }
+
+  getRoborockDiagnostics() {
+    const diagnostics = this.getStateAsync("RoborockDiagnostics");
+    if (diagnostics && typeof diagnostics.val == "string") {
+      try {
+        return JSON.parse(diagnostics.val);
+      } catch (error) {
+        this.log.debug(
+          `Failed to parse Roborock diagnostics state: ${error.message}`
+        );
+      }
+    }
+
+    return {};
+  }
+
+  async updateRoborockDiagnostics(duid, key, payload) {
+    if (!duid || !key) {
+      return;
+    }
+
+    const diagnostics = this.getRoborockDiagnostics();
+    const currentEntry =
+      diagnostics[duid] && typeof diagnostics[duid] === "object"
+        ? diagnostics[duid]
+        : {};
+
+    diagnostics[duid] = {
+      ...currentEntry,
+      [key]: this.compactDiagnosticPayload(payload),
+      updatedAt: new Date().toISOString(),
+    };
+
+    await this.setStateAsync("RoborockDiagnostics", {
+      val: JSON.stringify(diagnostics),
+      ack: true,
+    });
+  }
+
+  recordRoborockDiagnosticMessage(source, message) {
+    if (source !== "CloudMessage" && source !== "LocalMessage") {
+      return;
+    }
+
+    if (!message || typeof message !== "object" || Array.isArray(message)) {
+      return;
+    }
+
+    const { duid, payload } = message;
+    if (!duid || payload === undefined) {
+      return;
+    }
+
+    const key =
+      source === "CloudMessage" ? "lastCloudMessage" : "lastLocalMessage";
+    void this.updateRoborockDiagnostics(String(duid), key, {
+      source,
+      receivedAt: new Date().toISOString(),
+      payload,
+    });
+  }
+
+  compactDiagnosticPayload(value, depth = 0) {
+    if (value === null || value === undefined) {
+      return value;
+    }
+
+    if (typeof value === "string") {
+      return value.length > 500 ? `${value.slice(0, 500)}...` : value;
+    }
+
+    if (typeof value !== "object") {
+      return value;
+    }
+
+    if (depth >= 3) {
+      return Array.isArray(value) ? `[array:${value.length}]` : "[object]";
+    }
+
+    if (Array.isArray(value)) {
+      const compactArray = value
+        .slice(0, 8)
+        .map((entry) => this.compactDiagnosticPayload(entry, depth + 1));
+      if (value.length > compactArray.length) {
+        compactArray.push(`[truncated:${value.length - compactArray.length}]`);
+      }
+      return compactArray;
+    }
+
+    const compactObject = {};
+    const entries = Object.entries(value);
+    for (const [key, entryValue] of entries.slice(0, 30)) {
+      if (this.isSensitiveDiagnosticKey(key)) {
+        compactObject[key] = "[redacted]";
+        continue;
+      }
+
+      compactObject[key] = this.compactDiagnosticPayload(entryValue, depth + 1);
+    }
+
+    if (entries.length > Object.keys(compactObject).length) {
+      compactObject.__truncatedKeys =
+        entries.length - Object.keys(compactObject).length;
+    }
+
+    return compactObject;
+  }
+
+  isSensitiveDiagnosticKey(key) {
+    return /token|localkey|local_key|password|secret|rriot|key/i.test(
+      String(key)
+    );
   }
 
   async updateTransportDiagnostics(duid, patch) {

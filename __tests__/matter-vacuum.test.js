@@ -31,6 +31,9 @@ function createPlatform({
   appSegmentCleanByIds = jest.fn().mockResolvedValue(undefined),
   loadMultiMap = jest.fn().mockResolvedValue(undefined),
   getStatus = jest.fn().mockResolvedValue(undefined),
+  updateAccessoryState = jest.fn(async (uuid, cluster, attributes) => {
+    matterUpdates.push({ uuid, cluster, attributes });
+  }),
 } = {}) {
   return {
     platformConfig: {
@@ -44,9 +47,7 @@ function createPlatform({
       error: jest.fn(),
     },
     getMatterApi: () => ({
-      updateAccessoryState: jest.fn(async (uuid, cluster, attributes) => {
-        matterUpdates.push({ uuid, cluster, attributes });
-      }),
+      updateAccessoryState,
     }),
     roborockAPI: {
       getVacuumDeviceInfo: (duid, property) =>
@@ -133,6 +134,33 @@ describe("Matter getState", () => {
     expect(
       await accessory.getState("unknownCluster", "anything")
     ).toBeUndefined();
+  });
+});
+
+describe("Matter startup state updates", () => {
+  test("retries state refresh when Homebridge endpoint is still initializing", async () => {
+    jest.useFakeTimers();
+    const matterUpdates = [];
+    const updateAccessoryState = jest
+      .fn()
+      .mockRejectedValueOnce(new Error("uuid-1 is still initializing"))
+      .mockImplementation(async (uuid, cluster, attributes) => {
+        matterUpdates.push({ uuid, cluster, attributes });
+      });
+    const platform = createPlatform({ updateAccessoryState });
+    const { vacuum } = createAccessory(platform, true);
+
+    await vacuum.updateMatterStateFromRoborock();
+
+    expect(platform.log.debug).toHaveBeenCalledWith(
+      expect.stringContaining("endpoint is still initializing")
+    );
+    expect(matterUpdates.length).toBeGreaterThan(0);
+
+    await jest.advanceTimersByTimeAsync(1000);
+    await jest.advanceTimersByTimeAsync(0);
+
+    expect(updateAccessoryState.mock.calls.length).toBeGreaterThan(3);
   });
 });
 

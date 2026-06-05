@@ -198,6 +198,11 @@ export default class RoborockPlatform implements DynamicPlatformPlugin {
 
     self.roborockAPI.setDeviceNotify(function (id, homeData) {
       self.log.debug(`${id} notifyDeviceUpdater:${JSON.stringify(homeData)}`);
+      if (
+        typeof self.roborockAPI.recordRoborockDiagnosticMessage === "function"
+      ) {
+        self.roborockAPI.recordRoborockDiagnosticMessage(id, homeData);
+      }
 
       for (const vacuum of self.vacuums) {
         vacuum.notifyDeviceUpdater(id, homeData);
@@ -454,7 +459,7 @@ export default class RoborockPlatform implements DynamicPlatformPlugin {
 
     if (existingAccessory) {
       await matter.updatePlatformAccessories([accessory]);
-      await vacuum.updateMatterStateFromRoborock();
+      vacuum.scheduleMatterStateRefresh("cached accessory update", 1000);
       return;
     }
 
@@ -466,7 +471,7 @@ export default class RoborockPlatform implements DynamicPlatformPlugin {
     ]);
     this.matterAccessories.push(accessory);
     vacuum.markRegistered();
-    await vacuum.updateMatterStateFromRoborock();
+    vacuum.scheduleMatterStateRefresh("accessory registration", 1000);
   }
 
   private createMatterAccessory(device: any, deviceType: unknown): any {

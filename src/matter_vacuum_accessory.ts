@@ -197,6 +197,7 @@ const OPTIMISTIC_STATE_TTL_MS = 2 * 60 * 1000;
 const OPTIMISTIC_CONTRADICTION_LIMIT = 2;
 const SLOW_MATTER_COMMAND_MS = 3000;
 const MATTER_COMMAND_STATUS_REFRESH_DELAYS_MS = [2000, 15000] as const;
+const MATTER_INITIALIZATION_RETRY_DELAYS_MS = [1000, 3000, 10000] as const;
 
 /**
  * Optional Homebridge 2 Matter exposure for Apple Home's native vacuum UI.
@@ -215,6 +216,8 @@ export default class RoborockMatterVacuumAccessory {
   private selectedCleanModeNeedsApply = false;
   private lastVacuumFanPower: number | null = null;
   private lastWaterBoxMode: number | null = null;
+  private matterInitializationRetryAttempt = 0;
+  private matterInitializationRetryPending = false;
   // Freshest status values seen from live Roborock messages. Preferred over the
   // slower HomeData snapshot when rebuilding clusters so registration snapshots
   // and attribute reads do not lag behind the latest push.
@@ -255,6 +258,20 @@ export default class RoborockMatterVacuumAccessory {
 
   markRegistered(): void {
     this.registered = true;
+  }
+
+  scheduleMatterStateRefresh(reason: string, delayMs = 0): void {
+    if (!this.registered) {
+      return;
+    }
+
+    scheduleTimer(() => {
+      void this.updateMatterStateFromRoborock().catch((error) => {
+        this.platform.log.warn(
+          `Unable to refresh Matter state after ${reason} for ${this.getVacuumName()}: ${this.getErrorMessage(error)}`
+        );
+      });
+    }, delayMs);
   }
 
   updateMetadata(device: RoborockDevice): void {
@@ -316,11 +333,9 @@ export default class RoborockMatterVacuumAccessory {
       return;
     }
 
-    const clusters = this.buildClusters();
-    await Promise.all(
-      Object.entries(clusters).map(([cluster, attributes]) =>
-        matter.updateAccessoryState(this.accessory.UUID, cluster, attributes)
-      )
+    await this.updateMatterState(
+      this.buildClusters(),
+      "Roborock state refresh"
     );
   }
 
@@ -532,7 +547,7 @@ export default class RoborockMatterVacuumAccessory {
     }
 
     scheduleTimer(() => {
-      void this.updateMatterState(partialClusters).catch((error) => {
+      void this.updateMatterState(partialClusters, reason).catch((error) => {
         this.platform.log.warn(
           `Unable to update Matter state after ${reason} for ${this.getVacuumName()}: ${this.getErrorMessage(error)}`
         );
@@ -541,7 +556,8 @@ export default class RoborockMatterVacuumAccessory {
   }
 
   private async updateMatterState(
-    partialClusters: Record<string, Record<string, unknown>>
+    partialClusters: Record<string, Record<string, unknown>>,
+    reason = "state update"
   ): Promise<void> {
     if (!this.registered) {
       return;
@@ -552,11 +568,22 @@ export default class RoborockMatterVacuumAccessory {
       return;
     }
 
-    await Promise.all(
-      Object.entries(partialClusters).map(([cluster, attributes]) =>
-        matter.updateAccessoryState(this.accessory.UUID, cluster, attributes)
-      )
-    );
+    try {
+      await Promise.all(
+        Object.entries(partialClusters).map(([cluster, attributes]) =>
+          matter.updateAccessoryState(this.accessory.UUID, cluster, attributes)
+        )
+      );
+      this.matterInitializationRetryAttempt = 0;
+      this.matterInitializationRetryPending = false;
+    } catch (error) {
+      if (this.isMatterInitializingError(error)) {
+        this.scheduleMatterInitializationRetry(reason, error);
+        return;
+      }
+
+      throw error;
+    }
   }
 
   private async updateMatterStateFromMessage(data: unknown): Promise<void> {
@@ -1683,6 +1710,43 @@ export default class RoborockMatterVacuumAccessory {
 
   private isMatterCommandTimeoutError(error: unknown): boolean {
     return /timed out after \d+ seconds/.test(this.getErrorMessage(error));
+  }
+
+  private isMatterInitializingError(error: unknown): boolean {
+    return /\bis still initializing\b/i.test(this.getErrorMessage(error));
+  }
+
+  private scheduleMatterInitializationRetry(
+    reason: string,
+    error: unknown
+  ): void {
+    if (this.matterInitializationRetryPending) {
+      return;
+    }
+
+    const delayMs =
+      MATTER_INITIALIZATION_RETRY_DELAYS_MS[
+        this.matterInitializationRetryAttempt
+      ];
+    if (delayMs === undefined) {
+      this.platform.log.debug(
+        `Matter state update after ${reason} for ${this.getVacuumName()} is still waiting on Homebridge endpoint initialization; suppressing additional startup retries. Last error: ${this.getErrorMessage(error)}`
+      );
+      return;
+    }
+
+    this.matterInitializationRetryAttempt += 1;
+    this.matterInitializationRetryPending = true;
+    this.platform.log.debug(
+      `Matter state update after ${reason} for ${this.getVacuumName()} was delayed because Homebridge says the endpoint is still initializing; retrying in ${delayMs} ms.`
+    );
+
+    scheduleTimer(() => {
+      this.matterInitializationRetryPending = false;
+      this.scheduleMatterStateRefresh(
+        `endpoint initialization retry (${reason})`
+      );
+    }, delayMs);
   }
 
   private logMatterCommandDuration(action: string, startedAt: number): void {

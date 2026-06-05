@@ -163,4 +163,6 @@ Use **Test Local Connection** to run a live LAN TCP probe from the Homebridge en
 
 Use **Copy Diagnostic Report** when opening GitHub Issues. The copied report redacts tokens, local keys, full DUIDs, serial numbers, and the final local IP address octet while preserving the connection state and latest local test result needed for troubleshooting.
 
+The copied report also includes compact Roborock status diagnostics when available, including recent `get_status` values and recent live cloud/local status payloads. When debug logging is enabled, the plugin also captures compact `get_server_timer` and `get_timer` responses so schedule-related feature requests can be investigated without exposing credentials.
+
 The Homebridge log also records transport transitions in plain language, including local TCP connect/disconnect, cloud fallback reasons, local recovery, offline state, remote/shared devices, missing local credentials, and missing local IP discovery.

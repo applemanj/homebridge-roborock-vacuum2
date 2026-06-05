@@ -650,6 +650,42 @@ describe("Roborock API model and diagnostics helpers", () => {
     });
   });
 
+  test("Roborock diagnostics are compacted and persisted per device", async () => {
+    const api = createRoborock();
+
+    await api.updateRoborockDiagnostics("device-1", "lastTimer", {
+      localKey: "secret-local-key",
+      schedules: [{ id: 1, enabled: true, cron: "0 7 * * *" }],
+    });
+
+    expect(api.getRoborockDiagnostics()).toEqual({
+      "device-1": expect.objectContaining({
+        lastTimer: {
+          localKey: "[redacted]",
+          schedules: [{ id: 1, enabled: true, cron: "0 7 * * *" }],
+        },
+      }),
+    });
+  });
+
+  test("records scoped live Roborock messages in diagnostics", () => {
+    const api = createRoborock();
+
+    api.recordRoborockDiagnosticMessage("CloudMessage", {
+      duid: "device-1",
+      payload: [{ state: 18, in_cleaning: 3, map_status: 7 }],
+    });
+
+    expect(api.getRoborockDiagnostics()).toEqual({
+      "device-1": expect.objectContaining({
+        lastCloudMessage: expect.objectContaining({
+          source: "CloudMessage",
+          payload: [{ state: 18, in_cleaning: 3, map_status: 7 }],
+        }),
+      }),
+    });
+  });
+
   test("caches persisted state in memory after the first disk read", () => {
     const api = createRoborock();
     const persistPath = api.getPersistPath("HomeData");

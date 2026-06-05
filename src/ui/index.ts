@@ -263,9 +263,14 @@ class RoborockUiServer {
       const transportDiagnosticsState = this.readJsonFile(
         path.join(storagePath, "roborock.TransportDiagnostics")
       );
+      const roborockDiagnosticsState = this.readJsonFile(
+        path.join(storagePath, "roborock.RoborockDiagnostics")
+      );
       const homeData = this.parseStatePayload(homeDataState?.val);
       const transportDiagnostics =
         this.parseStatePayload(transportDiagnosticsState?.val) || {};
+      const roborockDiagnostics =
+        this.parseStatePayload(roborockDiagnosticsState?.val) || {};
 
       const products = Array.isArray(homeData?.products)
         ? homeData.products
@@ -290,6 +295,7 @@ class RoborockUiServer {
         const resolvedModel = deviceModel || productModel || "unknown";
         const localKey = this.firstNonEmptyString([device.localKey]);
         const transport = transportDiagnostics[device.duid] || {};
+        const roborockDiagnostic = roborockDiagnostics[device.duid] || {};
         const connection = this.describeConnectionState(
           device,
           transport,
@@ -318,6 +324,14 @@ class RoborockUiServer {
           lastTransportReason: transport.lastTransportReason || null,
           lastCommandMethod: transport.lastCommandMethod || null,
           transportUpdatedAt: transport.updatedAt || null,
+          roborockDiagnosticUpdatedAt: roborockDiagnostic.updatedAt || null,
+          lastStatusDiagnostic: roborockDiagnostic.lastStatus || null,
+          lastServerTimerDiagnostic: roborockDiagnostic.lastServerTimer || null,
+          lastTimerDiagnostic: roborockDiagnostic.lastTimer || null,
+          lastCloudMessageDiagnostic:
+            roborockDiagnostic.lastCloudMessage || null,
+          lastLocalMessageDiagnostic:
+            roborockDiagnostic.lastLocalMessage || null,
           homeDataSource:
             Array.isArray(homeData?.receivedDevices) &&
             homeData.receivedDevices.some(

@@ -637,12 +637,45 @@ function buildDiagnosticsReport(result) {
     lines.push(`  lastReason: ${device.lastTransportReason || "n/a"}`);
     lines.push(`  lastMethod: ${device.lastCommandMethod || "n/a"}`);
     lines.push(`  transportUpdatedAt: ${device.transportUpdatedAt || "n/a"}`);
+    lines.push(
+      `  roborockDiagnosticUpdatedAt: ${device.roborockDiagnosticUpdatedAt || "n/a"}`
+    );
+    appendRoborockDiagnosticReport(lines, device);
     lines.push("");
   });
 
   appendLocalTestReport(lines);
 
   return lines.join("\n").trim();
+}
+
+function appendRoborockDiagnosticReport(lines, device) {
+  const entries = [
+    ["lastStatus", device.lastStatusDiagnostic],
+    ["lastServerTimer", device.lastServerTimerDiagnostic],
+    ["lastTimer", device.lastTimerDiagnostic],
+    ["lastCloudMessage", device.lastCloudMessageDiagnostic],
+    ["lastLocalMessage", device.lastLocalMessageDiagnostic],
+  ].filter(([, value]) => value !== null && value !== undefined);
+
+  if (entries.length === 0) {
+    return;
+  }
+
+  lines.push("  roborockDiagnostics:");
+  for (const [label, value] of entries) {
+    lines.push(`    ${label}: ${formatDiagnosticPayload(value)}`);
+  }
+}
+
+function formatDiagnosticPayload(value) {
+  try {
+    const text = JSON.stringify(value);
+    const masked = maskLocalIpsInText(text);
+    return masked.length > 1500 ? `${masked.slice(0, 1500)}...` : masked;
+  } catch {
+    return "unavailable";
+  }
 }
 
 function appendLocalTestReport(lines) {
