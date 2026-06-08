@@ -4,8 +4,11 @@ const { setTimeout: realSetTimeout } = require("node:timers");
 
 const RUN_MODE_IDLE = 0;
 const RUN_MODE_CLEANING = 1;
+const RVC_OPERATIONAL_STATE_STOPPED = 0;
+const RVC_OPERATIONAL_STATE_RUNNING = 1;
 const RVC_OPERATIONAL_STATE_SEEKING_CHARGER = 64;
-const RVC_OPERATIONAL_STATE_CHARGING = 65;
+const RVC_OPERATIONAL_PHASE_PRIMARY = 0;
+const RVC_OPERATIONAL_PHASE_REFRESH = 1;
 
 function flush() {
   return new Promise((resolve) => realSetTimeout(resolve, 0));
@@ -17,6 +20,10 @@ afterEach(() => {
 
 function createPlatform({
   enableMatter = true,
+  enableMatterServiceArea = true,
+  enableMatterPowerSource = true,
+  enableMatterCleanMode = true,
+  enableMatterExtendedOperationalStates = false,
   preferCloudForMatterCommands = false,
   capabilities = { canVacuum: true, canMop: false },
   rooms = [],
@@ -29,6 +36,7 @@ function createPlatform({
   appStop = jest.fn().mockResolvedValue(undefined),
   appPause = jest.fn().mockResolvedValue(undefined),
   appSegmentCleanByIds = jest.fn().mockResolvedValue(undefined),
+  findMe = jest.fn().mockResolvedValue(undefined),
   loadMultiMap = jest.fn().mockResolvedValue(undefined),
   getStatus = jest.fn().mockResolvedValue(undefined),
   updateAccessoryState = jest.fn(async (uuid, cluster, attributes) => {
@@ -38,6 +46,10 @@ function createPlatform({
   return {
     platformConfig: {
       enableMatter,
+      enableMatterServiceArea,
+      enableMatterPowerSource,
+      enableMatterCleanMode,
+      enableMatterExtendedOperationalStates,
       preferCloudForMatterCommands,
     },
     log: {
@@ -63,6 +75,7 @@ function createPlatform({
       app_stop: appStop,
       app_pause: appPause,
       app_charge: appCharge,
+      find_me: findMe,
       app_segment_clean_by_ids: appSegmentCleanByIds,
       load_multi_map: loadMultiMap,
       getStatus,
@@ -82,6 +95,35 @@ function createAccessory(platform, isRegistered = false) {
 }
 
 describe("Matter clean mode capabilities", () => {
+  test("is exposed by default", () => {
+    const platform = createPlatform();
+    const { accessory } = createAccessory(platform);
+
+    expect(accessory.clusters.rvcCleanMode).toBeDefined();
+    expect(accessory.handlers.rvcCleanMode).toBeDefined();
+  });
+
+  test("can be disabled independently for controller compatibility", async () => {
+    const matterUpdates = [];
+    const platform = createPlatform({
+      enableMatterCleanMode: false,
+      matterUpdates,
+    });
+    const { accessory, vacuum } = createAccessory(platform, true);
+
+    expect(accessory.clusters.rvcCleanMode).toBeUndefined();
+    expect(accessory.handlers.rvcCleanMode).toBeUndefined();
+    expect(await accessory.getState("rvcCleanMode", "supportedModes")).toBe(
+      undefined
+    );
+
+    await vacuum.notifyDeviceUpdater("LocalMessage", [{ state: 8 }]);
+
+    expect(
+      matterUpdates.some((update) => update.cluster === "rvcCleanMode")
+    ).toBe(false);
+  });
+
   test("represents Vacuum + Mop with the two standard RVC clean mode tags", () => {
     const platform = createPlatform({
       capabilities: {
@@ -138,6 +180,273 @@ describe("Matter getState", () => {
 });
 
 describe("Matter startup state updates", () => {
+  test("refreshes live state without synthetic identify pulses", async () => {
+    const matterUpdates = [];
+    const platform = createPlatform({ matterUpdates });
+    const { vacuum } = createAccessory(platform, true);
+
+    await vacuum.notifyDeviceUpdater("LocalMessage", [
+      { state: 5, battery: 100 },
+    ]);
+    expect(matterUpdates.some((update) => update.cluster === "identify")).toBe(
+      false
+    );
+    expect(
+      matterUpdates.find((update) => update.cluster === "rvcRunMode").attributes
+        .currentMode
+    ).toBe(RUN_MODE_CLEANING);
+
+    matterUpdates.length = 0;
+    await vacuum.notifyDeviceUpdater("LocalMessage", [
+      { state: 8, battery: 100, charge_status: 1 },
+    ]);
+
+    expect(matterUpdates.some((update) => update.cluster === "identify")).toBe(
+      false
+    );
+    expect(
+      matterUpdates.find((update) => update.cluster === "rvcOperationalState")
+        .attributes.operationalState
+    ).toBe(RVC_OPERATIONAL_STATE_STOPPED);
+  });
+
+  test("uses dynamic-only payloads for ordinary Roborock state refreshes", async () => {
+    const matterUpdates = [];
+    const platform = createPlatform({
+      matterUpdates,
+      status: { state: 8, battery: 100 },
+    });
+    const { vacuum } = createAccessory(platform, true);
+
+    await vacuum.updateMatterStateFromRoborock();
+
+    const runModeUpdate = matterUpdates.find(
+      (update) => update.cluster === "rvcRunMode"
+    );
+    const operationalUpdate = matterUpdates.find(
+      (update) => update.cluster === "rvcOperationalState"
+    );
+
+    expect(runModeUpdate.attributes).toEqual({ currentMode: RUN_MODE_IDLE });
+    expect(operationalUpdate.attributes).not.toHaveProperty(
+      "operationalStateList"
+    );
+    expect(operationalUpdate.attributes).not.toHaveProperty("countdownTime");
+    expect(operationalUpdate.attributes.operationalState).toBe(
+      RVC_OPERATIONAL_STATE_STOPPED
+    );
+  });
+
+  test("refreshes active Roborock snapshots without synthetic identify pulses", async () => {
+    const matterUpdates = [];
+    const platform = createPlatform({
+      matterUpdates,
+      status: { state: 5, battery: 99, charge_status: 0 },
+    });
+    const { vacuum } = createAccessory(platform, true);
+
+    await vacuum.updateMatterStateFromRoborock();
+
+    expect(matterUpdates.some((update) => update.cluster === "identify")).toBe(
+      false
+    );
+    expect(
+      matterUpdates.find((update) => update.cluster === "rvcOperationalState")
+        .attributes.operationalState
+    ).toBe(RVC_OPERATIONAL_STATE_RUNNING);
+    expect(
+      matterUpdates.find((update) => update.cluster === "rvcOperationalState")
+        .attributes.currentPhase
+    ).toBe(RVC_OPERATIONAL_PHASE_PRIMARY);
+  });
+
+  test("skips unchanged Matter state refreshes", async () => {
+    const matterUpdates = [];
+    const platform = createPlatform({
+      enableMatterCleanMode: false,
+      enableMatterPowerSource: false,
+      enableMatterServiceArea: false,
+      matterUpdates,
+      status: { state: 8, battery: 100 },
+    });
+    const { vacuum } = createAccessory(platform, true);
+
+    await vacuum.updateMatterStateFromRoborock();
+    expect(matterUpdates.length).toBeGreaterThan(0);
+
+    matterUpdates.length = 0;
+    await vacuum.updateMatterStateFromRoborock();
+
+    expect(matterUpdates).toEqual([]);
+  });
+
+  test("keeps unchanged docked ready state quiet without a background heartbeat", async () => {
+    jest.useFakeTimers();
+    const matterUpdates = [];
+    const platform = createPlatform({
+      enableMatterCleanMode: false,
+      enableMatterPowerSource: false,
+      enableMatterServiceArea: false,
+      matterUpdates,
+      status: { state: 8, battery: 100, charge_status: 1 },
+    });
+    const { vacuum } = createAccessory(platform, true);
+
+    await vacuum.updateMatterStateFromRoborock();
+    expect(matterUpdates.length).toBeGreaterThan(0);
+    await jest.advanceTimersByTimeAsync(1200);
+
+    matterUpdates.length = 0;
+    await vacuum.updateMatterStateFromRoborock();
+    expect(matterUpdates).toEqual([]);
+
+    await jest.advanceTimersByTimeAsync(5000);
+
+    expect(matterUpdates).toEqual([]);
+  });
+
+  test("publishes cached active state on a lightweight background heartbeat", async () => {
+    jest.useFakeTimers();
+    const matterUpdates = [];
+    const platform = createPlatform({
+      enableMatterCleanMode: false,
+      enableMatterPowerSource: false,
+      enableMatterServiceArea: false,
+      matterUpdates,
+      status: { state: 8, battery: 100, charge_status: 1 },
+    });
+    const { vacuum } = createAccessory(platform, true);
+
+    await vacuum.notifyDeviceUpdater("LocalMessage", [
+      { state: 5, battery: 99, charge_status: 0 },
+    ]);
+    expect(matterUpdates.length).toBeGreaterThan(0);
+    await jest.advanceTimersByTimeAsync(1200);
+
+    matterUpdates.length = 0;
+    await vacuum.notifyDeviceUpdater("LocalMessage", [
+      { state: 5, battery: 99, charge_status: 0 },
+    ]);
+    expect(matterUpdates).toEqual([]);
+
+    await jest.advanceTimersByTimeAsync(5000);
+
+    expect(
+      matterUpdates.find((update) => update.cluster === "rvcRunMode").attributes
+        .currentMode
+    ).toBe(RUN_MODE_CLEANING);
+    expect(
+      matterUpdates.find((update) => update.cluster === "rvcOperationalState")
+        .attributes.operationalState
+    ).toBe(RVC_OPERATIONAL_STATE_RUNNING);
+    expect(
+      matterUpdates.find((update) => update.cluster === "rvcOperationalState")
+        .attributes.currentPhase
+    ).toBe(RVC_OPERATIONAL_PHASE_REFRESH);
+    expect(matterUpdates.some((update) => update.cluster === "identify")).toBe(
+      false
+    );
+  });
+
+  test("refreshes docked ready state without pulsing identify when HomeKit reads the accessory", async () => {
+    jest.useFakeTimers();
+    const matterUpdates = [];
+    const platform = createPlatform({
+      enableMatterCleanMode: false,
+      enableMatterPowerSource: false,
+      enableMatterServiceArea: false,
+      matterUpdates,
+      status: { state: 8, battery: 100, charge_status: 1 },
+    });
+    const { accessory } = createAccessory(platform, true);
+
+    expect(
+      await accessory.getState("rvcOperationalState", "operationalState")
+    ).toBe(RVC_OPERATIONAL_STATE_STOPPED);
+
+    await jest.advanceTimersByTimeAsync(0);
+
+    expect(
+      matterUpdates.find((update) => update.cluster === "rvcRunMode").attributes
+        .currentMode
+    ).toBe(RUN_MODE_IDLE);
+    expect(
+      matterUpdates.find((update) => update.cluster === "rvcOperationalState")
+        .attributes.operationalState
+    ).toBe(RVC_OPERATIONAL_STATE_STOPPED);
+    expect(
+      matterUpdates.find((update) => update.cluster === "rvcOperationalState")
+        .attributes.currentPhase
+    ).toBe(RVC_OPERATIONAL_PHASE_REFRESH);
+    expect(matterUpdates.some((update) => update.cluster === "identify")).toBe(
+      false
+    );
+  });
+
+  test("refreshes active state without identify when HomeKit reads the accessory", async () => {
+    jest.useFakeTimers();
+    const matterUpdates = [];
+    const platform = createPlatform({
+      enableMatterCleanMode: false,
+      enableMatterPowerSource: false,
+      enableMatterServiceArea: false,
+      matterUpdates,
+      status: { state: 5, battery: 95, charge_status: 0 },
+    });
+    const { accessory } = createAccessory(platform, true);
+
+    expect(
+      await accessory.getState("rvcOperationalState", "operationalState")
+    ).toBe(RVC_OPERATIONAL_STATE_RUNNING);
+
+    await jest.advanceTimersByTimeAsync(0);
+
+    expect(
+      matterUpdates.find((update) => update.cluster === "rvcRunMode").attributes
+        .currentMode
+    ).toBe(RUN_MODE_CLEANING);
+    expect(
+      matterUpdates.find((update) => update.cluster === "rvcOperationalState")
+        .attributes.operationalState
+    ).toBe(RVC_OPERATIONAL_STATE_RUNNING);
+    expect(
+      matterUpdates.find((update) => update.cluster === "rvcOperationalState")
+        .attributes.currentPhase
+    ).toBe(RVC_OPERATIONAL_PHASE_REFRESH);
+    expect(matterUpdates.some((update) => update.cluster === "identify")).toBe(
+      false
+    );
+
+    matterUpdates.length = 0;
+    await accessory.getState("rvcRunMode", "currentMode");
+    await jest.advanceTimersByTimeAsync(0);
+
+    expect(matterUpdates).toEqual([]);
+  });
+
+  test("uses dynamic-only room mapping refreshes when service area is disabled", async () => {
+    const matterUpdates = [];
+    const platform = createPlatform({
+      enableMatterServiceArea: false,
+      matterUpdates,
+      status: { state: 8, battery: 100 },
+    });
+    const { vacuum } = createAccessory(platform, true);
+
+    await vacuum.notifyDeviceUpdater("RoomMapping", [
+      [16, "668010"],
+      [17, "668002"],
+    ]);
+
+    const operationalUpdate = matterUpdates.find(
+      (update) => update.cluster === "rvcOperationalState"
+    );
+
+    expect(operationalUpdate.attributes).not.toHaveProperty(
+      "operationalStateList"
+    );
+  });
+
   test("retries state refresh when Homebridge endpoint is still initializing", async () => {
     jest.useFakeTimers();
     const matterUpdates = [];
@@ -164,8 +473,49 @@ describe("Matter startup state updates", () => {
   });
 });
 
+describe("Matter identify", () => {
+  test("routes Locate/Identify to the Roborock find_me command", async () => {
+    const matterUpdates = [];
+    const findMe = jest.fn().mockResolvedValue(undefined);
+    const platform = createPlatform({
+      findMe,
+      matterUpdates,
+      status: { state: 8, battery: 100, charge_status: 1 },
+    });
+    const { accessory } = createAccessory(platform, true);
+
+    await accessory.handlers.identify.identify();
+
+    expect(findMe).toHaveBeenCalledWith("device-1", {
+      waitForResult: true,
+      preferLocal: true,
+      allowOfflineCloudSend: true,
+    });
+    expect(
+      matterUpdates.filter((update) => update.cluster === "rvcOperationalState")
+        .length
+    ).toBeGreaterThanOrEqual(1);
+    expect(matterUpdates.some((update) => update.cluster === "identify")).toBe(
+      false
+    );
+  });
+
+  test("keeps Identify successful when find_me fails", async () => {
+    const findMe = jest.fn().mockRejectedValue(new Error("not supported"));
+    const platform = createPlatform({ findMe });
+    const { accessory } = createAccessory(platform, true);
+
+    await expect(accessory.handlers.identify.identify()).resolves.toBe(
+      undefined
+    );
+    expect(platform.log.warn).toHaveBeenCalledWith(
+      expect.stringContaining("Unable to locate")
+    );
+  });
+});
+
 describe("Matter service area selection", () => {
-  test("is exposed whenever Matter is enabled", () => {
+  test("is exposed by default when Matter is enabled", () => {
     const platform = createPlatform({
       rooms: [{ segmentId: 16, mapId: 0, name: "Kitchen" }],
       maps: [{ mapId: 0, name: "Lower Level" }],
@@ -174,6 +524,18 @@ describe("Matter service area selection", () => {
 
     expect(accessory.clusters.serviceArea).toBeDefined();
     expect(accessory.handlers.serviceArea).toBeDefined();
+  });
+
+  test("can be disabled independently for controller compatibility", () => {
+    const platform = createPlatform({
+      enableMatterServiceArea: false,
+      rooms: [{ segmentId: 16, mapId: 0, name: "Kitchen" }],
+      maps: [{ mapId: 0, name: "Lower Level" }],
+    });
+    const { accessory } = createAccessory(platform, true);
+
+    expect(accessory.clusters.serviceArea).toBeUndefined();
+    expect(accessory.handlers.serviceArea).toBeUndefined();
   });
 
   test("rejects selections spanning multiple maps with INVALID_SET", async () => {
@@ -242,9 +604,12 @@ describe("Matter service area selection", () => {
     expect(loadMultiMap).toHaveBeenCalledWith("device-1", 0, {
       waitForResult: true,
       preferCloud: true,
+      allowOfflineCloudSend: true,
     });
     expect(appSegmentCleanByIds).toHaveBeenCalledWith("device-1", [16], {
       waitForResult: true,
+      preferLocal: true,
+      allowOfflineCloudSend: true,
     });
   });
 
@@ -278,6 +643,8 @@ describe("Matter service area selection", () => {
 
     expect(appSegmentCleanByIds).toHaveBeenCalledWith("device-1", [16], {
       waitForResult: true,
+      preferLocal: true,
+      allowOfflineCloudSend: true,
     });
     expect(platform.log.warn).toHaveBeenCalledWith(
       expect.stringContaining(
@@ -302,15 +669,57 @@ describe("Matter operational state", () => {
     }
   });
 
-  test("maps Roborock dock/maintenance states to their operational state IDs", () => {
+  test("uses only basic operational states by default for Apple Home compatibility", () => {
+    const platform = createPlatform();
+    const { accessory } = createAccessory(platform);
+
+    const list = accessory.clusters.rvcOperationalState.operationalStateList;
+
+    expect(list.map((entry) => entry.operationalStateId)).toEqual([0, 1, 2, 3]);
+  });
+
+  test("adds only Returning when extended operational states are enabled", () => {
+    const platform = createPlatform({
+      enableMatterExtendedOperationalStates: true,
+    });
+    const { accessory } = createAccessory(platform);
+
+    const list = accessory.clusters.rvcOperationalState.operationalStateList;
+
+    expect(list.map((entry) => entry.operationalStateId)).toEqual([
+      0,
+      1,
+      2,
+      3,
+      RVC_OPERATIONAL_STATE_SEEKING_CHARGER,
+    ]);
+  });
+
+  test("includes required phase attributes for Matter compatibility", () => {
+    const platform = createPlatform();
+    const { accessory } = createAccessory(platform);
+
+    expect(accessory.clusters.rvcOperationalState.phaseList).toEqual([
+      "State",
+      "State",
+    ]);
+    expect(accessory.clusters.rvcOperationalState.currentPhase).toBe(
+      RVC_OPERATIONAL_PHASE_PRIMARY
+    );
+  });
+
+  test("maps Roborock maintenance states to running for Apple Home compatibility", () => {
     const cases = [
-      { state: 22, expected: 67 }, // emptying dust container
-      { state: 23, expected: 68 }, // washing the mop
-      { state: 29, expected: 70 }, // mapping
+      { state: 22, expected: RVC_OPERATIONAL_STATE_RUNNING }, // emptying dust container
+      { state: 23, expected: RVC_OPERATIONAL_STATE_RUNNING }, // washing the mop
+      { state: 29, expected: RVC_OPERATIONAL_STATE_RUNNING }, // mapping
     ];
 
     for (const { state, expected } of cases) {
-      const platform = createPlatform({ status: { state } });
+      const platform = createPlatform({
+        enableMatterExtendedOperationalStates: true,
+        status: { state },
+      });
       const { accessory } = createAccessory(platform);
       expect(accessory.clusters.rvcOperationalState.operationalState).toBe(
         expected
@@ -318,8 +727,31 @@ describe("Matter operational state", () => {
     }
   });
 
-  test("keeps Matter run mode active while Roborock is returning to dock", () => {
+  test("maps returning to stopped when extended states are disabled", () => {
     const platform = createPlatform({ status: { state: 6, battery: 100 } });
+    const { accessory } = createAccessory(platform);
+
+    expect(accessory.clusters.rvcRunMode.currentMode).toBe(RUN_MODE_IDLE);
+    expect(accessory.clusters.rvcOperationalState.operationalState).toBe(
+      RVC_OPERATIONAL_STATE_STOPPED
+    );
+  });
+
+  test("maps charging to stopped when extended states are disabled", () => {
+    const platform = createPlatform({ status: { state: 8, battery: 100 } });
+    const { accessory } = createAccessory(platform);
+
+    expect(accessory.clusters.rvcRunMode.currentMode).toBe(RUN_MODE_IDLE);
+    expect(accessory.clusters.rvcOperationalState.operationalState).toBe(
+      RVC_OPERATIONAL_STATE_STOPPED
+    );
+  });
+
+  test("keeps Matter run mode active while Roborock is returning to dock when extended states are enabled", () => {
+    const platform = createPlatform({
+      enableMatterExtendedOperationalStates: true,
+      status: { state: 6, battery: 100 },
+    });
     const { accessory } = createAccessory(platform);
 
     expect(accessory.clusters.rvcRunMode.currentMode).toBe(RUN_MODE_CLEANING);
@@ -328,29 +760,43 @@ describe("Matter operational state", () => {
     );
   });
 
-  test("returns Matter run mode to idle once Roborock reports charging", () => {
-    const platform = createPlatform({ status: { state: 8, battery: 100 } });
+  test("keeps charging stopped when extended returning state is enabled", () => {
+    const platform = createPlatform({
+      enableMatterExtendedOperationalStates: true,
+      status: { state: 8, battery: 100 },
+    });
     const { accessory } = createAccessory(platform);
 
     expect(accessory.clusters.rvcRunMode.currentMode).toBe(RUN_MODE_IDLE);
     expect(accessory.clusters.rvcOperationalState.operationalState).toBe(
-      RVC_OPERATIONAL_STATE_CHARGING
+      RVC_OPERATIONAL_STATE_STOPPED
     );
   });
 
   test("forces follow-up status refreshes after returning to dock", async () => {
     jest.useFakeTimers();
+    const matterUpdates = [];
     const appCharge = jest.fn().mockResolvedValue(undefined);
     const getStatus = jest.fn().mockResolvedValue(undefined);
-    const platform = createPlatform({ appCharge, getStatus });
+    const platform = createPlatform({ appCharge, getStatus, matterUpdates });
     const { accessory } = createAccessory(platform, true);
 
     await accessory.handlers.rvcOperationalState.goHome();
-    await Promise.resolve();
+    await jest.advanceTimersByTimeAsync(0);
 
     expect(appCharge).toHaveBeenCalledWith("device-1", {
       waitForResult: true,
+      preferLocal: true,
+      allowOfflineCloudSend: true,
     });
+    expect(
+      matterUpdates.find((update) => update.cluster === "rvcRunMode").attributes
+        .currentMode
+    ).toBe(RUN_MODE_IDLE);
+    expect(
+      matterUpdates.find((update) => update.cluster === "rvcOperationalState")
+        .attributes.operationalState
+    ).toBe(RVC_OPERATIONAL_STATE_STOPPED);
     expect(getStatus).not.toHaveBeenCalled();
 
     await jest.advanceTimersByTimeAsync(2000);
@@ -358,6 +804,67 @@ describe("Matter operational state", () => {
 
     await jest.advanceTimersByTimeAsync(13000);
     expect(getStatus).toHaveBeenCalledTimes(2);
+
+    await jest.advanceTimersByTimeAsync(165000);
+    expect(getStatus).toHaveBeenCalledTimes(8);
+  });
+
+  test("does not send a dock command when already docked", async () => {
+    const matterUpdates = [];
+    const appCharge = jest.fn().mockResolvedValue(undefined);
+    const platform = createPlatform({
+      enableMatterCleanMode: false,
+      enableMatterPowerSource: false,
+      enableMatterServiceArea: false,
+      appCharge,
+      matterUpdates,
+      status: { state: 8, battery: 100, charge_status: 1 },
+    });
+    const { accessory } = createAccessory(platform, true);
+
+    await accessory.handlers.rvcOperationalState.goHome();
+
+    expect(appCharge).not.toHaveBeenCalled();
+    expect(
+      matterUpdates.find((update) => update.cluster === "rvcRunMode").attributes
+        .currentMode
+    ).toBe(RUN_MODE_IDLE);
+    expect(
+      matterUpdates.find((update) => update.cluster === "rvcOperationalState")
+        .attributes.operationalState
+    ).toBe(RVC_OPERATIONAL_STATE_STOPPED);
+    expect(platform.log.info).toHaveBeenCalledWith(
+      expect.stringContaining("already docked or charging")
+    );
+  });
+
+  test("does not publish paused or send pause when already docked", async () => {
+    const matterUpdates = [];
+    const appPause = jest.fn().mockResolvedValue(undefined);
+    const platform = createPlatform({
+      enableMatterCleanMode: false,
+      enableMatterPowerSource: false,
+      enableMatterServiceArea: false,
+      appPause,
+      matterUpdates,
+      status: { state: 8, battery: 100, charge_status: 1 },
+    });
+    const { accessory } = createAccessory(platform, true);
+
+    await accessory.handlers.rvcOperationalState.pause();
+
+    expect(appPause).not.toHaveBeenCalled();
+    expect(
+      matterUpdates.find((update) => update.cluster === "rvcOperationalState")
+        .attributes.operationalState
+    ).toBe(RVC_OPERATIONAL_STATE_STOPPED);
+    expect(
+      matterUpdates.some(
+        (update) =>
+          update.cluster === "rvcOperationalState" &&
+          update.attributes.operationalState === 2
+      )
+    ).toBe(false);
   });
 
   test("passes cloud preference through Matter commands when enabled", async () => {
@@ -376,6 +883,7 @@ describe("Matter operational state", () => {
     expect(appStart).toHaveBeenCalledWith("device-1", {
       waitForResult: true,
       preferCloud: true,
+      allowOfflineCloudSend: true,
     });
   });
 
@@ -401,15 +909,48 @@ describe("Matter operational state", () => {
   });
 });
 
+describe("Matter power source", () => {
+  test("is exposed by default", () => {
+    const platform = createPlatform({ status: { state: 8, battery: 100 } });
+    const { accessory } = createAccessory(platform);
+
+    expect(accessory.clusters.powerSource).toBeDefined();
+  });
+
+  test("can be disabled independently for controller compatibility", async () => {
+    const matterUpdates = [];
+    const platform = createPlatform({
+      enableMatterPowerSource: false,
+      matterUpdates,
+      status: { state: 8, battery: 100 },
+    });
+    const { accessory, vacuum } = createAccessory(platform, true);
+
+    expect(accessory.clusters.powerSource).toBeUndefined();
+    expect(await accessory.getState("powerSource", "batPercentRemaining")).toBe(
+      undefined
+    );
+
+    await vacuum.notifyDeviceUpdater("LocalMessage", [
+      { state: 8, battery: 100 },
+    ]);
+
+    expect(
+      matterUpdates.some((update) => update.cluster === "powerSource")
+    ).toBe(false);
+  });
+});
+
 describe("Matter live status cache", () => {
   test("prefers the freshest live message value over the HomeData snapshot", async () => {
-    // HomeData reports the vacuum docked/charging (state 8 -> CHARGING).
+    // HomeData reports the vacuum docked/charging (state 8 -> STOPPED in the
+    // Apple-safe default mode).
     const platform = createPlatform({ status: { state: 8, battery: 50 } });
     const { accessory, vacuum } = createAccessory(platform, true);
 
     expect(
       await accessory.getState("rvcOperationalState", "operationalState")
-    ).toBe(RVC_OPERATIONAL_STATE_CHARGING);
+    ).toBe(RVC_OPERATIONAL_STATE_STOPPED);
 
     // A live message says it is now cleaning (state 5 -> RUNNING).
     await vacuum.notifyDeviceUpdater("LocalMessage", [
@@ -432,7 +973,7 @@ describe("Matter live status cache", () => {
 
     expect(
       await accessory.getState("rvcOperationalState", "operationalState")
-    ).toBe(RVC_OPERATIONAL_STATE_CHARGING);
+    ).toBe(RVC_OPERATIONAL_STATE_STOPPED);
 
     await vacuum.notifyDeviceUpdater("CloudMessage", {
       duid: "device-1",
@@ -442,6 +983,46 @@ describe("Matter live status cache", () => {
     expect(
       await accessory.getState("rvcOperationalState", "operationalState")
     ).toBe(1); // RUNNING
+  });
+
+  test("lets a newer HomeData docked snapshot replace a stale live cleaning state", async () => {
+    const matterUpdates = [];
+    const platform = createPlatform({
+      matterUpdates,
+      status: { state: 8, battery: 100 },
+    });
+    const { accessory, vacuum } = createAccessory(platform, true);
+
+    await vacuum.notifyDeviceUpdater("LocalMessage", [
+      { state: 5, battery: 100 },
+    ]);
+    expect(
+      await accessory.getState("rvcOperationalState", "operationalState")
+    ).toBe(RVC_OPERATIONAL_STATE_RUNNING);
+
+    matterUpdates.length = 0;
+    await vacuum.notifyDeviceUpdater("HomeData", {
+      val: JSON.stringify({
+        devices: [
+          {
+            duid: "device-1",
+            deviceStatus: { state: "8", battery: "100" },
+          },
+        ],
+      }),
+    });
+
+    expect(
+      matterUpdates.find((update) => update.cluster === "rvcRunMode").attributes
+        .currentMode
+    ).toBe(RUN_MODE_IDLE);
+    expect(
+      matterUpdates.find((update) => update.cluster === "rvcOperationalState")
+        .attributes.operationalState
+    ).toBe(RVC_OPERATIONAL_STATE_STOPPED);
+    expect(
+      await accessory.getState("rvcOperationalState", "operationalState")
+    ).toBe(RVC_OPERATIONAL_STATE_STOPPED);
   });
 });
 
@@ -466,7 +1047,7 @@ describe("Matter optimistic state", () => {
       matterUpdates.find((update) => update.cluster === "rvcOperationalState")
     ).toBeUndefined();
 
-    // Second contradicting update is trusted: the real charging state is pushed.
+    // Second contradicting update is trusted: the real stopped/docked state is pushed.
     matterUpdates.length = 0;
     await vacuum.notifyDeviceUpdater("LocalMessage", chargingMessage);
     const operationalUpdate = matterUpdates.find(
@@ -474,7 +1055,7 @@ describe("Matter optimistic state", () => {
     );
     expect(operationalUpdate).toBeDefined();
     expect(operationalUpdate.attributes.operationalState).toBe(
-      RVC_OPERATIONAL_STATE_CHARGING
+      RVC_OPERATIONAL_STATE_STOPPED
     );
   });
 
@@ -511,5 +1092,92 @@ describe("Matter optimistic state", () => {
       expect.stringContaining("Keeping the optimistic Matter state")
     );
     expect(getStatus).not.toHaveBeenCalled();
+  });
+
+  test("does not let a stale optimistic update override hard command failure recovery", async () => {
+    jest.useFakeTimers();
+    const matterUpdates = [];
+    const appStart = jest
+      .fn()
+      .mockRejectedValue(new Error("Device device-1 is offline."));
+    const platform = createPlatform({
+      appStart,
+      matterUpdates,
+      status: { state: 8, battery: 100, charge_status: 1 },
+    });
+    const { vacuum } = createAccessory(platform, true);
+
+    await vacuum.accessory.handlers.rvcRunMode.changeToMode({
+      newMode: RUN_MODE_CLEANING,
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const recoveredOperationalUpdates = matterUpdates.filter(
+      (update) => update.cluster === "rvcOperationalState"
+    );
+    expect(recoveredOperationalUpdates.at(-1).attributes.operationalState).toBe(
+      RVC_OPERATIONAL_STATE_STOPPED
+    );
+
+    await jest.advanceTimersByTimeAsync(0);
+
+    const finalOperationalUpdates = matterUpdates.filter(
+      (update) => update.cluster === "rvcOperationalState"
+    );
+    expect(finalOperationalUpdates.at(-1).attributes.operationalState).toBe(
+      RVC_OPERATIONAL_STATE_STOPPED
+    );
+    expect(platform.log.debug).toHaveBeenCalledWith(
+      expect.stringContaining("Skipping stale Matter optimistic state update")
+    );
+  });
+
+  test("keeps return-to-dock active until Roborock reports docked", async () => {
+    jest.useFakeTimers();
+    const matterUpdates = [];
+    const platform = createPlatform({
+      enableMatterExtendedOperationalStates: true,
+      matterUpdates,
+      status: { state: 5, battery: 100 },
+    });
+    const { vacuum } = createAccessory(platform, true);
+
+    await vacuum.accessory.handlers.rvcOperationalState.goHome();
+    await Promise.resolve();
+    await jest.advanceTimersByTimeAsync(0);
+
+    expect(
+      matterUpdates.find((update) => update.cluster === "rvcRunMode").attributes
+        .currentMode
+    ).toBe(RUN_MODE_CLEANING);
+    expect(
+      matterUpdates.find((update) => update.cluster === "rvcOperationalState")
+        .attributes.operationalState
+    ).toBe(RVC_OPERATIONAL_STATE_SEEKING_CHARGER);
+
+    matterUpdates.length = 0;
+    await vacuum.notifyDeviceUpdater("LocalMessage", [
+      { state: 6, battery: 100, charge_status: 0 },
+    ]);
+
+    expect(
+      await vacuum.accessory.getState("rvcOperationalState", "operationalState")
+    ).toBe(RVC_OPERATIONAL_STATE_SEEKING_CHARGER);
+
+    matterUpdates.length = 0;
+    await vacuum.notifyDeviceUpdater("LocalMessage", [
+      { state: 8, battery: 100, charge_status: 1 },
+    ]);
+
+    expect(
+      matterUpdates.find((update) => update.cluster === "rvcRunMode").attributes
+        .currentMode
+    ).toBe(RUN_MODE_IDLE);
+    expect(
+      matterUpdates.find((update) => update.cluster === "rvcOperationalState")
+        .attributes.operationalState
+    ).toBe(RVC_OPERATIONAL_STATE_STOPPED);
+    jest.clearAllTimers();
   });
 });

@@ -45,6 +45,9 @@ function createAdapter(mappedRooms, multiMapResponse = []) {
         features: {
           getConsumablesDivider: jest.fn(),
           getStatusDivider: jest.fn(),
+          hasDeviceStatusAttribute: jest.fn((attribute) =>
+            ["state", "battery", "map_status"].includes(attribute)
+          ),
           processDockType: jest.fn(),
           getFirmwareFeature: jest.fn(),
         },
@@ -176,6 +179,39 @@ describe("vacuum room mapping", () => {
       false,
       false,
       { preferCloud: true }
+    );
+  });
+
+  test("keeps known get_status fields quiet when their Homebridge object is missing", async () => {
+    const adapter = createAdapter([]);
+    adapter.getObjectAsync.mockResolvedValue(null);
+    adapter.messageQueueHandler.sendRequest.mockImplementation(
+      (duid, method) => {
+        if (method === "get_prop") {
+          return Promise.resolve([
+            { state: 8, battery: 100, unexpected_status: "new-value" },
+          ]);
+        }
+        return Promise.resolve([]);
+      }
+    );
+    const robot = new vacuum(adapter, "roborock.vacuum.a08");
+
+    await robot.getParameter("device-1", "get_status", "force");
+
+    expect(adapter.log.warn).toHaveBeenCalledTimes(1);
+    expect(adapter.log.warn).toHaveBeenCalledWith(
+      expect.stringContaining("unexpected_status")
+    );
+    expect(adapter.log.debug).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "Skipping known get_status attribute without a Homebridge state object: state"
+      )
+    );
+    expect(adapter.log.debug).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "Skipping known get_status attribute without a Homebridge state object: battery"
+      )
     );
   });
 });

@@ -2,9 +2,12 @@ import crypto from "crypto";
 import path from "path";
 import fs from "fs";
 import net from "net";
+import QRCode from "qrcode";
 import { encryptSession } from "../crypto";
 
 const roborockAuth = require("../../roborockLib/lib/roborockAuth");
+
+const ACTIVE_LOCAL_TRANSPORT_MAX_AGE_MS = 5 * 60 * 1000;
 
 // Type definition for HomebridgePluginUiServer to maintain type safety
 interface IHomebridgePluginUiServer {
@@ -14,6 +17,23 @@ interface IHomebridgePluginUiServer {
 }
 
 type HomebridgePluginUiServerConstructor = new () => IHomebridgePluginUiServer;
+
+interface MatterPairingEntry {
+  id: string;
+  kind: "bridge" | "vacuum";
+  name: string;
+  serialNumber: string | null;
+  qrCode: string | null;
+  qrCodeDataUrl: string | null;
+  manualPairingCode: string | null;
+  setupCode: string | null;
+  passcode: string | null;
+  discriminator: string | null;
+  commissioned: boolean;
+  fabricCount: number | null;
+  updatedAt: string | null;
+  hint: string;
+}
 
 class RoborockUiServer {
   private homebridgePluginUiServer: IHomebridgePluginUiServer;
@@ -47,6 +67,10 @@ class RoborockUiServer {
     this.homebridgePluginUiServer.onRequest(
       "/diagnostics/test-local",
       this.testLocalConnections.bind(this)
+    );
+    this.homebridgePluginUiServer.onRequest(
+      "/matter/pairing",
+      this.getMatterPairing.bind(this)
     );
 
     this.homebridgePluginUiServer.ready();
@@ -401,6 +425,144 @@ class RoborockUiServer {
     };
   }
 
+  private async getMatterPairing() {
+    try {
+      const storagePath = this.getStoragePath();
+      const homeDataState = this.readJsonFile(
+        path.join(storagePath, "roborock.HomeData")
+      );
+      const homeData = this.parseStatePayload(homeDataState?.val);
+      const devices = this.collectDevices(homeData);
+      const deviceByDuid = new Map(
+        devices
+          .filter((device) => typeof device.duid === "string" && device.duid)
+          .map((device) => [device.duid, device])
+      );
+      const matterPath = path.join(storagePath, "matter");
+      const files = this.findActiveCommissioningFiles(matterPath);
+      const entries = await Promise.all(
+        files.map(async (filePath) => {
+          const commissioning = this.readJsonFile(filePath);
+          if (!commissioning) {
+            return null;
+          }
+
+          return this.buildMatterPairingEntry(
+            commissioning,
+            filePath,
+            deviceByDuid
+          );
+        })
+      );
+      const pairingEntries = entries
+        .filter((entry): entry is MatterPairingEntry => Boolean(entry))
+        .sort((a, b) => {
+          const weight = { bridge: 0, vacuum: 1, unknown: 2 };
+          return (
+            (weight[a.kind as keyof typeof weight] ?? 2) -
+              (weight[b.kind as keyof typeof weight] ?? 2) ||
+            String(a.name).localeCompare(String(b.name))
+          );
+        });
+
+      return {
+        ok: true,
+        generatedAt: new Date().toISOString(),
+        storagePath,
+        matterPath,
+        hasMatterDirectory: fs.existsSync(matterPath),
+        entries: pairingEntries,
+      };
+    } catch (error: any) {
+      return {
+        ok: false,
+        message: error?.message || "Failed to load Matter pairing codes.",
+      };
+    }
+  }
+
+  private findActiveCommissioningFiles(matterPath: string): string[] {
+    if (!fs.existsSync(matterPath)) {
+      return [];
+    }
+
+    try {
+      return fs
+        .readdirSync(matterPath, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory() && !entry.name.includes("."))
+        .map((entry) => path.join(matterPath, entry.name, "commissioning.json"))
+        .filter((filePath) => fs.existsSync(filePath));
+    } catch {
+      return [];
+    }
+  }
+
+  private async buildMatterPairingEntry(
+    commissioning: Record<string, any>,
+    filePath: string,
+    deviceByDuid: Map<string, Record<string, any>>
+  ): Promise<MatterPairingEntry> {
+    const serialNumber = this.firstNonEmptyString([commissioning.serialNumber]);
+    const matchedDevice = serialNumber
+      ? deviceByDuid.get(serialNumber)
+      : undefined;
+    const kind = matchedDevice ? "vacuum" : "bridge";
+    const manualPairingCode = this.firstNonEmptyString([
+      commissioning.manualPairingCode,
+    ]);
+    const qrCode = this.firstNonEmptyString([commissioning.qrCode]);
+    const setupCode = manualPairingCode
+      ? manualPairingCode.replace(/\D/g, "")
+      : null;
+    const qrCodeDataUrl = qrCode
+      ? await QRCode.toDataURL(qrCode, {
+          errorCorrectionLevel: "M",
+          margin: 1,
+          width: 180,
+        })
+      : null;
+
+    return {
+      id: path.basename(path.dirname(filePath)),
+      kind,
+      name:
+        matchedDevice?.name ||
+        (kind === "bridge" ? "Matter Roborock Bridge" : "Matter accessory"),
+      serialNumber: serialNumber || null,
+      qrCode,
+      qrCodeDataUrl,
+      manualPairingCode,
+      setupCode,
+      passcode:
+        commissioning.passcode === undefined || commissioning.passcode === null
+          ? null
+          : String(commissioning.passcode),
+      discriminator:
+        commissioning.discriminator === undefined ||
+        commissioning.discriminator === null
+          ? null
+          : String(commissioning.discriminator),
+      commissioned: Boolean(commissioning.commissioned),
+      fabricCount:
+        typeof commissioning.fabricCount === "number"
+          ? commissioning.fabricCount
+          : null,
+      updatedAt: this.getFileUpdatedAt(filePath),
+      hint:
+        kind === "bridge"
+          ? "Scan this QR code first when adding the Roborock child/daughter bridge to Apple Home."
+          : "Use this 11-digit setup code if Apple Home asks to add the external Roborock vacuum after the bridge is paired.",
+    };
+  }
+
+  private getFileUpdatedAt(filePath: string): string | null {
+    try {
+      return fs.statSync(filePath).mtime.toISOString();
+    } catch {
+      return null;
+    }
+  }
+
   private async testLocalConnection(
     device: Record<string, any>,
     cloudOnlyMode: boolean
@@ -422,6 +584,7 @@ class RoborockUiServer {
       cachedLastTransport: device.lastTransport || "n/a",
       cachedLastReason: device.lastTransportReason || "n/a",
       cachedTransportUpdatedAt: device.transportUpdatedAt || null,
+      connectionSource: "tcp-probe",
       latencyMs: null as number | null,
     };
 
@@ -465,6 +628,17 @@ class RoborockUiServer {
       };
     }
 
+    const activeLocalConnection = this.describeActiveLocalConnection(device);
+    if (activeLocalConnection) {
+      return {
+        ...baseResult,
+        status: "passed",
+        health: "good",
+        connectionSource: activeLocalConnection.source,
+        message: activeLocalConnection.message,
+      };
+    }
+
     try {
       const probe = await this.probeTcp(localIp, port, 3500);
       return {
@@ -482,6 +656,56 @@ class RoborockUiServer {
         message: `Could not open a TCP connection to ${localIp}:${port}. ${this.formatProbeError(error)}`,
       };
     }
+  }
+
+  private describeActiveLocalConnection(
+    device: Record<string, any>
+  ): { source: string; message: string } | null {
+    const localIp = device.localIp;
+    const port = 58867;
+    const lastCommand = device.lastCommandMethod
+      ? ` Last local command: ${device.lastCommandMethod}.`
+      : "";
+
+    if (device.tcpConnectionState === "connected") {
+      return {
+        source: "cached-active-tcp",
+        message: `Homebridge already has an active LAN TCP connection to ${localIp}:${port}, so the diagnostics test did not open a second probe.${lastCommand}`,
+      };
+    }
+
+    const transportUpdatedAt = this.parseTimestamp(device.transportUpdatedAt);
+    if (
+      device.lastTransport === "local" &&
+      transportUpdatedAt !== null &&
+      Date.now() - transportUpdatedAt <= ACTIVE_LOCAL_TRANSPORT_MAX_AGE_MS
+    ) {
+      return {
+        source: "cached-recent-local-command",
+        message: `Homebridge used LAN control for this vacuum within the last ${this.formatAge(Date.now() - transportUpdatedAt)}, so the cached local path is healthy.${lastCommand}`,
+      };
+    }
+
+    return null;
+  }
+
+  private parseTimestamp(value: unknown): number | null {
+    if (typeof value !== "string" || !value.trim()) {
+      return null;
+    }
+
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? null : parsed;
+  }
+
+  private formatAge(ageMs: number): string {
+    const seconds = Math.max(0, Math.round(ageMs / 1000));
+    if (seconds < 60) {
+      return `${seconds} second${seconds === 1 ? "" : "s"}`;
+    }
+
+    const minutes = Math.round(seconds / 60);
+    return `${minutes} minute${minutes === 1 ? "" : "s"}`;
   }
 
   private probeTcp(

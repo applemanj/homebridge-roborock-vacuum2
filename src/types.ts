@@ -9,6 +9,10 @@ export interface RoborockPlatformConfig extends PlatformConfig {
   skipDevices?: string;
   transientWarningThrottleHours?: number;
   enableMatter?: boolean;
+  enableMatterServiceArea?: boolean;
+  enableMatterPowerSource?: boolean;
+  enableMatterCleanMode?: boolean;
+  enableMatterExtendedOperationalStates?: boolean;
   cloudOnlyMode?: boolean;
   preferCloudForMatterCommands?: boolean;
 }

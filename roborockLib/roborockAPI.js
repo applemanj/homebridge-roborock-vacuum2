@@ -125,6 +125,54 @@ class Roborock {
     return Boolean(this.config.cloudOnlyMode);
   }
 
+  getKnownLocalIp(duid) {
+    if (this.localDevices && typeof this.localDevices[duid] == "string") {
+      return this.localDevices[duid];
+    }
+
+    const diagnostics = this.getTransportDiagnostics();
+    const diagnosticEntry =
+      diagnostics && typeof diagnostics[duid] == "object"
+        ? diagnostics[duid]
+        : null;
+    if (
+      diagnosticEntry &&
+      typeof diagnosticEntry.localIp == "string" &&
+      diagnosticEntry.localIp
+    ) {
+      return diagnosticEntry.localIp;
+    }
+
+    const networkInfo = this.getStateAsync(`Devices.${duid}.networkInfo.ip`);
+    if (networkInfo && typeof networkInfo.val == "string" && networkInfo.val) {
+      return networkInfo.val;
+    }
+
+    return null;
+  }
+
+  async ensureLocalConnection(duid) {
+    if (this.isCloudOnlyModeEnabled()) {
+      return false;
+    }
+
+    if (this.localConnector.isConnected(duid)) {
+      return true;
+    }
+
+    const localIp = this.getKnownLocalIp(duid);
+    if (!localIp) {
+      await this.updateTransportDiagnostics(duid, {
+        localDiscoveryState: "not-discovered",
+        lastTransportReason: "missing-local-ip",
+      });
+      return false;
+    }
+
+    await this.localConnector.ensureConnected(duid, localIp);
+    return Boolean(this.localConnector.isConnected(duid));
+  }
+
   setInterval(callback, interval, ...args) {
     return setInterval(() => callback(...args), interval);
   }
@@ -366,6 +414,12 @@ class Roborock {
       .some((value) => ignoredSet.has(`${value}`.trim()));
   }
 
+  getIgnoredDeviceSet() {
+    const ignoredDevices = this.config.ignoredDevices || [];
+    const skipDevices = this.parseSkipDevices(this.config.skipDevices);
+    return new Set([...ignoredDevices, ...skipDevices]);
+  }
+
   normalizeArray(value) {
     return Array.isArray(value) ? value : [];
   }
@@ -389,6 +443,73 @@ class Roborock {
     return this.normalizeArray(homeDataSource.devices).concat(
       this.normalizeArray(homeDataSource.receivedDevices)
     );
+  }
+
+  getManagedHomeDevices(homedata, ignoredSet = this.getIgnoredDeviceSet()) {
+    return this.getAllHomeDevices(homedata).filter((device) => {
+      return (
+        device && device.duid && !this.shouldSkipDevice(device, ignoredSet)
+      );
+    });
+  }
+
+  getLocalKeyDevices(homedata, ignoredSet = this.getIgnoredDeviceSet()) {
+    return this.getManagedHomeDevices(homedata, ignoredSet).filter((device) => {
+      if (!device || !device.duid || !device.localKey) {
+        return false;
+      }
+
+      if (device.sn && ignoredSet.has(device.sn)) {
+        return false;
+      }
+
+      return true;
+    });
+  }
+
+  async refreshLocalKeysFromHomeData(
+    homedata,
+    ignoredSet = this.getIgnoredDeviceSet()
+  ) {
+    const localKeyDevices = this.getLocalKeyDevices(homedata, ignoredSet);
+    const previousKeys =
+      this.localKeys instanceof Map ? this.localKeys : new Map();
+    const nextKeys = new Map(
+      localKeyDevices.map((device) => [device.duid, device.localKey])
+    );
+
+    this.localKeys = nextKeys;
+
+    for (const device of localKeyDevices) {
+      const previousKey = previousKeys.get(device.duid);
+      if (!previousKey || previousKey === device.localKey) {
+        continue;
+      }
+
+      this.log.debug(
+        `Roborock local key changed for ${device.name || device.duid}; resetting LAN TCP connection so local commands use the fresh credentials.`
+      );
+      if (typeof this.localConnector.resetClient == "function") {
+        await this.localConnector.resetClient(device.duid, "local-key-changed");
+      }
+
+      const localIp = this.localDevices?.[device.duid];
+      if (!this.isCloudOnlyModeEnabled() && localIp) {
+        await this.localConnector.createClient(device.duid, localIp);
+      }
+    }
+
+    for (const duid of previousKeys.keys()) {
+      if (nextKeys.has(duid)) {
+        continue;
+      }
+
+      if (typeof this.localConnector.resetClient == "function") {
+        await this.localConnector.resetClient(duid, "missing-local-key");
+      }
+    }
+
+    return localKeyDevices;
   }
 
   updateRoomMappingCache(duid, mapId, mappedRooms) {
@@ -1145,9 +1266,7 @@ class Roborock {
           });
 
           // Skip devices matching either their serial number or Roborock DUID.
-          const ignoredDevices = this.config.ignoredDevices || [];
-          const skipDevices = this.parseSkipDevices(this.config.skipDevices);
-          const ignoredSet = new Set([...ignoredDevices, ...skipDevices]);
+          const ignoredSet = this.getIgnoredDeviceSet();
           // create devices and set states
           this.products = homedataResult.products;
           this.devices = homedataResult.devices || [];
@@ -1155,34 +1274,13 @@ class Roborock {
             (device) => !this.shouldSkipDevice(device, ignoredSet)
           );
 
-          const allManagedDevices = (homedataResult.devices || []).concat(
-            homedataResult.receivedDevices || []
+          const managedDevicesForDiagnostics = this.getManagedHomeDevices(
+            homedataResult,
+            ignoredSet
           );
-          const managedDevicesForDiagnostics = allManagedDevices.filter(
-            (device) => {
-              return (
-                device &&
-                device.duid &&
-                !this.shouldSkipDevice(device, ignoredSet)
-              );
-            }
-          );
-          const localKeyDevices = managedDevicesForDiagnostics.filter(
-            (device) => {
-              if (!device || !device.duid || !device.localKey) {
-                return false;
-              }
-
-              if (device.sn && ignoredSet.has(device.sn)) {
-                return false;
-              }
-
-              return true;
-            }
-          );
-
-          this.localKeys = new Map(
-            localKeyDevices.map((device) => [device.duid, device.localKey])
+          const localKeyDevices = await this.refreshLocalKeysFromHomeData(
+            homedataResult,
+            ignoredSet
           );
 
           if (this.isCloudOnlyModeEnabled()) {
@@ -2422,6 +2520,7 @@ class Roborock {
         const homedata = home.data.result;
 
         if (homedata) {
+          await this.refreshLocalKeysFromHomeData(homedata);
           await this.setStateAsync("HomeData", {
             val: JSON.stringify(homedata),
             ack: true,
@@ -2839,6 +2938,7 @@ class Roborock {
       case "stop_zoned_clean":
       case "app_pause":
       case "app_charge":
+      case "find_me":
       case "app_segment_clean_by_ids":
       case "load_multi_map": {
         const commandPromise = this.vacuums[duid].command(
@@ -3071,6 +3171,10 @@ class Roborock {
 
   async app_charge(duid, options) {
     await this.startCommand(duid, "app_charge", null, options);
+  }
+
+  async find_me(duid, options) {
+    await this.startCommand(duid, "find_me", null, options);
   }
 
   async app_segment_clean_by_ids(duid, segments, options = {}) {

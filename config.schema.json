@@ -64,7 +64,31 @@
       },
       "enableMatter": {
         "title": "Enable Matter Vacuum",
-        "description": "Experimental. When running Homebridge 2 with Matter enabled for the Roborock child bridge, also exposes each Roborock as a Matter robotic vacuum cleaner with Service Area room selection for clients that support it. Pairing codes are printed in the Homebridge log. The existing HomeKit fan/switch accessory remains available for backwards compatibility.",
+        "description": "When running Homebridge 2 with Matter enabled for the Roborock child bridge/daughter bridge, also exposes each Roborock as a Matter robotic vacuum cleaner with Service Area room selection for clients that support it. After restarting the bridge, use the plugin setup screen's Matter Pairing section for the bridge QR code and vacuum 11-digit setup code. The existing HomeKit fan/switch accessory remains available for backwards compatibility.",
+        "type": "boolean",
+        "default": false
+      },
+      "enableMatterServiceArea": {
+        "title": "Enable Matter Room/Map Selection",
+        "description": "Adds Matter Service Area room and map selection to the Matter vacuum for clients that support it. Disable this if a Matter controller gets stuck showing the vacuum as Updating.",
+        "type": "boolean",
+        "default": true
+      },
+      "enableMatterPowerSource": {
+        "title": "Enable Matter Battery",
+        "description": "Adds the Matter battery/power-source cluster to the Matter vacuum. Disable this if a Matter controller gets stuck showing the vacuum as Updating.",
+        "type": "boolean",
+        "default": true
+      },
+      "enableMatterCleanMode": {
+        "title": "Enable Matter Cleaning Mode Selection",
+        "description": "Adds Matter vacuum/mop cleaning mode selection to the Matter vacuum. Disable this if a Matter controller shows the vacuum as No Response after pairing.",
+        "type": "boolean",
+        "default": true
+      },
+      "enableMatterExtendedOperationalStates": {
+        "title": "Enable Matter Returning Status",
+        "description": "Opt in to the extended Matter Returning status while the vacuum is heading back to the dock. The docked and charging states still report as Ready for Apple Home compatibility.",
         "type": "boolean",
         "default": false
       },

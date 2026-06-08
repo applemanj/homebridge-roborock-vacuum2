@@ -27,7 +27,7 @@ function getRequestTimeout(method) {
 
 /**
  * @typedef {Object} TransportDiagnosticsUpdate
- * @property {"cloud" | "local"} [lastTransport]
+ * @property {"cloud" | "local" | "local-pending"} [lastTransport]
  * @property {string} [lastTransportReason]
  * @property {string} [lastCommandMethod]
  */
@@ -78,12 +78,15 @@ function getRequestTimeout(method) {
  * @property {(timeout: ReturnType<typeof setTimeout>) => void} clearTimeout
  * @property {LoggerLike} log
  * @property {(duid: string, update: TransportDiagnosticsUpdate) => Promise<void>} updateTransportDiagnostics
+ * @property {(duid: string) => Promise<boolean>} [ensureLocalConnection]
  * @property {(message: string, location: string, duid?: string) => void} catchError
  */
 
 /**
  * @typedef {Object} RequestOptions
  * @property {boolean} [preferCloud]
+ * @property {boolean} [preferLocal]
+ * @property {boolean} [allowOfflineCloudSend]
  */
 
 class messageQueueHandler {
@@ -116,10 +119,32 @@ class messageQueueHandler {
 
     const deviceOnline = await this.adapter.onlineChecker(duid);
     const mqttConnectionState = this.adapter.rr_mqtt_connector.isConnected();
-    const localConnectionState = this.adapter.localConnector.isConnected(duid);
+    let localConnectionState = this.adapter.localConnector.isConnected(duid);
     const cloudOnlyConnection = Boolean(this.adapter.config?.cloudOnlyMode);
     const preferCloudConnection =
       Boolean(options.preferCloud) && mqttConnectionState;
+    const preferLocalConnection =
+      Boolean(options.preferLocal) &&
+      !cloudOnlyConnection &&
+      !preferCloudConnection &&
+      !remoteConnection &&
+      !secure &&
+      !photo &&
+      method != "get_network_info";
+
+    if (
+      preferLocalConnection &&
+      !localConnectionState &&
+      typeof this.adapter.ensureLocalConnection == "function"
+    ) {
+      await this.adapter.updateTransportDiagnostics(duid, {
+        lastTransport: "local-pending",
+        lastTransportReason: "preferred-local-reconnect",
+        lastCommandMethod: method,
+      });
+      await this.adapter.ensureLocalConnection(duid);
+      localConnectionState = this.adapter.localConnector.isConnected(duid);
+    }
 
     let useCloudConnection =
       cloudOnlyConnection ||
@@ -159,6 +184,8 @@ class messageQueueHandler {
     const timestamp = Math.floor(Date.now() / 1000);
 
     const protocol = useCloudConnection ? 101 : 4;
+    const allowOfflineCloudSend =
+      Boolean(options.allowOfflineCloudSend) && useCloudConnection;
     const payload = await this.adapter.message.buildPayload(
       duid,
       protocol,
@@ -177,7 +204,11 @@ class messageQueueHandler {
 
     if (roborockMessage) {
       return new Promise((resolve, reject) => {
-        if (!deviceOnline) {
+        if (
+          !deviceOnline &&
+          (useCloudConnection || !localConnectionState) &&
+          !allowOfflineCloudSend
+        ) {
           this.adapter.updateTransportDiagnostics(duid, {
             lastCommandMethod: method,
             lastTransportReason: "device-offline",
@@ -186,7 +217,11 @@ class messageQueueHandler {
           this.adapter.log.debug(
             `Device ${duid} offline. Not sending for method ${method} request!`
           );
-          reject();
+          reject(
+            new Error(
+              `Device ${duid} is offline. Not sending method ${method} request.`
+            )
+          );
         } else if (!mqttConnectionState && useCloudConnection) {
           this.adapter.updateTransportDiagnostics(duid, {
             lastTransport: "cloud",
@@ -199,7 +234,11 @@ class messageQueueHandler {
           this.adapter.log.debug(
             `Cloud connection not available. Not sending for method ${method} request!`
           );
-          reject();
+          reject(
+            new Error(
+              `Cloud connection not available. Not sending method ${method} request.`
+            )
+          );
         } else if (!localConnectionState && !useCloudConnection) {
           this.adapter.updateTransportDiagnostics(duid, {
             lastCommandMethod: method,
@@ -209,7 +248,11 @@ class messageQueueHandler {
           this.adapter.log.debug(
             `Adapter not connect locally to robot ${duid}. Not sending for method ${method} request!`
           );
-          reject();
+          reject(
+            new Error(
+              `Local connection not available for ${duid}. Not sending method ${method} request.`
+            )
+          );
         } else {
           // setup Timeout
           const requestTimeout = getRequestTimeout(method);
@@ -240,22 +283,30 @@ class messageQueueHandler {
           });
 
           if (useCloudConnection) {
+            if (!deviceOnline && allowOfflineCloudSend) {
+              this.adapter.log.debug(
+                `Device ${duid} is marked offline, but sending method ${method} via cloud because the command explicitly allows offline cloud delivery.`
+              );
+            }
             this.adapter.rr_mqtt_connector.sendMessage(duid, roborockMessage);
             this.adapter.updateTransportDiagnostics(duid, {
               lastTransport: "cloud",
-              lastTransportReason: secure
-                ? "secure-command"
-                : photo
-                  ? "photo-command"
-                  : cloudOnlyConnection
-                    ? "cloud-only-mode"
-                    : preferCloudConnection
-                      ? "preferred-cloud-command"
-                      : remoteConnection
-                        ? "remote-device"
-                        : method == "get_network_info"
-                          ? "network-info-cloud-only"
-                          : "cloud-request",
+              lastTransportReason:
+                !deviceOnline && allowOfflineCloudSend
+                  ? "offline-cloud-command"
+                  : secure
+                    ? "secure-command"
+                    : photo
+                      ? "photo-command"
+                      : cloudOnlyConnection
+                        ? "cloud-only-mode"
+                        : preferCloudConnection
+                          ? "preferred-cloud-command"
+                          : remoteConnection
+                            ? "remote-device"
+                            : method == "get_network_info"
+                              ? "network-info-cloud-only"
+                              : "cloud-request",
               lastCommandMethod: method,
             });
             this.adapter.log.debug(

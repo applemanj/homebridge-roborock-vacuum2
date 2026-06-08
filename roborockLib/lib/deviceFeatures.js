@@ -1446,6 +1446,10 @@ class deviceFeatures {
     }
   }
 
+  hasDeviceStatusAttribute(attribute) {
+    return Object.prototype.hasOwnProperty.call(deviceStates, attribute);
+  }
+
   getFirmwareFeature(featureID) {
     const feature = firmwareFeatures[featureID];
 

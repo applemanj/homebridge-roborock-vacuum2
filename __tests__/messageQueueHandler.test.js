@@ -110,6 +110,80 @@ describe("messageQueueHandler transport selection", () => {
     );
   });
 
+  test("attempts a local reconnect for preferred-local commands", async () => {
+    let localConnected = false;
+    const localConnector = {
+      isConnected: jest.fn(() => localConnected),
+      sendMessage: jest.fn(),
+      clearChunkBuffer: jest.fn(),
+    };
+    const adapter = createAdapter({
+      localConnector,
+      ensureLocalConnection: jest.fn().mockImplementation(async () => {
+        localConnected = true;
+        return true;
+      }),
+    });
+    localConnector.sendMessage.mockImplementation(() => {
+      const pending = adapter.pendingRequests.get(42);
+      adapter.clearTimeout(pending.timeout);
+      adapter.pendingRequests.delete(42);
+      pending.resolve(["ok"]);
+    });
+
+    const handler = new messageQueueHandler(adapter);
+    await expect(
+      handler.sendRequest("device-1", "app_start", [], false, false, {
+        preferLocal: true,
+      })
+    ).resolves.toEqual(["ok"]);
+
+    expect(adapter.ensureLocalConnection).toHaveBeenCalledWith("device-1");
+    expect(localConnector.sendMessage).toHaveBeenCalled();
+    expect(adapter.rr_mqtt_connector.sendMessage).not.toHaveBeenCalled();
+    expect(adapter.updateTransportDiagnostics).toHaveBeenCalledWith(
+      "device-1",
+      expect.objectContaining({
+        lastTransport: "local",
+        lastTransportReason: "local-request",
+        lastCommandMethod: "app_start",
+      })
+    );
+  });
+
+  test("uses local transport when HomeData is stale offline but the local socket is connected", async () => {
+    const adapter = createAdapter({
+      onlineChecker: jest.fn().mockResolvedValue(false),
+      localConnector: {
+        isConnected: jest.fn().mockReturnValue(true),
+        sendMessage: jest.fn(),
+        clearChunkBuffer: jest.fn(),
+      },
+    });
+    adapter.localConnector.sendMessage.mockImplementation(() => {
+      const pending = adapter.pendingRequests.get(42);
+      adapter.clearTimeout(pending.timeout);
+      adapter.pendingRequests.delete(42);
+      pending.resolve(["ok"]);
+    });
+
+    const handler = new messageQueueHandler(adapter);
+    await expect(
+      handler.sendRequest("device-1", "app_segment_clean", [[18]])
+    ).resolves.toEqual(["ok"]);
+
+    expect(adapter.localConnector.sendMessage).toHaveBeenCalled();
+    expect(adapter.rr_mqtt_connector.sendMessage).not.toHaveBeenCalled();
+    expect(adapter.updateTransportDiagnostics).toHaveBeenCalledWith(
+      "device-1",
+      expect.objectContaining({
+        lastTransport: "local",
+        lastTransportReason: "local-request",
+        lastCommandMethod: "app_segment_clean",
+      })
+    );
+  });
+
   test("prefers cloud transport when requested and cloud is connected", async () => {
     const adapter = createAdapter({
       localConnector: {
@@ -139,6 +213,40 @@ describe("messageQueueHandler transport selection", () => {
       expect.objectContaining({
         lastTransport: "cloud",
         lastTransportReason: "preferred-cloud-command",
+        lastCommandMethod: "app_start",
+      })
+    );
+  });
+
+  test("can send cloud commands when HomeData is stale offline and explicitly allowed", async () => {
+    const adapter = createAdapter({
+      onlineChecker: jest.fn().mockResolvedValue(false),
+    });
+    adapter.rr_mqtt_connector.sendMessage.mockImplementation(() => {
+      const pending = adapter.pendingRequests.get(42);
+      adapter.clearTimeout(pending.timeout);
+      adapter.pendingRequests.delete(42);
+      pending.resolve(["ok"]);
+    });
+
+    const handler = new messageQueueHandler(adapter);
+    await expect(
+      handler.sendRequest("device-1", "app_start", [], false, false, {
+        preferLocal: true,
+        allowOfflineCloudSend: true,
+      })
+    ).resolves.toEqual(["ok"]);
+
+    expect(adapter.rr_mqtt_connector.sendMessage).toHaveBeenCalled();
+    expect(adapter.localConnector.sendMessage).not.toHaveBeenCalled();
+    expect(adapter.log.debug).toHaveBeenCalledWith(
+      expect.stringContaining("explicitly allows offline cloud delivery")
+    );
+    expect(adapter.updateTransportDiagnostics).toHaveBeenCalledWith(
+      "device-1",
+      expect.objectContaining({
+        lastTransport: "cloud",
+        lastTransportReason: "offline-cloud-command",
         lastCommandMethod: "app_start",
       })
     );
@@ -194,7 +302,7 @@ describe("messageQueueHandler transport selection", () => {
     const handler = new messageQueueHandler(adapter);
     await expect(
       handler.sendRequest("device-1", "get_status", [])
-    ).rejects.toBeUndefined();
+    ).rejects.toThrow("Cloud connection not available");
 
     expect(adapter.rr_mqtt_connector.sendMessage).not.toHaveBeenCalled();
     expect(adapter.localConnector.sendMessage).not.toHaveBeenCalled();

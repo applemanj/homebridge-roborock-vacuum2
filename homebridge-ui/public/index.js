@@ -6,6 +6,7 @@ const elements = {
   skipDevices: document.getElementById("skip-devices"),
   debugMode: document.getElementById("debug-mode"),
   enableMatter: document.getElementById("enable-matter"),
+  advancedSettings: document.getElementById("advanced-settings"),
   preferCloudForMatterCommands: document.getElementById(
     "prefer-cloud-for-matter-commands"
   ),
@@ -25,6 +26,10 @@ const elements = {
   testLocal: document.getElementById("test-local"),
   copyDiagnostics: document.getElementById("copy-diagnostics"),
   refreshDiagnostics: document.getElementById("refresh-diagnostics"),
+  refreshMatterPairing: document.getElementById("refresh-matter-pairing"),
+  matterPairingSummary: document.getElementById("matter-pairing-summary"),
+  matterPairingEmpty: document.getElementById("matter-pairing-empty"),
+  matterPairingList: document.getElementById("matter-pairing-list"),
   diagnosticsSummary: document.getElementById("diagnostics-summary"),
   diagnosticsEmpty: document.getElementById("diagnostics-empty"),
   localTestResults: document.getElementById("local-test-results"),
@@ -36,6 +41,7 @@ const state = {
   hasPassword: false,
   lastDiagnostics: null,
   lastLocalTest: null,
+  lastMatterPairing: null,
   diagnosticsRefreshTimer: null,
   diagnosticsAutoRefreshAttempts: 0,
   cloudOnlyMode: false,
@@ -121,12 +127,18 @@ async function loadConfig() {
   );
   elements.cloudOnlyMode.checked = Boolean(config.cloudOnlyMode);
   state.cloudOnlyMode = Boolean(config.cloudOnlyMode);
+  elements.advancedSettings.open = Boolean(
+    config.debugMode ||
+      config.preferCloudForMatterCommands ||
+      config.cloudOnlyMode
+  );
   elements.transientWarningThrottleHours.value =
     config.transientWarningThrottleHours ?? 6;
 
   state.hasEncryptedToken = Boolean(config.encryptedToken);
   state.hasPassword = Boolean(config.password);
   setLoggedInState(state.hasEncryptedToken, state.hasPassword);
+  await loadMatterPairing();
   await loadDiagnostics({ scheduleFollowUp: true });
 }
 
@@ -370,6 +382,123 @@ async function loadDiagnostics({ scheduleFollowUp = false } = {}) {
   return result;
 }
 
+async function loadMatterPairing() {
+  const result = await request("/matter/pairing", {});
+  if (!result.ok) {
+    renderMatterPairing(
+      null,
+      result.message || "Failed to load Matter pairing codes."
+    );
+    return null;
+  }
+
+  renderMatterPairing(result);
+  return result;
+}
+
+function renderMatterPairing(result, errorMessage) {
+  state.lastMatterPairing = result || null;
+  elements.matterPairingList.innerHTML = "";
+
+  if (errorMessage) {
+    elements.matterPairingSummary.textContent = errorMessage;
+    elements.matterPairingEmpty.classList.remove("hidden");
+    return;
+  }
+
+  if (!result || !Array.isArray(result.entries)) {
+    elements.matterPairingSummary.textContent =
+      "Matter pairing codes are not available yet.";
+    elements.matterPairingEmpty.classList.remove("hidden");
+    return;
+  }
+
+  const entries = result.entries;
+  elements.matterPairingSummary.textContent = `${entries.length} Matter pairing item(s), last checked ${formatTimestamp(result.generatedAt)}.`;
+
+  if (entries.length === 0) {
+    elements.matterPairingEmpty.classList.remove("hidden");
+    return;
+  }
+
+  elements.matterPairingEmpty.classList.add("hidden");
+  elements.matterPairingList.innerHTML = entries
+    .map((entry) => renderMatterPairingCard(entry))
+    .join("");
+}
+
+function renderMatterPairingCard(entry) {
+  const isBridge = entry.kind === "bridge";
+  const codeLabel = isBridge ? "Manual pairing code" : "11-digit setup code";
+  const codeValue = isBridge
+    ? entry.manualPairingCode || "n/a"
+    : entry.setupCode || entry.manualPairingCode || "n/a";
+  const formattedCode = entry.manualPairingCode || entry.setupCode || "n/a";
+  const qrMarkup = entry.qrCodeDataUrl
+    ? `<img class="qr-image" src="${escapeHtml(entry.qrCodeDataUrl)}" alt="${escapeHtml(entry.name || "Matter")} QR code" />`
+    : `<div class="qr-placeholder">No QR code available</div>`;
+  const commissionedText = entry.commissioned ? "Commissioned" : "Not paired";
+  const statusClass = entry.commissioned ? "good" : "warn";
+
+  return `
+    <article class="pairing-card">
+      <div class="device-header">
+        <h3>${escapeHtml(entry.name || "Matter accessory")}</h3>
+        <span class="pill ${statusClass}">${escapeHtml(commissionedText)}</span>
+      </div>
+      <p class="connection-hint">${escapeHtml(entry.hint || "Use this Matter pairing information in Apple Home.")}</p>
+      <div class="pairing-content">
+        <div class="qr-wrap">
+          ${qrMarkup}
+          <button class="secondary compact" data-copy-value="${escapeHtml(entry.qrCode || "")}" ${entry.qrCode ? "" : "disabled"}>Copy QR Payload</button>
+        </div>
+        <dl class="pairing-details">
+          <div>
+            <dt>${escapeHtml(codeLabel)}</dt>
+            <dd class="setup-code">${escapeHtml(codeValue)}</dd>
+          </div>
+          <div>
+            <dt>Formatted manual code</dt>
+            <dd>${escapeHtml(formattedCode)}</dd>
+          </div>
+          <div>
+            <dt>Type</dt>
+            <dd>${escapeHtml(isBridge ? "Roborock child/daughter bridge" : "Roborock vacuum accessory")}</dd>
+          </div>
+          <div>
+            <dt>Serial</dt>
+            <dd>${escapeHtml(maskIdentifier(entry.serialNumber))}</dd>
+          </div>
+          <div>
+            <dt>Updated</dt>
+            <dd>${escapeHtml(entry.updatedAt ? formatTimestamp(entry.updatedAt) : "n/a")}</dd>
+          </div>
+        </dl>
+      </div>
+      <div class="pairing-actions">
+        <button class="primary compact" data-copy-value="${escapeHtml(codeValue === "n/a" ? "" : codeValue)}" ${codeValue === "n/a" ? "disabled" : ""}>Copy ${escapeHtml(codeLabel)}</button>
+        <button class="secondary compact" data-copy-value="${escapeHtml(formattedCode === "n/a" ? "" : formattedCode)}" ${formattedCode === "n/a" ? "disabled" : ""}>Copy Manual Code</button>
+      </div>
+    </article>
+  `;
+}
+
+async function handleMatterPairingClick(event) {
+  const button = event.target.closest("[data-copy-value]");
+  if (!button) {
+    return;
+  }
+
+  const value = button.getAttribute("data-copy-value");
+  if (!value) {
+    showToast("warning", "No pairing value is available to copy.");
+    return;
+  }
+
+  await writeClipboard(value);
+  showToast("success", "Matter pairing value copied.");
+}
+
 function maybeScheduleDiagnosticsRefresh(result) {
   if (!shouldAutoRefreshDiagnostics(result)) {
     resetDiagnosticsAutoRefresh();
@@ -487,7 +616,7 @@ async function testLocalConnections() {
     const result = await request(
       "/diagnostics/test-local",
       { cloudOnlyMode: getCloudOnlyMode() },
-      { timeoutMs: 10000 }
+      { timeoutMs: 15000 }
     );
     if (!result.ok) {
       renderLocalTestResults(null, result.message || "Local test failed.");
@@ -569,6 +698,7 @@ function renderLocalTestResults(result, errorMessage) {
             <div><dt>Cached TCP State</dt><dd>${escapeHtml(device.cachedTcpState || "n/a")}</dd></div>
             <div><dt>Cached Transport</dt><dd>${escapeHtml(device.cachedLastTransport || "n/a")}</dd></div>
             <div><dt>Cached Reason</dt><dd>${escapeHtml(device.cachedLastReason || "n/a")}</dd></div>
+            <div><dt>Test Source</dt><dd>${escapeHtml(device.connectionSource || "n/a")}</dd></div>
             <div><dt>Cloud Fallback Likely</dt><dd>${escapeHtml(String(Boolean(device.cloudFallbackLikely)))}</dd></div>
             <div><dt>Transport Updated</dt><dd>${escapeHtml(device.cachedTransportUpdatedAt ? formatTimestamp(device.cachedTransportUpdatedAt) : "n/a")}</dd></div>
           </dl>
@@ -889,6 +1019,16 @@ function init() {
   elements.copyDiagnostics.addEventListener("click", () => {
     copyDiagnosticsReport().catch(() => {
       showToast("error", "Failed to copy diagnostics.");
+    });
+  });
+  elements.refreshMatterPairing.addEventListener("click", () => {
+    loadMatterPairing().catch(() => {
+      showToast("error", "Failed to load Matter pairing codes.");
+    });
+  });
+  elements.matterPairingList.addEventListener("click", (event) => {
+    handleMatterPairingClick(event).catch(() => {
+      showToast("error", "Failed to copy Matter pairing value.");
     });
   });
   elements.baseUrl.addEventListener("change", () => saveCredentials(false));

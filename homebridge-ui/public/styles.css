@@ -135,6 +135,34 @@ input::placeholder {
   margin: 4px 0 0;
 }
 
+.matter-setup-note {
+  margin: 8px 0 0 28px;
+  color: var(--warning);
+  max-width: 680px;
+}
+
+.advanced-settings {
+  margin-top: 20px;
+  padding: 14px 16px 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(17, 24, 32, 0.52);
+}
+
+.advanced-settings summary {
+  cursor: pointer;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.advanced-settings .help {
+  margin-top: 8px;
+}
+
+.advanced-settings .checkbox {
+  margin-top: 16px;
+}
+
 .hidden {
   display: none;
 }
@@ -255,8 +283,14 @@ button:hover {
   gap: 14px;
 }
 
+.pairing-list {
+  display: grid;
+  gap: 14px;
+}
+
 .diagnostic-device,
-.local-test-card {
+.local-test-card,
+.pairing-card {
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 16px;
@@ -289,6 +323,74 @@ button:hover {
   font-size: 0.9rem;
   line-height: 1.45;
   margin: 0 0 14px;
+}
+
+.pairing-content {
+  display: grid;
+  grid-template-columns: 210px minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.qr-wrap {
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+}
+
+.qr-image,
+.qr-placeholder {
+  width: 180px;
+  height: 180px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: #ffffff;
+}
+
+.qr-placeholder {
+  color: #475569;
+  display: grid;
+  place-items: center;
+  padding: 12px;
+  text-align: center;
+}
+
+.pairing-details {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px 16px;
+}
+
+.pairing-details dt {
+  color: var(--muted);
+  font-size: 0.82rem;
+  margin-bottom: 4px;
+}
+
+.pairing-details dd {
+  margin: 0;
+  word-break: break-word;
+}
+
+.setup-code {
+  color: var(--text);
+  font-family: "Consolas", "Menlo", monospace;
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.pairing-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+}
+
+.compact {
+  padding: 9px 12px;
+  font-size: 0.84rem;
 }
 
 .pill {
@@ -385,6 +487,10 @@ button:hover {
   .local-test-heading {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .pairing-content {
+    grid-template-columns: 1fr;
   }
 
   .diagnostics-actions {

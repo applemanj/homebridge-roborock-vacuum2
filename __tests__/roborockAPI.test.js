@@ -650,6 +650,35 @@ describe("Roborock API model and diagnostics helpers", () => {
     });
   });
 
+  test("refreshes rotated Roborock local keys and resets the local TCP client", async () => {
+    const api = createRoborock();
+    api.localKeys = new Map([["device-1", "old-local-key"]]);
+    api.localDevices = { "device-1": "192.168.1.12" };
+    api.localConnector.resetClient = jest.fn().mockResolvedValue(undefined);
+    api.localConnector.createClient = jest.fn().mockResolvedValue(undefined);
+
+    await api.refreshLocalKeysFromHomeData({
+      devices: [
+        {
+          duid: "device-1",
+          name: "Roborock",
+          localKey: "new-local-key",
+        },
+      ],
+      receivedDevices: [],
+    });
+
+    expect(api.localKeys.get("device-1")).toBe("new-local-key");
+    expect(api.localConnector.resetClient).toHaveBeenCalledWith(
+      "device-1",
+      "local-key-changed"
+    );
+    expect(api.localConnector.createClient).toHaveBeenCalledWith(
+      "device-1",
+      "192.168.1.12"
+    );
+  });
+
   test("Roborock diagnostics are compacted and persisted per device", async () => {
     const api = createRoborock();
 

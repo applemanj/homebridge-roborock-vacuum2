@@ -8,6 +8,8 @@ const dgram = require("dgram");
 const server = dgram.createSocket("udp4");
 const PORT = 58866;
 const TIMEOUT = 5000; // 5 Sekunden Timeout
+const LOCAL_RECONNECT_DELAY_MS = 60000;
+const LOCAL_CONNECT_TIMEOUT_MS = 4000;
 
 const BROADCAST_TOKEN = Buffer.from("qWKYcdQWrbm9hPqe", "utf8");
 
@@ -64,6 +66,94 @@ class localConnector {
 
     this.localClients = {};
     this.l01HandshakeWaiters = new Map();
+    this.reconnectTimers = new Map();
+    this.connectPromises = new Map();
+  }
+
+  clearReconnectTimer(duid) {
+    const timer = this.reconnectTimers.get(duid);
+    if (!timer) {
+      return;
+    }
+
+    if (typeof this.adapter.clearTimeout === "function") {
+      this.adapter.clearTimeout(timer);
+    } else {
+      clearTimeout(timer);
+    }
+    this.reconnectTimers.delete(duid);
+  }
+
+  scheduleReconnect(duid, ip, delayMs = LOCAL_RECONNECT_DELAY_MS) {
+    this.clearReconnectTimer(duid);
+    const setTimer =
+      typeof this.adapter.setTimeout === "function"
+        ? this.adapter.setTimeout.bind(this.adapter)
+        : setTimeout;
+    const timer = setTimer(async () => {
+      this.reconnectTimers.delete(duid);
+      await this.createClient(duid, ip);
+    }, delayMs);
+    this.reconnectTimers.set(duid, timer);
+  }
+
+  async ensureConnected(duid, ip) {
+    if (!ip) {
+      return false;
+    }
+
+    if (this.isConnected(duid)) {
+      return true;
+    }
+
+    const pending = this.connectPromises.get(duid);
+    if (pending) {
+      await pending;
+      return Boolean(this.isConnected(duid));
+    }
+
+    const connectPromise = this.createClient(duid, ip)
+      .catch((error) => {
+        this.adapter.log.debug(
+          `Immediate local reconnect failed for ${duid}: ${error.message || error}`
+        );
+      })
+      .finally(() => {
+        this.connectPromises.delete(duid);
+      });
+
+    this.connectPromises.set(duid, connectPromise);
+    await connectPromise;
+    return Boolean(this.isConnected(duid));
+  }
+
+  async resetClient(duid, reason = "local-client-reset") {
+    this.clearReconnectTimer(duid);
+    const client = this.localClients[duid];
+    if (!client) {
+      return;
+    }
+
+    if (this.localClients[duid] === client) {
+      delete this.localClients[duid];
+    }
+
+    const waiter = this.l01HandshakeWaiters.get(duid);
+    if (waiter) {
+      this.adapter.clearTimeout(waiter.timeout);
+      this.l01HandshakeWaiters.delete(duid);
+      waiter.reject(
+        new Error(`TCP client reset during L01 handshake for ${duid}`)
+      );
+    }
+
+    this.adapter.localL01Nonces.delete(duid);
+    client.destroy();
+    await this.adapter.updateTransportDiagnostics(duid, {
+      tcpConnectionState: "disconnected",
+      lastTransport: "cloud",
+      lastTransportReason: reason,
+    });
   }
 
   async markLocalConnected(duid) {
@@ -83,6 +173,12 @@ class localConnector {
   }
 
   async createClient(duid, ip) {
+    this.clearReconnectTimer(duid);
+    const existingClient = this.localClients[duid];
+    if (existingClient?.connected || existingClient?.connecting) {
+      return;
+    }
+
     const client = new EnhancedSocket();
     await this.adapter.updateTransportDiagnostics(duid, {
       localIp: ip,
@@ -92,6 +188,38 @@ class localConnector {
 
     // Wrap the connect method in a promise to await its completion
     await new Promise((resolve, reject) => {
+      let settled = false;
+      const clearTimer =
+        typeof this.adapter.clearTimeout === "function"
+          ? this.adapter.clearTimeout.bind(this.adapter)
+          : clearTimeout;
+      const setTimer =
+        typeof this.adapter.setTimeout === "function"
+          ? this.adapter.setTimeout.bind(this.adapter)
+          : setTimeout;
+      const timeout = setTimer(() => {
+        if (settled) {
+          return;
+        }
+
+        settled = true;
+        client.destroy();
+        reject(
+          new Error(
+            `Timed out connecting local TCP client for ${duid} at ${ip}`
+          )
+        );
+      }, LOCAL_CONNECT_TIMEOUT_MS);
+      const finish = (callback, value) => {
+        if (settled) {
+          return;
+        }
+
+        settled = true;
+        clearTimer(timeout);
+        callback(value);
+      };
+
       client
         .connect(58867, ip, async () => {
           this.adapter.log.debug(`tcp client for ${duid} connected`);
@@ -101,13 +229,13 @@ class localConnector {
               `L01 handshake on connect failed for ${duid}: ${error.message}`
             );
           });
-          resolve();
+          finish(resolve);
         })
         .on("error", (error) => {
           this.adapter.log.debug(
             `error on tcp client for ${duid}. ${error.message}`
           );
-          reject(error);
+          finish(reject, error);
         });
     }).catch(async (error) => {
       const online = await this.adapter.onlineChecker(duid);
@@ -233,6 +361,9 @@ class localConnector {
     });
 
     client.on("close", () => {
+      if (this.localClients[duid] !== client) {
+        return;
+      }
       this.adapter.log.debug(
         `tcp client for ${duid} disconnected, attempting to reconnect...`
       );
@@ -250,9 +381,7 @@ class localConnector {
         );
       }
       this.adapter.localL01Nonces.delete(duid);
-      setTimeout(async () => {
-        await this.createClient(duid, ip);
-      }, 60000);
+      this.scheduleReconnect(duid, ip);
       client.connected = false;
     });
 

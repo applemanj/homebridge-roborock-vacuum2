@@ -62,15 +62,26 @@ class vacuum {
 
   async command(duid, parameter, value, options = {}) {
     try {
+      const requestOptions = {};
+      if (options.preferCloud) {
+        requestOptions.preferCloud = true;
+      }
+      if (options.preferLocal) {
+        requestOptions.preferLocal = true;
+      }
+      if (options.allowOfflineCloudSend) {
+        requestOptions.allowOfflineCloudSend = true;
+      }
+      const hasRequestOptions = Object.keys(requestOptions).length > 0;
       const sendCommandRequest = (method, params) =>
-        options.preferCloud
+        hasRequestOptions
           ? this.adapter.messageQueueHandler.sendRequest(
               duid,
               method,
               params,
               false,
               false,
-              { preferCloud: true }
+              requestOptions
             )
           : this.adapter.messageQueueHandler.sendRequest(duid, method, params);
 
@@ -321,9 +332,22 @@ class vacuum {
                 `Devices.${duid}.deviceStatus.${attribute}`
               ))
             ) {
-              this.adapter.log.warn(
-                `Unsupported attribute: ${attribute} of get_status with value ${deviceStatus[0][attribute]}. Please contact the dev to add the newly found attribute of your robot. Model: ${this.robotModel}`
-              );
+              const isKnownStatusAttribute =
+                typeof this.adapter.vacuums[duid].features
+                  .hasDeviceStatusAttribute === "function" &&
+                this.adapter.vacuums[duid].features.hasDeviceStatusAttribute(
+                  attribute
+                );
+
+              if (isKnownStatusAttribute) {
+                this.adapter.log.debug(
+                  `Skipping known get_status attribute without a Homebridge state object: ${attribute}. Model: ${this.robotModel}`
+                );
+              } else {
+                this.adapter.log.warn(
+                  `Unsupported attribute: ${attribute} of get_status with value ${deviceStatus[0][attribute]}. Please contact the dev to add the newly found attribute of your robot. Model: ${this.robotModel}`
+                );
+              }
               continue; // skip unsupported attributes
             }
 
