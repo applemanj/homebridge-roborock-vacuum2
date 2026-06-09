@@ -1,6 +1,12 @@
-import { setTimeout as nodeSetTimeout } from "node:timers";
+import {
+  clearTimeout as nodeClearTimeout,
+  setTimeout as nodeSetTimeout,
+} from "node:timers";
 
 import RoborockPlatform from "./platform";
+
+const MATTER_CLEAN_MODE_COMMAND_TIMEOUT_MS = 2000;
+const MATTER_CLEAN_MODE_PREP_TIMEOUT_MS = 2500;
 
 type MatterAccessory = {
   UUID: string;
@@ -55,6 +61,7 @@ type RoborockCommandOptions = {
   preferCloud?: boolean;
   preferLocal?: boolean;
   allowOfflineCloudSend?: boolean;
+  requestTimeoutMs?: number;
 };
 
 type RoborockStatusRefreshOptions = {
@@ -78,6 +85,15 @@ function unrefTimer(timer: ReturnType<typeof nodeSetTimeout>): void {
   if (typeof timer === "object" && typeof timer.unref === "function") {
     timer.unref();
   }
+}
+
+function clearTimer(timer: ReturnType<typeof nodeSetTimeout>): void {
+  const clear =
+    typeof globalThis.clearTimeout === "function"
+      ? globalThis.clearTimeout
+      : nodeClearTimeout;
+
+  clear(timer);
 }
 
 /**
@@ -305,6 +321,13 @@ export default class RoborockMatterVacuumAccessory {
     };
     delete options.preferLocal;
     return options;
+  }
+
+  private getMatterCleanModePrepCommandOptions(): RoborockCommandOptions {
+    return {
+      ...this.getMatterCommandOptions(),
+      requestTimeoutMs: MATTER_CLEAN_MODE_COMMAND_TIMEOUT_MS,
+    };
   }
 
   markRegistered(): void {
@@ -1078,13 +1101,44 @@ export default class RoborockMatterVacuumAccessory {
     this.platform.log.info(
       `Applying ${this.getCleanModeLabel(this.getCurrentCleanMode())} mode to ${this.getVacuumName()} before starting.`
     );
-    await applySettings.call(
-      this.api,
-      this.getDuid(),
-      settings,
-      this.getMatterCommandOptions()
-    );
-    this.selectedCleanModeNeedsApply = false;
+    try {
+      await this.withCleanModePrepTimeout(
+        applySettings.call(
+          this.api,
+          this.getDuid(),
+          settings,
+          this.getMatterCleanModePrepCommandOptions()
+        )
+      );
+    } catch (error) {
+      this.platform.log.warn(
+        `Unable to apply ${this.getCleanModeLabel(this.getCurrentCleanMode())} mode to ${this.getVacuumName()} before starting; continuing with the start command. ${this.getErrorMessage(error)}`
+      );
+    } finally {
+      this.selectedCleanModeNeedsApply = false;
+    }
+  }
+
+  private async withCleanModePrepTimeout<T>(promise: Promise<T>): Promise<T> {
+    let timeout: ReturnType<typeof nodeSetTimeout> | undefined;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeout = scheduleTimer(() => {
+        reject(
+          new Error(
+            `Matter clean mode prep timed out after ${MATTER_CLEAN_MODE_PREP_TIMEOUT_MS} ms.`
+          )
+        );
+      }, MATTER_CLEAN_MODE_PREP_TIMEOUT_MS);
+      unrefTimer(timeout);
+    });
+
+    try {
+      return await Promise.race([promise, timeoutPromise]);
+    } finally {
+      if (timeout) {
+        clearTimer(timeout);
+      }
+    }
   }
 
   private getRoborockCleanModeSettings(

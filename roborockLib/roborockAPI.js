@@ -43,6 +43,7 @@ const dockingStationStates = [
 ];
 
 const TRANSIENT_ERROR_LOG_THROTTLE_MS = 6 * 60 * 60 * 1000;
+const MATTER_CLEAN_MODE_COMMAND_TIMEOUT_MS = 2000;
 // How long to wait before retrying to cache rooms for a saved map that did not
 // return room segments. Retrying lets newly named/segmented maps appear without
 // switching maps on every poll cycle.
@@ -1947,8 +1948,15 @@ class Roborock {
   async applyMatterCleanModeSettings(duid, settings, options = {}) {
     const waitForResult = Boolean(options.waitForResult);
     const commandOptions = waitForResult
-      ? { ...options, throwOnError: true }
-      : options;
+      ? {
+          requestTimeoutMs: MATTER_CLEAN_MODE_COMMAND_TIMEOUT_MS,
+          ...options,
+          throwOnError: true,
+        }
+      : {
+          requestTimeoutMs: MATTER_CLEAN_MODE_COMMAND_TIMEOUT_MS,
+          ...options,
+        };
 
     if (
       Number.isInteger(settings?.fanPower) &&
@@ -1967,6 +1975,12 @@ class Roborock {
           "set_custom_mode",
           error
         );
+        if (this.isMatterSettingTimeoutError(error)) {
+          this.log.debug(
+            `Matter clean mode fan command timed out for ${duid}; skipping remaining clean-mode prep and continuing with start command. ${error.message || error}`
+          );
+          return;
+        }
         this.log.debug(
           `Matter clean mode fan command failed for ${duid}; continuing with start command. ${error.message || error}`
         );
@@ -2043,12 +2057,20 @@ class Roborock {
         return;
       } catch (error) {
         lastError = error;
-        if (this.shouldRememberUnsupportedMatterCommand(error)) {
+        const canTryFallback =
+          this.shouldRememberUnsupportedMatterCommand(error);
+        if (canTryFallback) {
           this.rememberUnsupportedMatterSettingCommand(duid, command, error);
+          this.log.debug(
+            `Matter clean mode command ${command} failed for ${duid}; trying another water command if available. ${error.message || error}`
+          );
+          continue;
         }
+
         this.log.debug(
-          `Matter clean mode command ${command} failed for ${duid}; trying another water command if available. ${error.message || error}`
+          `Matter clean mode command ${command} failed for ${duid}; not trying fallback commands before start. ${error.message || error}`
         );
+        throw error;
       }
     }
 
@@ -2100,6 +2122,11 @@ class Roborock {
       "invalid method",
       "unknown parameter",
     ].some((pattern) => message.includes(pattern));
+  }
+
+  isMatterSettingTimeoutError(error) {
+    const message = `${error?.message || error || ""}`.toLowerCase();
+    return message.includes("request") && message.includes("timed out after");
   }
 
   startMainUpdateInterval(duid, online) {

@@ -36,6 +36,7 @@ function createPlatform({
   appStop = jest.fn().mockResolvedValue(undefined),
   appPause = jest.fn().mockResolvedValue(undefined),
   appSegmentCleanByIds = jest.fn().mockResolvedValue(undefined),
+  applyMatterCleanModeSettings = jest.fn().mockResolvedValue(undefined),
   findMe = jest.fn().mockResolvedValue(undefined),
   loadMultiMap = jest.fn().mockResolvedValue(undefined),
   getStatus = jest.fn().mockResolvedValue(undefined),
@@ -75,6 +76,7 @@ function createPlatform({
       app_stop: appStop,
       app_pause: appPause,
       app_charge: appCharge,
+      applyMatterCleanModeSettings,
       find_me: findMe,
       app_segment_clean_by_ids: appSegmentCleanByIds,
       load_multi_map: loadMultiMap,
@@ -885,6 +887,56 @@ describe("Matter operational state", () => {
       preferCloud: true,
       allowOfflineCloudSend: true,
     });
+  });
+
+  test("does not block Matter start behind slow clean mode prep", async () => {
+    jest.useFakeTimers();
+    const appStart = jest.fn().mockResolvedValue(undefined);
+    const applyMatterCleanModeSettings = jest.fn(
+      () => new Promise(() => undefined)
+    );
+    const platform = createPlatform({
+      capabilities: {
+        canVacuum: true,
+        canMop: true,
+        canControlFanPower: true,
+        canControlWater: true,
+      },
+      status: { fan_power: 104, water_box_mode: 202 },
+      appStart,
+      applyMatterCleanModeSettings,
+    });
+    const { accessory } = createAccessory(platform, true);
+
+    await accessory.handlers.rvcCleanMode.changeToMode({ newMode: 2 });
+    await accessory.handlers.rvcRunMode.changeToMode({
+      newMode: RUN_MODE_CLEANING,
+    });
+    await jest.advanceTimersByTimeAsync(2499);
+
+    expect(appStart).not.toHaveBeenCalled();
+
+    await jest.advanceTimersByTimeAsync(1);
+    await Promise.resolve();
+
+    expect(appStart).toHaveBeenCalledWith("device-1", {
+      waitForResult: true,
+      preferLocal: true,
+      allowOfflineCloudSend: true,
+    });
+    expect(applyMatterCleanModeSettings).toHaveBeenCalledWith(
+      "device-1",
+      { fanPower: 104, waterBoxMode: 202 },
+      {
+        waitForResult: true,
+        preferLocal: true,
+        allowOfflineCloudSend: true,
+        requestTimeoutMs: 2000,
+      }
+    );
+    expect(platform.log.warn).toHaveBeenCalledWith(
+      expect.stringContaining("continuing with the start command")
+    );
   });
 
   test("passes cloud preference through Matter follow-up status refreshes when enabled", async () => {

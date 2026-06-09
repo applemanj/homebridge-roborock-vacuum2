@@ -12,9 +12,15 @@ const METHOD_REQUEST_TIMEOUTS = {
 
 /**
  * @param {string} method
+ * @param {number} [requestTimeoutMs]
  * @returns {number}
  */
-function getRequestTimeout(method) {
+function getRequestTimeout(method, requestTimeoutMs) {
+  const override = Number(requestTimeoutMs);
+  if (Number.isFinite(override) && override > 0) {
+    return Math.round(override);
+  }
+
   return METHOD_REQUEST_TIMEOUTS[method] || DEFAULT_REQUEST_TIMEOUT;
 }
 
@@ -87,6 +93,7 @@ function getRequestTimeout(method) {
  * @property {boolean} [preferCloud]
  * @property {boolean} [preferLocal]
  * @property {boolean} [allowOfflineCloudSend]
+ * @property {number} [requestTimeoutMs]
  */
 
 class messageQueueHandler {
@@ -255,7 +262,10 @@ class messageQueueHandler {
           );
         } else {
           // setup Timeout
-          const requestTimeout = getRequestTimeout(method);
+          const requestTimeout = getRequestTimeout(
+            method,
+            options.requestTimeoutMs
+          );
           const timeoutSeconds = Math.round(requestTimeout / 1000);
           const timeout = this.adapter.setTimeout(() => {
             this.adapter.pendingRequests.delete(messageID);

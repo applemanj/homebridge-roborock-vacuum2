@@ -516,13 +516,13 @@ describe("Roborock API model and diagnostics helpers", () => {
       "device-1",
       "set_custom_mode",
       105,
-      { waitForResult: true, throwOnError: true }
+      { waitForResult: true, requestTimeoutMs: 2000, throwOnError: true }
     );
     expect(api.vacuums["device-1"].command).toHaveBeenCalledWith(
       "device-1",
       "set_water_box_mode",
       201,
-      { waitForResult: true, throwOnError: true }
+      { waitForResult: true, requestTimeoutMs: 2000, throwOnError: true }
     );
   });
 
@@ -563,7 +563,7 @@ describe("Roborock API model and diagnostics helpers", () => {
       "device-1",
       "set_water_box_custom_mode",
       201,
-      { waitForResult: true, throwOnError: true }
+      { waitForResult: true, requestTimeoutMs: 2000, throwOnError: true }
     );
     expect(api.getMatterWaterModeCommandCandidates("device-1")).toEqual([
       "set_water_box_custom_mode",
@@ -614,23 +614,115 @@ describe("Roborock API model and diagnostics helpers", () => {
       "device-1",
       "set_custom_mode",
       104,
-      { waitForResult: true, throwOnError: true }
+      { waitForResult: true, requestTimeoutMs: 2000, throwOnError: true }
     );
     expect(api.vacuums["device-1"].command).toHaveBeenCalledWith(
       "device-1",
       "set_water_box_mode",
       200,
-      { waitForResult: true, throwOnError: true }
+      { waitForResult: true, requestTimeoutMs: 2000, throwOnError: true }
     );
     expect(api.vacuums["device-1"].command).toHaveBeenCalledWith(
       "device-1",
       "set_water_box_custom_mode",
       200,
-      { waitForResult: true, throwOnError: true }
+      { waitForResult: true, requestTimeoutMs: 2000, throwOnError: true }
     );
     expect(api.getMatterWaterModeCommandCandidates("device-1")).toEqual([]);
     expect(log.debug).toHaveBeenCalledWith(
       expect.stringContaining("continuing with start command")
+    );
+  });
+
+  test("skips remaining Matter clean mode prep when fan command times out", async () => {
+    const log = createLog();
+    const api = createRoborock({ log });
+    await api.setStateAsync("HomeData", {
+      val: JSON.stringify({
+        products: [
+          {
+            id: "product-1",
+            schema: [
+              { id: 123, code: "fan_power" },
+              { id: 124, code: "water_box_mode" },
+            ],
+          },
+        ],
+        devices: [{ duid: "device-1", productId: "product-1" }],
+        receivedDevices: [],
+      }),
+      ack: true,
+    });
+    api.bInited = true;
+    api.vacuums["device-1"] = {
+      command: jest.fn(async () => {
+        throw new Error(
+          "Cloud request with id 47 with method set_custom_mode timed out after 2 seconds. MQTT connection state: true"
+        );
+      }),
+    };
+
+    await api.applyMatterCleanModeSettings(
+      "device-1",
+      { fanPower: 104, waterBoxMode: 200 },
+      { waitForResult: true }
+    );
+
+    expect(api.vacuums["device-1"].command).toHaveBeenCalledTimes(1);
+    expect(api.vacuums["device-1"].command).toHaveBeenCalledWith(
+      "device-1",
+      "set_custom_mode",
+      104,
+      { waitForResult: true, requestTimeoutMs: 2000, throwOnError: true }
+    );
+    expect(log.debug).toHaveBeenCalledWith(
+      expect.stringContaining("skipping remaining clean-mode prep")
+    );
+  });
+
+  test("does not fall back between Roborock water commands after a timeout", async () => {
+    const log = createLog();
+    const api = createRoborock({ log });
+    await api.setStateAsync("HomeData", {
+      val: JSON.stringify({
+        products: [
+          {
+            id: "product-1",
+            schema: [
+              { id: 123, code: "fan_power" },
+              { id: 124, code: "water_box_mode" },
+            ],
+          },
+        ],
+        devices: [{ duid: "device-1", productId: "product-1" }],
+        receivedDevices: [],
+      }),
+      ack: true,
+    });
+    api.bInited = true;
+    api.vacuums["device-1"] = {
+      command: jest.fn(async () => {
+        throw new Error(
+          "Cloud request with id 48 with method set_water_box_mode timed out after 2 seconds. MQTT connection state: true"
+        );
+      }),
+    };
+
+    await api.applyMatterCleanModeSettings(
+      "device-1",
+      { waterBoxMode: 200 },
+      { waitForResult: true }
+    );
+
+    expect(api.vacuums["device-1"].command).toHaveBeenCalledTimes(1);
+    expect(api.vacuums["device-1"].command).toHaveBeenCalledWith(
+      "device-1",
+      "set_water_box_mode",
+      200,
+      { waitForResult: true, requestTimeoutMs: 2000, throwOnError: true }
+    );
+    expect(log.debug).toHaveBeenCalledWith(
+      expect.stringContaining("not trying fallback commands before start")
     );
   });
 

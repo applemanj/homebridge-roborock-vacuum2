@@ -51,6 +51,11 @@ describe("messageQueueHandler request timeouts", () => {
     expect(getRequestTimeout("get_status")).toBe(DEFAULT_REQUEST_TIMEOUT);
     expect(getRequestTimeout("app_start")).toBe(DEFAULT_REQUEST_TIMEOUT);
   });
+
+  test("honors a positive per-request timeout override", () => {
+    expect(getRequestTimeout("app_start", 2000)).toBe(2000);
+    expect(getRequestTimeout("load_multi_map", 1500)).toBe(1500);
+  });
 });
 
 describe("messageQueueHandler transport selection", () => {
@@ -108,6 +113,27 @@ describe("messageQueueHandler transport selection", () => {
         lastCommandMethod: "get_clean_record",
       })
     );
+  });
+
+  test("uses per-request timeout overrides when sending a request", async () => {
+    const adapter = createAdapter({
+      setTimeout: jest.fn((callback, timeout) => setTimeout(callback, timeout)),
+    });
+    adapter.rr_mqtt_connector.sendMessage.mockImplementation(() => {
+      const pending = adapter.pendingRequests.get(42);
+      adapter.clearTimeout(pending.timeout);
+      adapter.pendingRequests.delete(42);
+      pending.resolve(["ok"]);
+    });
+
+    const handler = new messageQueueHandler(adapter);
+    await expect(
+      handler.sendRequest("device-1", "app_start", [], false, false, {
+        requestTimeoutMs: 2000,
+      })
+    ).resolves.toEqual(["ok"]);
+
+    expect(adapter.setTimeout).toHaveBeenCalledWith(expect.any(Function), 2000);
   });
 
   test("attempts a local reconnect for preferred-local commands", async () => {
