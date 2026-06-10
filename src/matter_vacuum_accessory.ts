@@ -227,6 +227,9 @@ const OPTIMISTIC_STATE_TTL_MS = 2 * 60 * 1000;
 const OPTIMISTIC_CONTRADICTION_LIMIT = 2;
 const SLOW_MATTER_COMMAND_MS = 3000;
 const MATTER_COMMAND_STATUS_REFRESH_DELAYS_MS = [2000, 15000] as const;
+const MATTER_AMBIGUOUS_COMMAND_STATUS_REFRESH_DELAYS_MS = [
+  0, 2000, 5000, 10000, 20000, 30000,
+] as const;
 const MATTER_RETURN_TO_DOCK_STATUS_REFRESH_DELAYS_MS = [
   2000, 15000, 30000, 60000, 90000, 120000, 150000, 180000,
 ] as const;
@@ -673,7 +676,7 @@ export default class RoborockMatterVacuumAccessory {
   }
 
   private async returnToDock(): Promise<void> {
-    if (this.isDockedOrChargingNow()) {
+    if (this.isDockedOrChargingNow() && !this.hasActiveOptimisticState()) {
       this.platform.log.info(
         `Ignoring Matter dock request for ${this.getVacuumName()} because it is already docked or charging.`
       );
@@ -682,6 +685,12 @@ export default class RoborockMatterVacuumAccessory {
         true
       );
       return;
+    }
+
+    if (this.isDockedOrChargingNow()) {
+      this.platform.log.info(
+        `Sending ${this.getVacuumName()} back to dock from Matter despite a stale docked snapshot because a recent Matter command still expects active cleaning.`
+      );
     }
 
     this.platform.log.info(
@@ -2384,6 +2393,11 @@ export default class RoborockMatterVacuumAccessory {
     );
   }
 
+  private hasActiveOptimisticState(): boolean {
+    const optimistic = this.getActiveOptimisticState();
+    return optimistic !== null && this.isActiveMatterState(optimistic);
+  }
+
   private pulseMatterIdentifyRefreshForReadyState(
     clusters: MatterClusterState,
     reason: string
@@ -2458,9 +2472,11 @@ export default class RoborockMatterVacuumAccessory {
       .catch(async (error) => {
         if (this.isMatterCommandTimeoutError(error)) {
           this.platform.log.warn(
-            `Matter ${action} command for ${this.getVacuumName()} was sent but Roborock did not acknowledge it before timeout: ${this.getErrorMessage(error)}. Keeping the optimistic Matter state while waiting for live status updates.`
+            `Matter ${action} command for ${this.getVacuumName()} was sent but Roborock did not acknowledge it before timeout: ${this.getErrorMessage(error)}. Keeping the optimistic Matter state and actively refreshing Roborock status.`
           );
-          this.schedulePostCommandStatusRefresh(action);
+          this.schedulePostCommandStatusRefresh(action, {
+            acknowledgementTimedOut: true,
+          });
           return;
         }
 
@@ -2550,14 +2566,18 @@ export default class RoborockMatterVacuumAccessory {
     this.platform.log.info(message);
   }
 
-  private schedulePostCommandStatusRefresh(action: string): void {
+  private schedulePostCommandStatusRefresh(
+    action: string,
+    options: { acknowledgementTimedOut?: boolean } = {}
+  ): void {
     const refreshStatus = this.api.getStatus;
     if (!this.registered || typeof refreshStatus !== "function") {
       return;
     }
 
-    const refreshDelays =
-      action === "return to dock"
+    const refreshDelays = options.acknowledgementTimedOut
+      ? MATTER_AMBIGUOUS_COMMAND_STATUS_REFRESH_DELAYS_MS
+      : action === "return to dock"
         ? MATTER_RETURN_TO_DOCK_STATUS_REFRESH_DELAYS_MS
         : MATTER_COMMAND_STATUS_REFRESH_DELAYS_MS;
 

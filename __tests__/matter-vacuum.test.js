@@ -1112,6 +1112,7 @@ describe("Matter optimistic state", () => {
   });
 
   test("keeps optimistic state when a Matter command acknowledgement times out", async () => {
+    jest.useFakeTimers();
     const matterUpdates = [];
     const getStatus = jest.fn().mockResolvedValue(undefined);
     const appStart = jest
@@ -1132,18 +1133,66 @@ describe("Matter optimistic state", () => {
     await vacuum.accessory.handlers.rvcRunMode.changeToMode({
       newMode: RUN_MODE_CLEANING,
     });
-    await flush();
-    await flush();
+    await Promise.resolve();
+    await Promise.resolve();
+    await jest.advanceTimersByTimeAsync(0);
 
     const operationalUpdates = matterUpdates.filter(
-      (update) => update.cluster === "rvcOperationalState"
+      (update) =>
+        update.cluster === "rvcOperationalState" &&
+        typeof update.attributes.operationalState === "number"
     );
     expect(operationalUpdates).toHaveLength(1);
     expect(operationalUpdates[0].attributes.operationalState).toBe(1);
     expect(platform.log.warn).toHaveBeenCalledWith(
-      expect.stringContaining("Keeping the optimistic Matter state")
+      expect.stringContaining("actively refreshing Roborock status")
     );
-    expect(getStatus).not.toHaveBeenCalled();
+    expect(getStatus).toHaveBeenCalledWith("device-1", { force: true });
+
+    await jest.advanceTimersByTimeAsync(2000);
+    expect(getStatus).toHaveBeenCalledTimes(2);
+
+    await jest.advanceTimersByTimeAsync(3000);
+    expect(getStatus).toHaveBeenCalledTimes(3);
+
+    jest.clearAllTimers();
+  });
+
+  test("sends dock after a timed-out start while the cached state still says docked", async () => {
+    jest.useFakeTimers();
+    const appStart = jest
+      .fn()
+      .mockRejectedValue(
+        new Error(
+          "Cloud request with id 1748 with method app_start timed out after 10 seconds. MQTT connection state: true"
+        )
+      );
+    const appCharge = jest.fn().mockResolvedValue(undefined);
+    const platform = createPlatform({
+      appStart,
+      appCharge,
+      status: { state: 8, battery: 100, charge_status: 1 },
+    });
+    const { vacuum } = createAccessory(platform, true);
+
+    await vacuum.accessory.handlers.rvcRunMode.changeToMode({
+      newMode: RUN_MODE_CLEANING,
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    await vacuum.accessory.handlers.rvcOperationalState.goHome();
+
+    expect(appCharge).toHaveBeenCalledWith("device-1", {
+      waitForResult: true,
+      preferLocal: true,
+      allowOfflineCloudSend: true,
+    });
+    expect(platform.log.info).toHaveBeenCalledWith(
+      expect.stringContaining("despite a stale docked snapshot")
+    );
+
+    jest.clearAllTimers();
   });
 
   test("does not let a stale optimistic update override hard command failure recovery", async () => {
