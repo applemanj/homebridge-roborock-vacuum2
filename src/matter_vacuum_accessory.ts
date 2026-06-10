@@ -2032,7 +2032,18 @@ export default class RoborockMatterVacuumAccessory {
   }
 
   private getLiveMessageForThisAccessory(data: unknown): unknown | null {
-    if (!data || typeof data !== "object" || Array.isArray(data)) {
+    if (!data || typeof data !== "object") {
+      return data;
+    }
+
+    if (Array.isArray(data)) {
+      if (!this.platform.shouldAcceptUnscopedLiveMessage()) {
+        this.platform.log.debug(
+          `Ignoring unscoped live Roborock update for ${this.getVacuumName()} because multiple vacuums are configured.`
+        );
+        return null;
+      }
+
       return data;
     }
 

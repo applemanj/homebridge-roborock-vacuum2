@@ -199,22 +199,7 @@ export default class RoborockPlatform implements DynamicPlatformPlugin {
     const self = this;
 
     self.roborockAPI.setDeviceNotify(function (id, homeData) {
-      self.log.debug(`${id} notifyDeviceUpdater:${JSON.stringify(homeData)}`);
-      if (
-        typeof self.roborockAPI.recordRoborockDiagnosticMessage === "function"
-      ) {
-        self.roborockAPI.recordRoborockDiagnosticMessage(id, homeData);
-      }
-
-      for (const vacuum of self.vacuums) {
-        vacuum.notifyDeviceUpdater(id, homeData);
-      }
-
-      for (const vacuum of self.matterVacuums.values()) {
-        vacuum.notifyDeviceUpdater(id, homeData).catch((error) => {
-          self.log.debug("Error updating Matter vacuum state: " + error);
-        });
-      }
+      self.dispatchDeviceUpdate(id, homeData);
     });
 
     self.roborockAPI.startService(function () {
@@ -222,6 +207,115 @@ export default class RoborockPlatform implements DynamicPlatformPlugin {
       //call the discoverDevices function
       self.discoverDevices();
     });
+  }
+
+  private dispatchDeviceUpdate(id: string, homeData: unknown): void {
+    this.log.debug(`${id} notifyDeviceUpdater:${JSON.stringify(homeData)}`);
+    if (
+      typeof this.roborockAPI.recordRoborockDiagnosticMessage === "function"
+    ) {
+      this.roborockAPI.recordRoborockDiagnosticMessage(id, homeData);
+    }
+
+    const scopedDuid = this.getScopedLiveMessageDuid(id, homeData);
+    if (scopedDuid) {
+      this.notifyVacuumByDuid(scopedDuid, id, homeData);
+      return;
+    }
+
+    if (
+      this.isLiveDeviceMessage(id) &&
+      !this.shouldAcceptUnscopedLiveMessage()
+    ) {
+      this.log.debug(
+        `Ignoring unscoped ${id} update because multiple Roborock vacuums are configured.`
+      );
+      return;
+    }
+
+    for (const vacuum of this.vacuums) {
+      vacuum.notifyDeviceUpdater(id, homeData);
+    }
+
+    for (const vacuum of this.matterVacuums.values()) {
+      vacuum.notifyDeviceUpdater(id, homeData).catch((error) => {
+        this.log.debug("Error updating Matter vacuum state: " + error);
+      });
+    }
+  }
+
+  private notifyVacuumByDuid(
+    duid: string,
+    id: string,
+    homeData: unknown
+  ): void {
+    for (const vacuum of this.vacuums) {
+      if (vacuum.getDuid() === duid) {
+        vacuum.notifyDeviceUpdater(id, homeData);
+      }
+    }
+
+    const matterVacuum = this.matterVacuums.get(duid);
+    if (matterVacuum) {
+      matterVacuum.notifyDeviceUpdater(id, homeData).catch((error) => {
+        this.log.debug("Error updating Matter vacuum state: " + error);
+      });
+    }
+  }
+
+  private getScopedLiveMessageDuid(id: string, data: unknown): string | null {
+    if (!this.isLiveDeviceMessage(id)) {
+      return null;
+    }
+
+    if (!data || typeof data !== "object" || Array.isArray(data)) {
+      return null;
+    }
+
+    const message = data as Record<string, unknown>;
+    if (
+      Object.prototype.hasOwnProperty.call(message, "duid") &&
+      Object.prototype.hasOwnProperty.call(message, "payload") &&
+      message.duid
+    ) {
+      return String(message.duid);
+    }
+
+    return null;
+  }
+
+  private isLiveDeviceMessage(id: string): boolean {
+    return id === "CloudMessage" || id === "LocalMessage";
+  }
+
+  public shouldAcceptUnscopedLiveMessage(): boolean {
+    return this.getConfiguredVacuumDuidCount() <= 1;
+  }
+
+  private getConfiguredVacuumDuidCount(): number {
+    const duids = new Set<string>();
+    const devices =
+      typeof this.roborockAPI.getVacuumList === "function"
+        ? this.roborockAPI.getVacuumList()
+        : [];
+
+    if (Array.isArray(devices)) {
+      for (const device of devices) {
+        if (device?.duid) {
+          duids.add(String(device.duid));
+        }
+      }
+    }
+
+    for (const vacuum of this.vacuums) {
+      duids.add(vacuum.getDuid());
+    }
+
+    for (const duid of this.matterVacuums.keys()) {
+      duids.add(duid);
+    }
+
+    return duids.size;
   }
 
   /**

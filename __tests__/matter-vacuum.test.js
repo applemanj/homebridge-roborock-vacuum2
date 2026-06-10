@@ -25,6 +25,7 @@ function createPlatform({
   enableMatterCleanMode = true,
   enableMatterExtendedOperationalStates = false,
   preferCloudForMatterCommands = false,
+  acceptUnscopedLiveMessages = true,
   capabilities = { canVacuum: true, canMop: false },
   rooms = [],
   maps = [],
@@ -62,6 +63,7 @@ function createPlatform({
     getMatterApi: () => ({
       updateAccessoryState,
     }),
+    shouldAcceptUnscopedLiveMessage: () => acceptUnscopedLiveMessages,
     roborockAPI: {
       getVacuumDeviceInfo: (duid, property) =>
         property === "name" ? "Test Vacuum" : "",
@@ -1012,6 +1014,25 @@ describe("Matter live status cache", () => {
     expect(
       await accessory.getState("rvcOperationalState", "operationalState")
     ).toBe(1); // RUNNING, sourced from the live cache rather than HomeData
+  });
+
+  test("ignores unscoped live arrays when multiple vacuums are configured", async () => {
+    const platform = createPlatform({
+      acceptUnscopedLiveMessages: false,
+      status: { state: 8, battery: 50 },
+    });
+    const { accessory, vacuum } = createAccessory(platform, true);
+
+    await vacuum.notifyDeviceUpdater("CloudMessage", [
+      { state: 5, battery: 50 },
+    ]);
+
+    expect(
+      await accessory.getState("rvcOperationalState", "operationalState")
+    ).toBe(RVC_OPERATIONAL_STATE_STOPPED);
+    expect(platform.log.debug).toHaveBeenCalledWith(
+      expect.stringContaining("Ignoring unscoped live Roborock update")
+    );
   });
 
   test("ignores device-scoped live messages for other vacuums", async () => {

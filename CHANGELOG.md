@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.56
+
+- Hardened Roborock live cloud/local status routing so device-scoped updates are delivered only to the matching vacuum, and unscoped live arrays are ignored when multiple vacuums are configured.
+- Added normal Homebridge log entries when the legacy HomeKit fan accessory receives Start/Stop writes, making it easier to tell whether a failed command reached the plugin.
+- Added regression coverage for multi-vacuum live-message routing and unscoped live payload handling.
+
 ## 1.4.55
 
 - Kept Matter optimistic state after Roborock cloud or local command acknowledgement timeouts and started an immediate fast follow-up refresh cadence so Apple Home can converge once live `get_status` catches up.

@@ -201,6 +201,15 @@ export default class RoborockVacuumAccessory {
     );
   }
 
+  public getDuid(): string {
+    const context = this.accessory.context as unknown;
+    if (context && typeof context === "object" && "duid" in context) {
+      return String((context as { duid: unknown }).duid);
+    }
+
+    return String(context);
+  }
+
   async getMomentaryControlSwitch(): Promise<CharacteristicValue> {
     return false;
   }
@@ -537,7 +546,18 @@ export default class RoborockVacuumAccessory {
   }
 
   private getLiveMessageForThisAccessory(data): unknown | null {
-    if (!data || typeof data !== "object" || Array.isArray(data)) {
+    if (!data || typeof data !== "object") {
+      return data;
+    }
+
+    if (Array.isArray(data)) {
+      if (!this.platform.shouldAcceptUnscopedLiveMessage()) {
+        this.platform.log.debug(
+          `Ignoring unscoped live Roborock update for ${this.getVacuumName()} because multiple vacuums are configured.`
+        );
+        return null;
+      }
+
       return data;
     }
 
@@ -557,13 +577,20 @@ export default class RoborockVacuumAccessory {
 
   async setActive(value: CharacteristicValue) {
     try {
-      this.platform.log.debug("Setting active to " + value);
+      const vacuumName = this.getVacuumName();
+      const command =
+        value == this.platform.Characteristic.Active.ACTIVE
+          ? "start cleaning"
+          : "stop cleaning";
+      this.platform.log.info(
+        `HomeKit fan command received for ${vacuumName}: ${command}.`
+      );
 
       if (value == this.platform.Characteristic.Active.ACTIVE) {
         await this.platform.roborockAPI.app_start(this.accessory.context);
       } else {
         this.platform.log.info(
-          `Stopping ${this.getVacuumName()}. Use the Return to Dock switch to dock intentionally.`
+          `Stopping ${vacuumName}. Use the Return to Dock switch to dock intentionally.`
         );
         await this.platform.roborockAPI.app_stop(this.accessory.context);
       }
