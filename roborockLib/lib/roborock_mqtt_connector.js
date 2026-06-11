@@ -6,6 +6,10 @@ const Parser = require("binary-parser").Parser;
 const zlib = require("zlib");
 const forge = require("node-forge");
 
+const PHOTO_MAGIC = "ROBOROCK";
+const PHOTO_HEADER_MIN_LENGTH = 9;
+const PROTOCOL_301_HEADER_LENGTH = 24;
+
 const protocol301Parser = new Parser()
   .endianess("little")
   .string("endpoint", {
@@ -34,6 +38,38 @@ let rriot;
 
 let photoGzipChunks = [];
 let photoChunkID = 0;
+
+function payloadStartsWith(payload, value) {
+  return (
+    Buffer.isBuffer(payload) &&
+    payload.length >= value.length &&
+    payload.subarray(0, value.length).toString("utf8") === value
+  );
+}
+
+function parsePhotoPayload(payload) {
+  if (
+    !payloadStartsWith(payload, PHOTO_MAGIC) ||
+    payload.length < PHOTO_HEADER_MIN_LENGTH
+  ) {
+    return null;
+  }
+
+  return photoParser.parse(payload);
+}
+
+function parseProtocol301Header(payload) {
+  if (
+    !Buffer.isBuffer(payload) ||
+    payload.length < PROTOCOL_301_HEADER_LENGTH
+  ) {
+    return null;
+  }
+
+  return protocol301Parser.parse(
+    payload.subarray(0, PROTOCOL_301_HEADER_LENGTH)
+  );
+}
 
 class roborock_mqtt_connector {
   constructor(adapter) {
@@ -277,19 +313,20 @@ class roborock_mqtt_connector {
           }
           // protocol 300 seems to be for get_photo 0 only. get_photo 0 is for large images. 1 is for small images.
         } else if (data.protocol == 300) {
-          if (data.payload.subarray(0, 8) == "ROBOROCK") {
-            const photoData = photoParser.parse(data.payload);
-
+          const photoData = parsePhotoPayload(data.payload);
+          if (photoData) {
             if (this.adapter.pendingRequests.has(photoData.id)) {
               this.adapter.log.debug(`First photo gzip chunk detected!`);
 
               photoGzipChunks.push(data.payload.slice(56));
               photoChunkID = photoData.id;
             }
+          } else {
+            this.adapter.log.debug(
+              `Skipping protocol 300 MQTT message for ${duid} because the payload is not a complete Roborock photo header.`
+            );
           }
         } else if (data.protocol == 301) {
-          const data2 = protocol301Parser.parse(data.payload.subarray(0, 24));
-
           if (data.seq == 2 && photoGzipChunks != [] && photoChunkID != 0) {
             this.adapter.log.debug(`Second photo gzip chunk detected!`);
             photoGzipChunks.push(data.payload);
@@ -308,8 +345,8 @@ class roborock_mqtt_connector {
               resolve(finalPhotoGzip);
             }
           } else {
-            if (data.payload.subarray(0, 8) == "ROBOROCK") {
-              const photoData = photoParser.parse(data.payload);
+            const photoData = parsePhotoPayload(data.payload);
+            if (photoData) {
               this.adapter.log.debug(
                 `Cloud message with protocol 301 and photo id ${photoData.id} received.`
               );
@@ -325,7 +362,19 @@ class roborock_mqtt_connector {
                 );
                 resolve(data.payload.slice(56));
               }
-            } else if (endpoint.startsWith(data2.endpoint)) {
+            } else {
+              const data2 = parseProtocol301Header(data.payload);
+              if (!data2) {
+                this.adapter.log.debug(
+                  `Skipping protocol 301 MQTT message for ${duid} because the payload is shorter than ${PROTOCOL_301_HEADER_LENGTH} bytes.`
+                );
+                return;
+              }
+
+              if (!endpoint.startsWith(data2.endpoint)) {
+                return;
+              }
+
               const iv = Buffer.alloc(16, 0);
               const decipher = crypto.createDecipheriv(
                 "aes-128-cbc",
@@ -496,4 +545,7 @@ class roborock_mqtt_connector {
 
 module.exports = {
   roborock_mqtt_connector,
+  parseProtocol301Header,
+  parsePhotoPayload,
+  payloadStartsWith,
 };

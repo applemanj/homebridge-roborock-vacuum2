@@ -69,6 +69,10 @@ type RoborockStatusRefreshOptions = {
   preferCloud?: boolean;
 };
 
+type MatterCommandDispatchOptions = {
+  retryReturnToDockIfStillActive?: boolean;
+};
+
 function scheduleTimer(
   callback: () => void,
   delayMs: number
@@ -233,6 +237,7 @@ const MATTER_AMBIGUOUS_COMMAND_STATUS_REFRESH_DELAYS_MS = [
 const MATTER_RETURN_TO_DOCK_STATUS_REFRESH_DELAYS_MS = [
   2000, 15000, 30000, 60000, 90000, 120000, 150000, 180000,
 ] as const;
+const MATTER_RETURN_TO_DOCK_RETRY_DELAY_MS = 7000;
 const MATTER_INITIALIZATION_RETRY_DELAYS_MS = [1000, 3000, 10000] as const;
 const MATTER_STATE_HEARTBEAT_INTERVAL_MS = 5 * 1000;
 const MATTER_READY_FORCE_REFRESH_INTERVAL_MS = 30 * 1000;
@@ -266,6 +271,7 @@ export default class RoborockMatterVacuumAccessory {
   private lastWaterBoxMode: number | null = null;
   private matterInitializationRetryAttempt = 0;
   private matterInitializationRetryPending = false;
+  private returnToDockRetryPending = false;
   private lastMatterReadyForceRefreshAt = 0;
   private lastMatterReadRefreshAt = 0;
   private lastMatterReadyIdentifyRefreshAt =
@@ -303,6 +309,7 @@ export default class RoborockMatterVacuumAccessory {
   private getMatterCommandOptions(): RoborockCommandOptions {
     const options: RoborockCommandOptions = {
       waitForResult: true,
+      throwOnError: true,
       preferLocal: true,
       allowOfflineCloudSend: true,
     };
@@ -710,8 +717,10 @@ export default class RoborockMatterVacuumAccessory {
       },
     };
     this.setAndScheduleOptimisticState(state, "return to dock");
-    this.dispatchRoborockMatterCommand("return to dock", () =>
-      this.api.app_charge(this.getDuid(), this.getMatterCommandOptions())
+    this.dispatchRoborockMatterCommand(
+      "return to dock",
+      () => this.api.app_charge(this.getDuid(), this.getMatterCommandOptions()),
+      { retryReturnToDockIfStillActive: true }
     );
   }
 
@@ -2471,7 +2480,8 @@ export default class RoborockMatterVacuumAccessory {
 
   private dispatchRoborockMatterCommand(
     action: string,
-    command: () => Promise<void>
+    command: () => Promise<void>,
+    options: MatterCommandDispatchOptions = {}
   ): void {
     const startedAt = Date.now();
 
@@ -2488,6 +2498,9 @@ export default class RoborockMatterVacuumAccessory {
           this.schedulePostCommandStatusRefresh(action, {
             acknowledgementTimedOut: true,
           });
+          if (options.retryReturnToDockIfStillActive) {
+            this.scheduleReturnToDockRetry(command);
+          }
           return;
         }
 
@@ -2496,6 +2509,106 @@ export default class RoborockMatterVacuumAccessory {
         );
         await this.recoverMatterStateAfterFailedCommand(action);
       });
+  }
+
+  private scheduleReturnToDockRetry(command: () => Promise<void>): void {
+    if (this.returnToDockRetryPending) {
+      return;
+    }
+
+    this.returnToDockRetryPending = true;
+    const retryTimer = scheduleTimer(() => {
+      this.returnToDockRetryPending = false;
+
+      void this.refreshMatterStatusBeforeRetry("return to dock retry")
+        .then(() => {
+          if (!this.shouldRetryReturnToDock()) {
+            this.platform.log.debug(
+              `Skipping Matter return to dock retry for ${this.getVacuumName()} because Roborock no longer reports active cleaning.`
+            );
+            return;
+          }
+
+          const startedAt = Date.now();
+          this.platform.log.warn(
+            `Retrying Matter return to dock command for ${this.getVacuumName()} because Roborock still reports active cleaning after the first command timed out.`
+          );
+
+          return command()
+            .then(() => {
+              this.logMatterCommandDuration("return to dock retry", startedAt);
+              this.schedulePostCommandStatusRefresh("return to dock retry");
+            })
+            .catch(async (error) => {
+              if (this.isMatterCommandTimeoutError(error)) {
+                this.platform.log.warn(
+                  `Matter return to dock retry for ${this.getVacuumName()} was sent but Roborock did not acknowledge it before timeout: ${this.getErrorMessage(error)}. Keeping the optimistic Matter state and actively refreshing Roborock status.`
+                );
+                this.schedulePostCommandStatusRefresh("return to dock retry", {
+                  acknowledgementTimedOut: true,
+                });
+                return;
+              }
+
+              this.platform.log.error(
+                `Error sending Matter return to dock retry to ${this.getVacuumName()}: ${this.getErrorMessage(error)}`
+              );
+              await this.recoverMatterStateAfterFailedCommand(
+                "return to dock retry"
+              );
+            });
+        })
+        .catch((error) => {
+          this.platform.log.debug(
+            `Unable to evaluate Matter return to dock retry for ${this.getVacuumName()}: ${this.getErrorMessage(error)}`
+          );
+        });
+    }, MATTER_RETURN_TO_DOCK_RETRY_DELAY_MS);
+    unrefTimer(retryTimer);
+  }
+
+  private async refreshMatterStatusBeforeRetry(reason: string): Promise<void> {
+    const refreshStatus = this.api.getStatus;
+    if (typeof refreshStatus !== "function") {
+      return;
+    }
+
+    await refreshStatus.call(
+      this.api,
+      this.getDuid(),
+      this.getMatterStatusRefreshOptions()
+    );
+    await this.updateMatterStateFromRoborock();
+  }
+
+  private shouldRetryReturnToDock(): boolean {
+    const state = this.getNumberStatus("state");
+    const chargeStatus = this.getNumberStatus("charge_status");
+
+    if (this.isRoborockDockedOrCharging(state, chargeStatus)) {
+      return false;
+    }
+
+    return this.isRoborockActivelyCleaningAwayFromDock(state);
+  }
+
+  private isRoborockActivelyCleaningAwayFromDock(
+    state: number | null
+  ): boolean {
+    switch (state) {
+      case 4: // Remote Control
+      case 5: // Cleaning
+      case 7: // Manual Mode
+      case 10: // Paused
+      case 11: // Spot Cleaning
+      case 16: // Go To
+      case 17: // Zone Clean
+      case 18: // Room Clean
+      case 29: // Mapping
+        return true;
+      default:
+        return false;
+    }
   }
 
   private async recoverMatterStateAfterFailedCommand(

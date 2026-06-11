@@ -72,6 +72,13 @@ class vacuum {
       if (options.allowOfflineCloudSend) {
         requestOptions.allowOfflineCloudSend = true;
       }
+      if (
+        typeof options.requestTimeoutMs === "number" &&
+        Number.isFinite(options.requestTimeoutMs) &&
+        options.requestTimeoutMs > 0
+      ) {
+        requestOptions.requestTimeoutMs = options.requestTimeoutMs;
+      }
       const hasRequestOptions = Object.keys(requestOptions).length > 0;
       const sendCommandRequest = (method, params) =>
         hasRequestOptions

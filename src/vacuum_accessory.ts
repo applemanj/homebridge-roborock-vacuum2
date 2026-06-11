@@ -587,12 +587,24 @@ export default class RoborockVacuumAccessory {
       );
 
       if (value == this.platform.Characteristic.Active.ACTIVE) {
-        await this.platform.roborockAPI.app_start(this.accessory.context);
+        const startedAt = Date.now();
+        await this.platform.roborockAPI.app_start(this.accessory.context, {
+          waitForResult: true,
+        });
+        this.platform.log.info(
+          `HomeKit fan start command for ${vacuumName} was acknowledged by Roborock in ${Date.now() - startedAt} ms.`
+        );
       } else {
         this.platform.log.info(
           `Stopping ${vacuumName}. Use the Return to Dock switch to dock intentionally.`
         );
-        await this.platform.roborockAPI.app_stop(this.accessory.context);
+        const startedAt = Date.now();
+        await this.platform.roborockAPI.app_stop(this.accessory.context, {
+          waitForResult: true,
+        });
+        this.platform.log.info(
+          `HomeKit fan stop command for ${vacuumName} was acknowledged by Roborock in ${Date.now() - startedAt} ms.`
+        );
       }
 
       this.services["Fan"].updateCharacteristic(

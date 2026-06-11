@@ -492,6 +492,7 @@ describe("Matter identify", () => {
 
     expect(findMe).toHaveBeenCalledWith("device-1", {
       waitForResult: true,
+      throwOnError: true,
       preferLocal: true,
       allowOfflineCloudSend: true,
     });
@@ -607,11 +608,13 @@ describe("Matter service area selection", () => {
 
     expect(loadMultiMap).toHaveBeenCalledWith("device-1", 0, {
       waitForResult: true,
+      throwOnError: true,
       preferCloud: true,
       allowOfflineCloudSend: true,
     });
     expect(appSegmentCleanByIds).toHaveBeenCalledWith("device-1", [16], {
       waitForResult: true,
+      throwOnError: true,
       preferLocal: true,
       allowOfflineCloudSend: true,
     });
@@ -647,6 +650,7 @@ describe("Matter service area selection", () => {
 
     expect(appSegmentCleanByIds).toHaveBeenCalledWith("device-1", [16], {
       waitForResult: true,
+      throwOnError: true,
       preferLocal: true,
       allowOfflineCloudSend: true,
     });
@@ -790,6 +794,7 @@ describe("Matter operational state", () => {
 
     expect(appCharge).toHaveBeenCalledWith("device-1", {
       waitForResult: true,
+      throwOnError: true,
       preferLocal: true,
       allowOfflineCloudSend: true,
     });
@@ -886,6 +891,7 @@ describe("Matter operational state", () => {
 
     expect(appStart).toHaveBeenCalledWith("device-1", {
       waitForResult: true,
+      throwOnError: true,
       preferCloud: true,
       allowOfflineCloudSend: true,
     });
@@ -923,6 +929,7 @@ describe("Matter operational state", () => {
 
     expect(appStart).toHaveBeenCalledWith("device-1", {
       waitForResult: true,
+      throwOnError: true,
       preferLocal: true,
       allowOfflineCloudSend: true,
     });
@@ -931,6 +938,7 @@ describe("Matter operational state", () => {
       { fanPower: 104, waterBoxMode: 202 },
       {
         waitForResult: true,
+        throwOnError: true,
         preferLocal: true,
         allowOfflineCloudSend: true,
         requestTimeoutMs: 2000,
@@ -1206,6 +1214,7 @@ describe("Matter optimistic state", () => {
 
     expect(appCharge).toHaveBeenCalledWith("device-1", {
       waitForResult: true,
+      throwOnError: true,
       preferLocal: true,
       allowOfflineCloudSend: true,
     });
@@ -1253,6 +1262,75 @@ describe("Matter optimistic state", () => {
     expect(platform.log.debug).toHaveBeenCalledWith(
       expect.stringContaining("Skipping stale Matter optimistic state update")
     );
+  });
+
+  test("retries return to dock once when the first command times out and Roborock still reports cleaning", async () => {
+    jest.useFakeTimers();
+    const status = { state: 5, battery: 100 };
+    const getStatus = jest.fn().mockResolvedValue(undefined);
+    const appCharge = jest
+      .fn()
+      .mockRejectedValueOnce(
+        new Error(
+          "Cloud request with id 1749 with method app_charge timed out after 10 seconds. MQTT connection state: true"
+        )
+      )
+      .mockResolvedValue(undefined);
+    const platform = createPlatform({
+      appCharge,
+      getStatus,
+      status,
+    });
+    const { vacuum } = createAccessory(platform, true);
+
+    await vacuum.accessory.handlers.rvcOperationalState.goHome();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(appCharge).toHaveBeenCalledTimes(1);
+
+    await jest.advanceTimersByTimeAsync(7000);
+    await Promise.resolve();
+
+    expect(getStatus).toHaveBeenCalled();
+    expect(appCharge).toHaveBeenCalledTimes(2);
+    expect(platform.log.warn).toHaveBeenCalledWith(
+      expect.stringContaining("Retrying Matter return to dock command")
+    );
+
+    jest.clearAllTimers();
+  });
+
+  test("does not retry return to dock when Roborock is already returning", async () => {
+    jest.useFakeTimers();
+    const status = { state: 6, battery: 100 };
+    const getStatus = jest.fn().mockResolvedValue(undefined);
+    const appCharge = jest
+      .fn()
+      .mockRejectedValueOnce(
+        new Error(
+          "Cloud request with id 1749 with method app_charge timed out after 10 seconds. MQTT connection state: true"
+        )
+      )
+      .mockResolvedValue(undefined);
+    const platform = createPlatform({
+      appCharge,
+      getStatus,
+      status,
+    });
+    const { vacuum } = createAccessory(platform, true);
+
+    await vacuum.accessory.handlers.rvcOperationalState.goHome();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    await jest.advanceTimersByTimeAsync(7000);
+    await Promise.resolve();
+
+    expect(getStatus).toHaveBeenCalled();
+    expect(appCharge).toHaveBeenCalledTimes(1);
+
+    jest.clearAllTimers();
   });
 
   test("keeps return-to-dock active until Roborock reports docked", async () => {
