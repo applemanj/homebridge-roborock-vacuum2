@@ -7,8 +7,6 @@ const RUN_MODE_CLEANING = 1;
 const RVC_OPERATIONAL_STATE_STOPPED = 0;
 const RVC_OPERATIONAL_STATE_RUNNING = 1;
 const RVC_OPERATIONAL_STATE_SEEKING_CHARGER = 64;
-const RVC_OPERATIONAL_PHASE_PRIMARY = 0;
-const RVC_OPERATIONAL_PHASE_REFRESH = 1;
 
 function flush() {
   return new Promise((resolve) => realSetTimeout(resolve, 0));
@@ -261,10 +259,10 @@ describe("Matter startup state updates", () => {
     expect(
       matterUpdates.find((update) => update.cluster === "rvcOperationalState")
         .attributes.currentPhase
-    ).toBe(RVC_OPERATIONAL_PHASE_PRIMARY);
+    ).toBeNull();
   });
 
-  test("skips unchanged Matter state refreshes", async () => {
+  test("republishes full snapshots and leaves no-op suppression to matter.js", async () => {
     const matterUpdates = [];
     const platform = createPlatform({
       enableMatterCleanMode: false,
@@ -276,40 +274,73 @@ describe("Matter startup state updates", () => {
     const { vacuum } = createAccessory(platform, true);
 
     await vacuum.updateMatterStateFromRoborock();
-    expect(matterUpdates.length).toBeGreaterThan(0);
+    const firstBatch = matterUpdates.map((update) => ({ ...update }));
+    expect(firstBatch.length).toBeGreaterThan(0);
 
+    // No plugin-side change tracking: the second refresh re-sends the same
+    // full snapshot so the Matter store can never drift from the plugin.
+    // matter.js suppresses unchanged attribute writes at its own store level.
     matterUpdates.length = 0;
     await vacuum.updateMatterStateFromRoborock();
 
-    expect(matterUpdates).toEqual([]);
+    expect(matterUpdates).toEqual(firstBatch);
   });
 
-  test("keeps unchanged docked ready state quiet without a background heartbeat", async () => {
-    jest.useFakeTimers();
-    const matterUpdates = [];
+  test("serializes concurrent publishes so an older snapshot cannot land after a newer one", async () => {
+    const writeLog = [];
+    let releaseFirstWrite;
+    const updateAccessoryState = jest.fn((uuid, cluster, attributes) => {
+      writeLog.push({ cluster, attributes: { ...attributes } });
+      if (writeLog.length === 1) {
+        // Simulate Homebridge deferring the first write for a long time while
+        // later snapshots would otherwise overtake it and land out of order.
+        return new Promise((resolve) => {
+          releaseFirstWrite = resolve;
+        });
+      }
+      return Promise.resolve();
+    });
     const platform = createPlatform({
       enableMatterCleanMode: false,
       enableMatterPowerSource: false,
       enableMatterServiceArea: false,
-      matterUpdates,
       status: { state: 8, battery: 100, charge_status: 1 },
+      updateAccessoryState,
     });
     const { vacuum } = createAccessory(platform, true);
 
-    await vacuum.updateMatterStateFromRoborock();
-    expect(matterUpdates.length).toBeGreaterThan(0);
-    await jest.advanceTimersByTimeAsync(1200);
+    // First publish: docked snapshot whose first write stalls.
+    const first = vacuum.updateMatterStateFromRoborock();
+    await Promise.resolve();
+    await Promise.resolve();
+    const writesBeforeRelease = writeLog.length;
+    expect(writesBeforeRelease).toBeGreaterThan(0);
 
-    matterUpdates.length = 0;
-    await vacuum.updateMatterStateFromRoborock();
-    expect(matterUpdates).toEqual([]);
+    // Second publish: newer cleaning snapshot from a live message. It must
+    // queue behind the stalled write instead of overtaking it.
+    const second = vacuum.notifyDeviceUpdater("LocalMessage", [
+      { state: 5, battery: 99, charge_status: 0 },
+    ]);
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(writeLog.length).toBe(writesBeforeRelease);
 
-    await jest.advanceTimersByTimeAsync(5000);
+    releaseFirstWrite();
+    await first;
+    await second;
 
-    expect(matterUpdates).toEqual([]);
+    // The newest snapshot is the last one written, so the Matter store always
+    // converges on the latest Roborock state.
+    const operationalWrites = writeLog.filter(
+      (write) => write.cluster === "rvcOperationalState"
+    );
+    expect(operationalWrites.at(-1).attributes.operationalState).toBe(
+      RVC_OPERATIONAL_STATE_RUNNING
+    );
   });
 
-  test("publishes cached active state on a lightweight background heartbeat", async () => {
+  test("background heartbeat republishes the full snapshot without identify or phase churn", async () => {
     jest.useFakeTimers();
     const matterUpdates = [];
     const platform = createPlatform({
@@ -325,15 +356,9 @@ describe("Matter startup state updates", () => {
       { state: 5, battery: 99, charge_status: 0 },
     ]);
     expect(matterUpdates.length).toBeGreaterThan(0);
-    await jest.advanceTimersByTimeAsync(1200);
 
     matterUpdates.length = 0;
-    await vacuum.notifyDeviceUpdater("LocalMessage", [
-      { state: 5, battery: 99, charge_status: 0 },
-    ]);
-    expect(matterUpdates).toEqual([]);
-
-    await jest.advanceTimersByTimeAsync(5000);
+    await jest.advanceTimersByTimeAsync(60000);
 
     expect(
       matterUpdates.find((update) => update.cluster === "rvcRunMode").attributes
@@ -346,13 +371,13 @@ describe("Matter startup state updates", () => {
     expect(
       matterUpdates.find((update) => update.cluster === "rvcOperationalState")
         .attributes.currentPhase
-    ).toBe(RVC_OPERATIONAL_PHASE_REFRESH);
+    ).toBeNull();
     expect(matterUpdates.some((update) => update.cluster === "identify")).toBe(
       false
     );
   });
 
-  test("refreshes docked ready state without pulsing identify when HomeKit reads the accessory", async () => {
+  test("serves HomeKit reads from cache without triggering publishes", async () => {
     jest.useFakeTimers();
     const matterUpdates = [];
     const platform = createPlatform({
@@ -367,56 +392,13 @@ describe("Matter startup state updates", () => {
     expect(
       await accessory.getState("rvcOperationalState", "operationalState")
     ).toBe(RVC_OPERATIONAL_STATE_STOPPED);
-
-    await jest.advanceTimersByTimeAsync(0);
-
-    expect(
-      matterUpdates.find((update) => update.cluster === "rvcRunMode").attributes
-        .currentMode
-    ).toBe(RUN_MODE_IDLE);
-    expect(
-      matterUpdates.find((update) => update.cluster === "rvcOperationalState")
-        .attributes.operationalState
-    ).toBe(RVC_OPERATIONAL_STATE_STOPPED);
-    expect(
-      matterUpdates.find((update) => update.cluster === "rvcOperationalState")
-        .attributes.currentPhase
-    ).toBe(RVC_OPERATIONAL_PHASE_REFRESH);
-    expect(matterUpdates.some((update) => update.cluster === "identify")).toBe(
-      false
+    expect(await accessory.getState("rvcRunMode", "currentMode")).toBe(
+      RUN_MODE_IDLE
     );
-  });
-
-  test("refreshes active state without identify when HomeKit reads the accessory", async () => {
-    jest.useFakeTimers();
-    const matterUpdates = [];
-    const platform = createPlatform({
-      enableMatterCleanMode: false,
-      enableMatterPowerSource: false,
-      enableMatterServiceArea: false,
-      matterUpdates,
-      status: { state: 5, battery: 95, charge_status: 0 },
-    });
-    const { accessory } = createAccessory(platform, true);
-
-    expect(
-      await accessory.getState("rvcOperationalState", "operationalState")
-    ).toBe(RVC_OPERATIONAL_STATE_RUNNING);
 
     await jest.advanceTimersByTimeAsync(0);
 
-    expect(
-      matterUpdates.find((update) => update.cluster === "rvcRunMode").attributes
-        .currentMode
-    ).toBe(RUN_MODE_CLEANING);
-    expect(
-      matterUpdates.find((update) => update.cluster === "rvcOperationalState")
-        .attributes.operationalState
-    ).toBe(RVC_OPERATIONAL_STATE_RUNNING);
-    expect(
-      matterUpdates.find((update) => update.cluster === "rvcOperationalState")
-        .attributes.currentPhase
-    ).toBe(RVC_OPERATIONAL_PHASE_REFRESH);
+    expect(matterUpdates).toEqual([]);
     expect(matterUpdates.some((update) => update.cluster === "identify")).toBe(
       false
     );
@@ -703,17 +685,15 @@ describe("Matter operational state", () => {
     ]);
   });
 
-  test("includes required phase attributes for Matter compatibility", () => {
+  test("keeps phase attributes null as required by the RVC Operational State cluster", () => {
     const platform = createPlatform();
     const { accessory } = createAccessory(platform);
 
-    expect(accessory.clusters.rvcOperationalState.phaseList).toEqual([
-      "State",
-      "State",
-    ]);
-    expect(accessory.clusters.rvcOperationalState.currentPhase).toBe(
-      RVC_OPERATIONAL_PHASE_PRIMARY
-    );
+    // RVC Operational State requires PhaseList and CurrentPhase to be null.
+    // Non-null phases (or flapping CurrentPhase as a refresh signal) confuse
+    // Matter controllers and must never be reintroduced.
+    expect(accessory.clusters.rvcOperationalState.phaseList).toBeNull();
+    expect(accessory.clusters.rvcOperationalState.currentPhase).toBeNull();
   });
 
   test("maps Roborock maintenance states to running for Apple Home compatibility", () => {
@@ -1121,12 +1101,14 @@ describe("Matter optimistic state", () => {
 
     const chargingMessage = [{ state: 8, battery: 100, charge_status: 1 }];
 
-    // First contradicting update is tolerated: operational state stays optimistic.
+    // First contradicting update is tolerated: the published snapshot still
+    // carries the optimistic running state rather than the live docked state.
     matterUpdates.length = 0;
     await vacuum.notifyDeviceUpdater("LocalMessage", chargingMessage);
     expect(
       matterUpdates.find((update) => update.cluster === "rvcOperationalState")
-    ).toBeUndefined();
+        .attributes.operationalState
+    ).toBe(RVC_OPERATIONAL_STATE_RUNNING);
 
     // Second contradicting update is trusted: the real stopped/docked state is pushed.
     matterUpdates.length = 0;
@@ -1171,8 +1153,12 @@ describe("Matter optimistic state", () => {
         update.cluster === "rvcOperationalState" &&
         typeof update.attributes.operationalState === "number"
     );
-    expect(operationalUpdates).toHaveLength(1);
-    expect(operationalUpdates[0].attributes.operationalState).toBe(1);
+    expect(operationalUpdates.length).toBeGreaterThan(0);
+    // Every published snapshot keeps the optimistic running state while the
+    // acknowledgement is ambiguous, even though the cached snapshot says docked.
+    for (const update of operationalUpdates) {
+      expect(update.attributes.operationalState).toBe(1);
+    }
     expect(platform.log.warn).toHaveBeenCalledWith(
       expect.stringContaining("actively refreshing Roborock status")
     );
@@ -1241,26 +1227,16 @@ describe("Matter optimistic state", () => {
     await vacuum.accessory.handlers.rvcRunMode.changeToMode({
       newMode: RUN_MODE_CLEANING,
     });
-    await Promise.resolve();
-    await Promise.resolve();
-
-    const recoveredOperationalUpdates = matterUpdates.filter(
-      (update) => update.cluster === "rvcOperationalState"
-    );
-    expect(recoveredOperationalUpdates.at(-1).attributes.operationalState).toBe(
-      RVC_OPERATIONAL_STATE_STOPPED
-    );
-
     await jest.advanceTimersByTimeAsync(0);
 
+    // The hard failure recovery publishes the real stopped/docked state and a
+    // stale optimistic snapshot scheduled before recovery never overrides it.
     const finalOperationalUpdates = matterUpdates.filter(
       (update) => update.cluster === "rvcOperationalState"
     );
+    expect(finalOperationalUpdates.length).toBeGreaterThan(0);
     expect(finalOperationalUpdates.at(-1).attributes.operationalState).toBe(
       RVC_OPERATIONAL_STATE_STOPPED
-    );
-    expect(platform.log.debug).toHaveBeenCalledWith(
-      expect.stringContaining("Skipping stale Matter optimistic state update")
     );
   });
 

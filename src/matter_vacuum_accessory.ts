@@ -186,10 +186,6 @@ const RVC_BASIC_OPERATIONAL_STATE_LIST = [
   RVC_OPERATIONAL_STATE.PAUSED,
   RVC_OPERATIONAL_STATE.ERROR,
 ] as const;
-const RVC_OPERATIONAL_PHASE_LIST = ["State", "State"] as const;
-const RVC_OPERATIONAL_PHASE_PRIMARY = 0;
-const RVC_OPERATIONAL_PHASE_REFRESH = 1;
-
 const RVC_ERROR_STATE = {
   NO_ERROR: 0,
   UNABLE_TO_COMPLETE_OPERATION: 2,
@@ -239,15 +235,10 @@ const MATTER_RETURN_TO_DOCK_STATUS_REFRESH_DELAYS_MS = [
 ] as const;
 const MATTER_RETURN_TO_DOCK_RETRY_DELAY_MS = 7000;
 const MATTER_INITIALIZATION_RETRY_DELAYS_MS = [1000, 3000, 10000] as const;
-const MATTER_STATE_HEARTBEAT_INTERVAL_MS = 5 * 1000;
-const MATTER_READY_FORCE_REFRESH_INTERVAL_MS = 30 * 1000;
-const MATTER_READY_READ_REFRESH_INTERVAL_MS = 10 * 1000;
-const MATTER_READY_IDENTIFY_REFRESH_INTERVAL_MS = 10 * 1000;
-const MATTER_ACTIVE_IDENTIFY_REFRESH_INTERVAL_MS = 10 * 1000;
-const MATTER_READY_IDENTIFY_REFRESH_SECONDS = 1;
-const MATTER_READY_IDENTIFY_REFRESH_CLEAR_MS = 1200;
-const MATTER_STATE_HEARTBEAT_ENABLED = true;
-const MATTER_READY_FORCE_REFRESH_ENABLED = false;
+// Low-frequency safety net. Every publish is a full coherent snapshot and
+// matter.js suppresses no-op writes, so this generates no Matter traffic
+// unless the store actually drifted from the latest Roborock state.
+const MATTER_STATE_HEARTBEAT_INTERVAL_MS = 60 * 1000;
 
 /**
  * Optional Homebridge 2 Matter exposure for Apple Home's native vacuum UI.
@@ -266,27 +257,18 @@ export default class RoborockMatterVacuumAccessory {
   private lastServiceAreaSummary = "";
   private selectedCleanMode = CLEAN_MODE_VACUUM;
   private selectedCleanModeNeedsApply = false;
-  private currentMatterRefreshPhase = RVC_OPERATIONAL_PHASE_PRIMARY;
   private lastVacuumFanPower: number | null = null;
   private lastWaterBoxMode: number | null = null;
   private matterInitializationRetryAttempt = 0;
   private matterInitializationRetryPending = false;
   private returnToDockRetryPending = false;
-  private lastMatterReadyForceRefreshAt = 0;
-  private lastMatterReadRefreshAt = 0;
-  private lastMatterReadyIdentifyRefreshAt =
-    -MATTER_READY_IDENTIFY_REFRESH_INTERVAL_MS;
-  private lastMatterActiveIdentifyRefreshAt =
-    -MATTER_ACTIVE_IDENTIFY_REFRESH_INTERVAL_MS;
   private matterStateHeartbeatTimer: ReturnType<typeof nodeSetTimeout> | null =
     null;
-  private matterActiveIdentifyRefreshTimer: ReturnType<
-    typeof nodeSetTimeout
-  > | null = null;
-  private readonly lastPublishedMatterAttributes: Map<
-    string,
-    Map<string, string>
-  > = new Map();
+  // Serializes every Matter publish so concurrent publishers (live messages,
+  // refreshes, command paths) cannot land out of order. Homebridge defers each
+  // updateAccessoryState via setImmediate, so without this chain an older
+  // snapshot can overwrite a newer one and leave Apple Home on stale state.
+  private matterPublishChain: Promise<void> = Promise.resolve();
   // Freshest status values seen from live Roborock messages. Preferred over the
   // slower HomeData snapshot when rebuilding clusters so registration snapshots
   // and attribute reads do not lag behind the latest push.
@@ -387,7 +369,6 @@ export default class RoborockMatterVacuumAccessory {
     this.accessory.handlers = this.buildHandlers();
     this.accessory.getState = async (cluster, attribute) => {
       const clusterState = this.buildCluster(cluster);
-      this.scheduleMatterReadRefresh(cluster);
       return clusterState ? clusterState[attribute] : undefined;
     };
   }
@@ -429,20 +410,13 @@ export default class RoborockMatterVacuumAccessory {
     const clusters = options.includeStaticMetadata
       ? this.buildClusters()
       : this.buildDynamicClusters();
-    const force =
-      !options.includeStaticMetadata &&
-      this.isReadyStateForceRefreshDue(clusters);
 
     const updated = await this.updateMatterState(
       clusters,
-      "Roborock state refresh",
-      { force }
+      "Roborock state refresh"
     );
     if (updated) {
       this.ensureMatterStateHeartbeat();
-    }
-    if (updated && force) {
-      this.rememberReadyStateForceRefresh(clusters);
     }
   }
 
@@ -491,8 +465,8 @@ export default class RoborockMatterVacuumAccessory {
   }
 
   private async identifyVacuum(): Promise<void> {
-    await this.publishCurrentMatterState("Matter identify command", true, {
-      pulseIdentify: false,
+    await this.publishCurrentMatterState("Matter identify command", {
+      clearOptimistic: true,
     });
 
     const findMe = this.api.find_me;
@@ -515,13 +489,9 @@ export default class RoborockMatterVacuumAccessory {
       );
     }
 
-    await this.publishCurrentMatterState(
-      "Matter identify command complete",
-      true,
-      {
-        pulseIdentify: false,
-      }
-    );
+    await this.publishCurrentMatterState("Matter identify command complete", {
+      clearOptimistic: true,
+    });
   }
 
   private async changeRunMode(newMode?: number): Promise<void> {
@@ -651,7 +621,9 @@ export default class RoborockMatterVacuumAccessory {
       this.platform.log.info(
         `Ignoring Matter pause request for ${this.getVacuumName()} because it is not cleaning.`
       );
-      await this.publishCurrentMatterState("ignored pause", true);
+      await this.publishCurrentMatterState("ignored pause", {
+        clearOptimistic: true,
+      });
       return;
     }
 
@@ -687,10 +659,9 @@ export default class RoborockMatterVacuumAccessory {
       this.platform.log.info(
         `Ignoring Matter dock request for ${this.getVacuumName()} because it is already docked or charging.`
       );
-      await this.publishCurrentMatterState(
-        "return to dock already docked",
-        true
-      );
+      await this.publishCurrentMatterState("return to dock already docked", {
+        clearOptimistic: true,
+      });
       return;
     }
 
@@ -725,7 +696,6 @@ export default class RoborockMatterVacuumAccessory {
   }
 
   private scheduleMatterStateUpdate(
-    partialClusters: MatterClusterState,
     reason: string,
     optimisticGeneration?: number
   ): void {
@@ -744,7 +714,9 @@ export default class RoborockMatterVacuumAccessory {
         return;
       }
 
-      void this.updateMatterState(partialClusters, reason)
+      // Build the snapshot at execution time so it reflects the freshest
+      // Roborock and optimistic state instead of a stale captured copy.
+      void this.updateMatterState(this.buildDynamicClusters(), reason)
         .then((updated) => {
           if (updated) {
             this.ensureMatterStateHeartbeat();
@@ -766,17 +738,12 @@ export default class RoborockMatterVacuumAccessory {
       partialClusters,
       reason
     );
-    this.scheduleMatterStateUpdate(
-      this.optimisticClusters || partialClusters,
-      reason,
-      optimisticGeneration
-    );
+    this.scheduleMatterStateUpdate(reason, optimisticGeneration);
   }
 
   private async updateMatterState(
     partialClusters: Record<string, Record<string, unknown>>,
-    reason = "state update",
-    options: { force?: boolean } = {}
+    reason = "state update"
   ): Promise<boolean> {
     if (!this.registered) {
       return false;
@@ -787,20 +754,29 @@ export default class RoborockMatterVacuumAccessory {
       return false;
     }
 
-    const changedClusters = options.force
-      ? partialClusters
-      : this.filterChangedMatterAttributes(partialClusters);
-    if (Object.keys(changedClusters).length === 0) {
+    if (Object.keys(partialClusters).length === 0) {
       return false;
     }
 
-    try {
-      await Promise.all(
-        Object.entries(changedClusters).map(([cluster, attributes]) =>
+    // Every publish is a full snapshot and writes are serialized in submission
+    // order. matter.js suppresses no-op attribute writes at its store level, so
+    // no plugin-side change tracking is needed; tracking published values here
+    // previously allowed racing publishers to desynchronize the plugin from the
+    // Matter store, leaving Apple Home stuck on stale state ("Updating...").
+    const publishTask = this.matterPublishChain.then(() =>
+      Promise.all(
+        Object.entries(partialClusters).map(([cluster, attributes]) =>
           matter.updateAccessoryState(this.accessory.UUID, cluster, attributes)
         )
-      );
-      this.rememberPublishedMatterAttributes(changedClusters);
+      )
+    );
+    this.matterPublishChain = publishTask.then(
+      () => undefined,
+      () => undefined
+    );
+
+    try {
+      await publishTask;
       this.matterInitializationRetryAttempt = 0;
       this.matterInitializationRetryPending = false;
       return true;
@@ -811,56 +787,6 @@ export default class RoborockMatterVacuumAccessory {
       }
 
       throw error;
-    }
-  }
-
-  private filterChangedMatterAttributes(
-    partialClusters: MatterClusterState
-  ): MatterClusterState {
-    const changedClusters: MatterClusterState = {};
-
-    Object.entries(partialClusters).forEach(([cluster, attributes]) => {
-      const previouslyPublished =
-        this.lastPublishedMatterAttributes.get(cluster);
-      const changedAttributes: Record<string, unknown> = {};
-
-      Object.entries(attributes).forEach(([attribute, value]) => {
-        const serializedValue = this.serializeMatterValue(value);
-        if (previouslyPublished?.get(attribute) !== serializedValue) {
-          changedAttributes[attribute] = value;
-        }
-      });
-
-      if (Object.keys(changedAttributes).length > 0) {
-        changedClusters[cluster] = changedAttributes;
-      }
-    });
-
-    return changedClusters;
-  }
-
-  private rememberPublishedMatterAttributes(
-    partialClusters: MatterClusterState
-  ): void {
-    Object.entries(partialClusters).forEach(([cluster, attributes]) => {
-      let publishedAttributes = this.lastPublishedMatterAttributes.get(cluster);
-      if (!publishedAttributes) {
-        publishedAttributes = new Map();
-        this.lastPublishedMatterAttributes.set(cluster, publishedAttributes);
-      }
-
-      Object.entries(attributes).forEach(([attribute, value]) => {
-        publishedAttributes.set(attribute, this.serializeMatterValue(value));
-      });
-    });
-  }
-
-  private serializeMatterValue(value: unknown): string {
-    try {
-      const serialized = JSON.stringify(value);
-      return serialized === undefined ? String(value) : serialized;
-    } catch {
-      return String(value);
     }
   }
 
@@ -878,54 +804,33 @@ export default class RoborockMatterVacuumAccessory {
     const chargeStatus = this.getNumberFromValue(status.charge_status);
     const battery = this.getNumberFromValue(status.battery);
 
+    if (state === null && chargeStatus === null && battery === null) {
+      return;
+    }
+
     // Remember the freshest live values so a later full cluster rebuild reflects
     // them instead of the slower HomeData snapshot.
     this.rememberLiveStatus("state", state);
     this.rememberLiveStatus("charge_status", chargeStatus);
     this.rememberLiveStatus("battery", battery);
 
-    const clusters: MatterClusterState = {};
-
     if (state !== null || chargeStatus !== null) {
-      const operationalState = this.getOperationalState(state, chargeStatus);
-      const suppressState = this.shouldSuppressLiveState(
-        operationalState,
+      // Confirm or contradict any pending optimistic state. While optimism is
+      // active the snapshot below still publishes the optimistic values, so no
+      // separate suppression of the live values is needed.
+      this.reconcileOptimisticStateWithLive(
+        this.getOperationalState(state, chargeStatus),
         state,
         chargeStatus
       );
-
-      if (!suppressState) {
-        clusters.rvcRunMode = {
-          currentMode: this.isInCleaningRunMode(operationalState)
-            ? RUN_MODE_CLEANING
-            : RUN_MODE_IDLE,
-        };
-        clusters.rvcOperationalState = {
-          operationalState,
-          currentPhase: this.currentMatterRefreshPhase,
-        };
-      }
     }
 
-    if (battery !== null) {
-      this.addPowerSourceCluster(clusters, battery, chargeStatus, state);
-    }
-
-    if (Object.keys(clusters).length > 0) {
-      const force = this.isReadyStateForceRefreshDue(
-        clusters,
-        state,
-        chargeStatus
-      );
-      const updated = await this.updateMatterState(clusters, "live state", {
-        force,
-      });
-      if (updated) {
-        this.ensureMatterStateHeartbeat();
-      }
-      if (updated && force) {
-        this.rememberReadyStateForceRefresh(clusters);
-      }
+    const updated = await this.updateMatterState(
+      this.buildDynamicClusters(),
+      "live state"
+    );
+    if (updated) {
+      this.ensureMatterStateHeartbeat();
     }
   }
 
@@ -955,7 +860,12 @@ export default class RoborockMatterVacuumAccessory {
       },
       rvcOperationalState: {
         operationalState,
-        currentPhase: this.currentMatterRefreshPhase,
+        // RVC Operational State requires PhaseList and CurrentPhase to be
+        // null. Writing the nulls on every publish also repairs stores on
+        // installs that upgraded from versions that flapped CurrentPhase as a
+        // refresh signal, without requiring a re-pair.
+        phaseList: null,
+        currentPhase: null,
         operationalError: {
           errorStateId:
             operationalState === RVC_OPERATIONAL_STATE.ERROR
@@ -1245,8 +1155,9 @@ export default class RoborockMatterVacuumAccessory {
     };
 
     return {
-      phaseList: [...RVC_OPERATIONAL_PHASE_LIST],
-      currentPhase: this.currentMatterRefreshPhase,
+      // RVC Operational State requires PhaseList and CurrentPhase to be null.
+      phaseList: null,
+      currentPhase: null,
       // Advertise operational state IDs without labels. Apple Home stops
       // commissioning ("Connecting" forever) when the list carries labels or
       // manufacturer-range IDs, so only bare IDs are exposed here.
@@ -1415,12 +1326,18 @@ export default class RoborockMatterVacuumAccessory {
       );
     }
 
-    this.scheduleMatterStateUpdate(
-      {
-        serviceArea: this.buildServiceAreaCluster(),
-      },
-      "service area selection"
-    );
+    // Defer the publish so the selectAreas handler returns promptly; the
+    // cluster is rebuilt at execution time from the stored selection.
+    scheduleTimer(() => {
+      void this.updateMatterState(
+        { serviceArea: this.buildServiceAreaCluster() },
+        "service area selection"
+      ).catch((error) => {
+        this.platform.log.warn(
+          `Unable to update Matter service area selection for ${this.getVacuumName()}: ${this.getErrorMessage(error)}`
+        );
+      });
+    }, 0);
 
     return {
       status: SERVICE_AREA_SELECT_STATUS.SUCCESS,
@@ -2093,17 +2010,17 @@ export default class RoborockMatterVacuumAccessory {
     return this.optimisticGeneration;
   }
 
-  private shouldSuppressLiveState(
+  private reconcileOptimisticStateWithLive(
     operationalState: number,
     roborockState: number | null,
     chargeStatus: number | null
-  ): boolean {
+  ): void {
     const optimistic = this.getActiveOptimisticState();
     const expected = optimistic?.rvcOperationalState?.operationalState;
 
     if (typeof expected !== "number") {
       this.contradictingLiveStateCount = 0;
-      return false;
+      return;
     }
 
     if (
@@ -2115,7 +2032,7 @@ export default class RoborockMatterVacuumAccessory {
       )
     ) {
       this.clearOptimisticState();
-      return false;
+      return;
     }
 
     // The command was acknowledged but the robot reports a different state.
@@ -2128,10 +2045,7 @@ export default class RoborockMatterVacuumAccessory {
         `Clearing optimistic Matter state for ${this.getVacuumName()} after ${this.contradictingLiveStateCount} contradicting Roborock updates (expected ${expected}, got ${operationalState}).`
       );
       this.clearOptimisticState();
-      return false;
     }
-
-    return true;
   }
 
   private doesLiveStateConfirmOptimisticState(
@@ -2190,216 +2104,38 @@ export default class RoborockMatterVacuumAccessory {
 
   private async publishCurrentMatterState(
     reason: string,
-    force = false,
-    options: { pulseIdentify?: boolean } = {}
+    options: { clearOptimistic?: boolean } = {}
   ): Promise<void> {
-    this.clearOptimisticState();
-    if (force) {
-      this.rotateMatterRefreshPhase();
+    if (options.clearOptimistic === true) {
+      this.clearOptimisticState();
     }
-    const clusters = this.buildDynamicClusters();
-    const updated = await this.updateMatterState(clusters, reason, { force });
+    const updated = await this.updateMatterState(
+      this.buildDynamicClusters(),
+      reason
+    );
     if (updated) {
       this.ensureMatterStateHeartbeat();
     }
-    if (updated && force) {
-      this.rememberReadyStateForceRefresh(clusters);
-      if (options.pulseIdentify === true) {
-        this.pulseMatterIdentifyRefresh(reason);
-      }
-    }
-  }
-
-  private pulseMatterIdentifyRefresh(reason: string): void {
-    void this.updateMatterState(
-      {
-        identify: {
-          identifyTime: MATTER_READY_IDENTIFY_REFRESH_SECONDS,
-        },
-      },
-      `${reason} HomeKit refresh pulse`,
-      { force: true }
-    ).catch((error) => {
-      this.platform.log.debug(
-        `Unable to pulse Matter identify state after ${reason} for ${this.getVacuumName()}: ${this.getErrorMessage(error)}`
-      );
-    });
-
-    const clearTimer = scheduleTimer(() => {
-      void this.updateMatterState(
-        {
-          identify: {
-            identifyTime: 0,
-          },
-        },
-        `${reason} HomeKit refresh pulse clear`,
-        { force: true }
-      ).catch((error) => {
-        this.platform.log.debug(
-          `Unable to clear Matter identify pulse after ${reason} for ${this.getVacuumName()}: ${this.getErrorMessage(error)}`
-        );
-      });
-    }, MATTER_READY_IDENTIFY_REFRESH_CLEAR_MS);
-    unrefTimer(clearTimer);
-  }
-
-  private scheduleMatterReadRefresh(cluster: string): void {
-    if (!this.registered || !this.isMatterReadRefreshCluster(cluster)) {
-      return;
-    }
-
-    const clusters = this.buildDynamicClusters();
-    if (!this.hasDynamicMatterState(clusters)) {
-      return;
-    }
-
-    if (
-      Date.now() - this.lastMatterReadRefreshAt <
-      MATTER_READY_READ_REFRESH_INTERVAL_MS
-    ) {
-      return;
-    }
-
-    this.lastMatterReadRefreshAt = Date.now();
-    const refreshTimer = scheduleTimer(() => {
-      void this.publishCurrentMatterState("HomeKit state read", true, {
-        pulseIdentify: false,
-      }).catch((error) => {
-        this.platform.log.debug(
-          `Unable to refresh Matter state after HomeKit read for ${this.getVacuumName()}: ${this.getErrorMessage(error)}`
-        );
-      });
-    }, 0);
-    unrefTimer(refreshTimer);
-  }
-
-  private isMatterReadRefreshCluster(cluster: string): boolean {
-    return (
-      cluster === "rvcRunMode" ||
-      cluster === "rvcOperationalState" ||
-      cluster === "rvcCleanMode" ||
-      cluster === "identify"
-    );
-  }
-
-  private isReadyStateForceRefreshDue(
-    clusters: MatterClusterState,
-    roborockState = this.getNumberStatus("state"),
-    chargeStatus = this.getNumberStatus("charge_status")
-  ): boolean {
-    if (!MATTER_READY_FORCE_REFRESH_ENABLED) {
-      return false;
-    }
-
-    if (!this.isReadyMatterState(clusters, roborockState, chargeStatus)) {
-      return false;
-    }
-
-    return (
-      Date.now() - this.lastMatterReadyForceRefreshAt >=
-      MATTER_READY_FORCE_REFRESH_INTERVAL_MS
-    );
-  }
-
-  private rememberReadyStateForceRefresh(
-    clusters: MatterClusterState,
-    roborockState = this.getNumberStatus("state"),
-    chargeStatus = this.getNumberStatus("charge_status")
-  ): void {
-    if (this.isReadyMatterState(clusters, roborockState, chargeStatus)) {
-      this.lastMatterReadyForceRefreshAt = Date.now();
-      this.ensureMatterStateHeartbeat();
-    }
-  }
-
-  private pulseMatterIdentifyRefreshForActiveState(
-    clusters: MatterClusterState,
-    reason: string
-  ): void {
-    if (!this.isActiveMatterState(clusters)) {
-      return;
-    }
-
-    this.ensureMatterActiveIdentifyRefresh();
-
-    if (
-      Date.now() - this.lastMatterActiveIdentifyRefreshAt <
-      MATTER_ACTIVE_IDENTIFY_REFRESH_INTERVAL_MS
-    ) {
-      return;
-    }
-
-    this.lastMatterActiveIdentifyRefreshAt = Date.now();
-    this.pulseMatterIdentifyRefresh(reason);
-  }
-
-  private ensureMatterActiveIdentifyRefresh(): void {
-    if (!this.registered || this.matterActiveIdentifyRefreshTimer) {
-      return;
-    }
-
-    const refreshTimer = scheduleTimer(() => {
-      this.matterActiveIdentifyRefreshTimer = null;
-
-      const clusters = this.buildDynamicClusters();
-      if (!this.isActiveMatterState(clusters)) {
-        return;
-      }
-
-      this.pulseMatterIdentifyRefreshForActiveState(
-        clusters,
-        "active state timer"
-      );
-    }, MATTER_ACTIVE_IDENTIFY_REFRESH_INTERVAL_MS);
-    this.matterActiveIdentifyRefreshTimer = refreshTimer;
-    unrefTimer(refreshTimer);
   }
 
   private ensureMatterStateHeartbeat(): void {
-    if (
-      !MATTER_STATE_HEARTBEAT_ENABLED ||
-      !this.registered ||
-      this.matterStateHeartbeatTimer
-    ) {
+    if (!this.registered || this.matterStateHeartbeatTimer) {
       return;
     }
 
     const heartbeatTimer = scheduleTimer(() => {
       this.matterStateHeartbeatTimer = null;
 
-      const clusters = this.buildDynamicClusters();
-      if (!this.isHeartbeatMatterState(clusters)) {
-        return;
-      }
-
-      void this.publishCurrentMatterState("Matter state heartbeat", true, {
-        pulseIdentify: false,
-      }).catch((error) => {
-        this.platform.log.debug(
-          `Unable to publish Matter state heartbeat for ${this.getVacuumName()}: ${this.getErrorMessage(error)}`
-        );
-      });
+      void this.publishCurrentMatterState("Matter state heartbeat").catch(
+        (error) => {
+          this.platform.log.debug(
+            `Unable to publish Matter state heartbeat for ${this.getVacuumName()}: ${this.getErrorMessage(error)}`
+          );
+        }
+      );
     }, MATTER_STATE_HEARTBEAT_INTERVAL_MS);
     this.matterStateHeartbeatTimer = heartbeatTimer;
     unrefTimer(heartbeatTimer);
-  }
-
-  private isHeartbeatMatterState(clusters: MatterClusterState): boolean {
-    return this.isActiveMatterState(clusters);
-  }
-
-  private rotateMatterRefreshPhase(): void {
-    this.currentMatterRefreshPhase =
-      this.currentMatterRefreshPhase === RVC_OPERATIONAL_PHASE_PRIMARY
-        ? RVC_OPERATIONAL_PHASE_REFRESH
-        : RVC_OPERATIONAL_PHASE_PRIMARY;
-  }
-
-  private hasDynamicMatterState(clusters: MatterClusterState): boolean {
-    return (
-      typeof clusters.rvcRunMode?.currentMode === "number" &&
-      typeof clusters.rvcOperationalState?.operationalState === "number"
-    );
   }
 
   private isActiveMatterState(clusters: MatterClusterState): boolean {
@@ -2416,38 +2152,6 @@ export default class RoborockMatterVacuumAccessory {
   private hasActiveOptimisticState(): boolean {
     const optimistic = this.getActiveOptimisticState();
     return optimistic !== null && this.isActiveMatterState(optimistic);
-  }
-
-  private pulseMatterIdentifyRefreshForReadyState(
-    clusters: MatterClusterState,
-    reason: string
-  ): void {
-    if (!this.isReadyMatterState(clusters)) {
-      return;
-    }
-
-    if (
-      Date.now() - this.lastMatterReadyIdentifyRefreshAt <
-      MATTER_READY_IDENTIFY_REFRESH_INTERVAL_MS
-    ) {
-      return;
-    }
-
-    this.lastMatterReadyIdentifyRefreshAt = Date.now();
-    this.pulseMatterIdentifyRefresh(reason);
-  }
-
-  private isReadyMatterState(
-    clusters: MatterClusterState,
-    roborockState = this.getNumberStatus("state"),
-    chargeStatus = this.getNumberStatus("charge_status")
-  ): boolean {
-    return (
-      clusters.rvcRunMode?.currentMode === RUN_MODE_IDLE &&
-      clusters.rvcOperationalState?.operationalState ===
-        RVC_OPERATIONAL_STATE.STOPPED &&
-      this.isRoborockDockedOrCharging(roborockState, chargeStatus)
-    );
   }
 
   private applyOptimisticState(
@@ -2614,18 +2318,10 @@ export default class RoborockMatterVacuumAccessory {
   private async recoverMatterStateAfterFailedCommand(
     action: string
   ): Promise<void> {
-    this.clearOptimisticState();
-
-    const recoveryState: MatterClusterState = {
-      rvcRunMode: this.buildRunModeCluster(),
-      rvcOperationalState: this.buildOperationalStateCluster(),
-    };
-    this.addPowerSourceCluster(recoveryState);
-
     try {
-      await this.updateMatterState(
-        recoveryState,
-        `${action} command failure recovery`
+      await this.publishCurrentMatterState(
+        `${action} command failure recovery`,
+        { clearOptimistic: true }
       );
     } catch (error) {
       this.platform.log.warn(
