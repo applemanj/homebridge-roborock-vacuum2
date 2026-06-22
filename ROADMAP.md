@@ -19,10 +19,16 @@
 - Added configurable, per-vacuum throttling for recurring transient timeout warnings.
 - Added Phase 1 optional Matter robotic vacuum exposure for Homebridge 2 while preserving the existing HomeKit fan/switch accessory.
 - Added capability-gated Matter clean modes for vacuum, mop, and vacuum + mop selection on mop-capable Roborock models.
+- Stabilized Matter publishing: serialized full-snapshot writes with no plugin-side change tracking, restored spec-conformant RVC operational state (null phases, no state labels), and removed synthetic identify/phase churn that left Apple Home stuck on "Updating…" (1.4.58).
+- Added acknowledgement waiting + timing logs to the HomeKit Pause/Return-to-Dock controls (1.4.59, issue #12).
+- Fixed Matter Pause/Return-to-Dock being dropped on slow-syncing models (e.g. S8 / `roborock.vacuum.a51`) while the cached state still reads docked (1.4.60, issue #4).
+- Investigated the persistent Apple Home "Updating…" tile, exonerated the plugin, and filed the findings upstream (homebridge/homebridge#3951); see `docs/matter-rvc-updating-homebridge-report.md`.
+- Added an `AGENTS.md` handoff guide for AI coding agents.
 
 ## In Progress
 
-- Validate Matter vacuum behavior in Apple Home and tune command/status mapping based on real controller feedback.
+- Track upstream homebridge/homebridge#3951 (Matter RVC tile stuck on "Updating…"); cross-check the same node in Google Home to split Homebridge vs Apple.
+- Await reporter retests on issues #4 and #12 after the 1.4.59/1.4.60 fixes.
 - Improve scene and room controls so HomeKit exposes room cleaning shortcuts with cleaner names and fewer invalid characteristic warnings.
 - Add clearer model lookup mismatch and unsupported attribute logs.
 

@@ -19,4 +19,5 @@ openspec/
 !.github/ISSUE_TEMPLATE/**
 .gemini/
 AGENTS.md
+CLAUDE.md
 
