@@ -225,6 +225,12 @@ const OPTIMISTIC_STATE_TTL_MS = 2 * 60 * 1000;
 // abandoning an optimistic state, so a command the robot acknowledged but did
 // not act on cannot keep Apple Home on a wrong state until the TTL expires.
 const OPTIMISTIC_CONTRADICTION_LIMIT = 2;
+// Window after a Matter start/resume/area-clean command during which a follow-up
+// pause or dock is forwarded to the robot even if the cached state still reads
+// docked/charging. Models that fall back to cloud (e.g. S8 / roborock.vacuum.a51)
+// can take tens of seconds to report Cleaning, and the optimistic state may clear
+// first; without this window the plugin would silently drop a real user command.
+const RECENT_CLEANING_COMMAND_WINDOW_MS = 60 * 1000;
 const SLOW_MATTER_COMMAND_MS = 3000;
 const MATTER_COMMAND_STATUS_REFRESH_DELAYS_MS = [2000, 15000] as const;
 const MATTER_AMBIGUOUS_COMMAND_STATUS_REFRESH_DELAYS_MS = [
@@ -253,6 +259,7 @@ export default class RoborockMatterVacuumAccessory {
   private optimisticGeneration = 0;
   private optimisticAction: string | null = null;
   private contradictingLiveStateCount = 0;
+  private lastCleaningCommandAt = 0;
   private selectedServiceAreaIds: number[] = [];
   private lastServiceAreaSummary = "";
   private selectedCleanMode = CLEAN_MODE_VACUUM;
@@ -613,10 +620,14 @@ export default class RoborockMatterVacuumAccessory {
       roborockState,
       chargeStatus
     );
-    if (
+    const looksIdle =
       this.isRoborockDockedOrCharging(roborockState, chargeStatus) ||
       (roborockState !== null &&
-        !this.isInCleaningRunMode(currentOperationalState))
+        !this.isInCleaningRunMode(currentOperationalState));
+    if (
+      looksIdle &&
+      !this.hasActiveOptimisticState() &&
+      !this.hasRecentlyCommandedCleaning()
     ) {
       this.platform.log.info(
         `Ignoring Matter pause request for ${this.getVacuumName()} because it is not cleaning.`
@@ -627,7 +638,13 @@ export default class RoborockMatterVacuumAccessory {
       return;
     }
 
-    this.platform.log.info(`Pausing ${this.getVacuumName()} from Matter.`);
+    if (looksIdle) {
+      this.platform.log.info(
+        `Pausing ${this.getVacuumName()} from Matter despite a stale idle snapshot because a recent Matter command still expects active cleaning.`
+      );
+    } else {
+      this.platform.log.info(`Pausing ${this.getVacuumName()} from Matter.`);
+    }
     const state = {
       rvcOperationalState: {
         operationalState: RVC_OPERATIONAL_STATE.PAUSED,
@@ -655,7 +672,11 @@ export default class RoborockMatterVacuumAccessory {
   }
 
   private async returnToDock(): Promise<void> {
-    if (this.isDockedOrChargingNow() && !this.hasActiveOptimisticState()) {
+    if (
+      this.isDockedOrChargingNow() &&
+      !this.hasActiveOptimisticState() &&
+      !this.hasRecentlyCommandedCleaning()
+    ) {
       this.platform.log.info(
         `Ignoring Matter dock request for ${this.getVacuumName()} because it is already docked or charging.`
       );
@@ -734,11 +755,28 @@ export default class RoborockMatterVacuumAccessory {
     partialClusters: MatterClusterState,
     reason: string
   ): void {
+    if (
+      this.getNumberFromValue(
+        partialClusters.rvcOperationalState?.operationalState
+      ) === RVC_OPERATIONAL_STATE.RUNNING
+    ) {
+      // Remember when a start/resume/area-clean was issued so a follow-up pause
+      // or dock is not dropped while the robot is still spinning up and the
+      // cached snapshot lags behind (see RECENT_CLEANING_COMMAND_WINDOW_MS).
+      this.lastCleaningCommandAt = Date.now();
+    }
     const optimisticGeneration = this.setOptimisticState(
       partialClusters,
       reason
     );
     this.scheduleMatterStateUpdate(reason, optimisticGeneration);
+  }
+
+  private hasRecentlyCommandedCleaning(): boolean {
+    return (
+      Date.now() - this.lastCleaningCommandAt <
+      RECENT_CLEANING_COMMAND_WINDOW_MS
+    );
   }
 
   private async updateMatterState(

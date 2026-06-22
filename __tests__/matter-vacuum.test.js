@@ -1122,6 +1122,47 @@ describe("Matter optimistic state", () => {
     );
   });
 
+  test("forwards a Matter pause and dock during the post-start sync lag even after optimism clears", async () => {
+    const matterUpdates = [];
+    const appPause = jest.fn().mockResolvedValue(undefined);
+    const appCharge = jest.fn().mockResolvedValue(undefined);
+    const platform = createPlatform({
+      appPause,
+      appCharge,
+      matterUpdates,
+      status: { state: 8, battery: 100, charge_status: 1 },
+    });
+    const { vacuum } = createAccessory(platform, true);
+
+    // User starts cleaning from Matter. On slow-syncing models (e.g. S8 /
+    // roborock.vacuum.a51 that falls back to cloud) the robot keeps reporting
+    // docked for a stretch, which clears the optimistic cleaning state before it
+    // ever reports Cleaning.
+    await vacuum.accessory.handlers.rvcRunMode.changeToMode({
+      newMode: RUN_MODE_CLEANING,
+    });
+    await flush();
+
+    const chargingMessage = [{ state: 8, battery: 100, charge_status: 1 }];
+    await vacuum.notifyDeviceUpdater("LocalMessage", chargingMessage);
+    await vacuum.notifyDeviceUpdater("LocalMessage", chargingMessage);
+
+    // Optimism is now gone and the cache still says docked, but the start was
+    // recent: an explicit pause/dock must still reach the robot rather than being
+    // dropped as "not cleaning" / "already docked".
+    await vacuum.accessory.handlers.rvcOperationalState.pause();
+    expect(appPause).toHaveBeenCalled();
+    expect(platform.log.info).toHaveBeenCalledWith(
+      expect.stringContaining("despite a stale idle snapshot")
+    );
+
+    await vacuum.accessory.handlers.rvcOperationalState.goHome();
+    expect(appCharge).toHaveBeenCalled();
+    expect(platform.log.info).toHaveBeenCalledWith(
+      expect.stringContaining("despite a stale docked snapshot")
+    );
+  });
+
   test("keeps optimistic state when a Matter command acknowledgement times out", async () => {
     jest.useFakeTimers();
     const matterUpdates = [];
