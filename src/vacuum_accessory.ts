@@ -219,13 +219,18 @@ export default class RoborockVacuumAccessory {
       return;
     }
 
+    const vacuumName = this.getVacuumName();
     try {
-      this.platform.log.info(`Pausing ${this.getVacuumName()}.`);
-      await this.platform.roborockAPI.app_pause(this.accessory.context);
-    } catch (error) {
-      this.platform.log.error(
-        `Error pausing ${this.getVacuumName()}: ${error}`
+      this.platform.log.info(`Pausing ${vacuumName}.`);
+      const startedAt = Date.now();
+      await this.platform.roborockAPI.app_pause(this.accessory.context, {
+        waitForResult: true,
+      });
+      this.platform.log.info(
+        `HomeKit pause command for ${vacuumName} was acknowledged by Roborock in ${Date.now() - startedAt} ms.`
       );
+    } catch (error) {
+      this.platform.log.error(`Error pausing ${vacuumName}: ${error}`);
     } finally {
       this.resetMomentaryControlSwitch("pause-cleaning");
     }
@@ -236,12 +241,19 @@ export default class RoborockVacuumAccessory {
       return;
     }
 
+    const vacuumName = this.getVacuumName();
     try {
-      this.platform.log.info(`Sending ${this.getVacuumName()} back to dock.`);
-      await this.platform.roborockAPI.app_charge(this.accessory.context);
+      this.platform.log.info(`Sending ${vacuumName} back to dock.`);
+      const startedAt = Date.now();
+      await this.platform.roborockAPI.app_charge(this.accessory.context, {
+        waitForResult: true,
+      });
+      this.platform.log.info(
+        `HomeKit return to dock command for ${vacuumName} was acknowledged by Roborock in ${Date.now() - startedAt} ms.`
+      );
     } catch (error) {
       this.platform.log.error(
-        `Error sending ${this.getVacuumName()} back to dock: ${error}`
+        `Error sending ${vacuumName} back to dock: ${error}`
       );
     } finally {
       this.resetMomentaryControlSwitch("return-to-dock");

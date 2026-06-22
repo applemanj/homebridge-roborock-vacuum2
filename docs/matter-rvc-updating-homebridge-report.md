@@ -10,14 +10,14 @@ The exposing plugin has been exonerated (see "Ruled out"), so this appears to be
 
 ## Environment
 
-| | |
-|---|---|
-| Homebridge | **2.1.1‑beta.1** (also the newest published; `latest` = 2.1.0) |
-| matter.js (`@matter/main`) | **0.17.2-alpha.0-20260605-b2c9f3f65** |
-| Node | 24.17.0 (Docker `homebridge/homebridge:beta`) |
-| Exposing plugin | homebridge-roborock-vacuum2 1.4.58 (also reproduced on 1.4.42) |
-| Controller | Apple Home, multi‑hub (Apple TV + HomePod), current iOS/tvOS |
-| Device | Roborock S6 Pure exposed as RVC `0x74` rev 4 |
+|                            |                                                                |
+| -------------------------- | -------------------------------------------------------------- |
+| Homebridge                 | **2.1.1‑beta.1** (also the newest published; `latest` = 2.1.0) |
+| matter.js (`@matter/main`) | **0.17.2-alpha.0-20260605-b2c9f3f65**                          |
+| Node                       | 24.17.0 (Docker `homebridge/homebridge:beta`)                  |
+| Exposing plugin            | homebridge-roborock-vacuum2 1.4.58 (also reproduced on 1.4.42) |
+| Controller                 | Apple Home, multi‑hub (Apple TV + HomePod), current iOS/tvOS   |
+| Device                     | Roborock S6 Pure exposed as RVC `0x74` rev 4                   |
 
 The RVC is published as a **standalone external Matter node** (its own commissioning node, separate from the child bridge's aggregator node), which is the documented Homebridge behavior for robotic vacuums.
 
@@ -43,13 +43,13 @@ behaviors: ✓identify ✓rvcRunMode ✓rvcOperationalState ✓rvcCleanMode ✓s
 
 ## What we ruled out (each with evidence)
 
-| Hypothesis | Test | Result |
-|---|---|---|
-| Exposing plugin / its data | Deployed a known‑good older plugin build | **Identical failure** |
-| Stale/corrupt controller record | Full remove + fresh re‑pair (multiple times) | Still "Updating…" |
-| Transport / reachability | Inspected the subscription | Controller subscribes, reads endpoint 1, **0 attribute errors**, ACKs all reports, then settles (no read loop) |
-| Service Area cluster | Removed `serviceArea` from the endpoint, re‑paired | Still "Updating…" |
-| Multi‑admin contamination | Device is co‑commissioned to Apple (vendor 4937) + Amazon (vendor 4996) | Amazon fabric is **idle (0 messages)**; multi‑admin is normal — not the cause |
+| Hypothesis                      | Test                                                                    | Result                                                                                                         |
+| ------------------------------- | ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Exposing plugin / its data      | Deployed a known‑good older plugin build                                | **Identical failure**                                                                                          |
+| Stale/corrupt controller record | Full remove + fresh re‑pair (multiple times)                            | Still "Updating…"                                                                                              |
+| Transport / reachability        | Inspected the subscription                                              | Controller subscribes, reads endpoint 1, **0 attribute errors**, ACKs all reports, then settles (no read loop) |
+| Service Area cluster            | Removed `serviceArea` from the endpoint, re‑paired                      | Still "Updating…"                                                                                              |
+| Multi‑admin contamination       | Device is co‑commissioned to Apple (vendor 4937) + Amazon (vendor 4996) | Amazon fabric is **idle (0 messages)**; multi‑admin is normal — not the cause                                  |
 
 ## Wire‑level evidence
 
@@ -60,11 +60,13 @@ The persisted RVC Operational State cluster is spec‑conformant (PhaseList/Curr
   "phaseList": null,
   "currentPhase": null,
   "operationalStateList": [
-    {"operationalStateId": 0}, {"operationalStateId": 1},
-    {"operationalStateId": 2}, {"operationalStateId": 3}
+    { "operationalStateId": 0 },
+    { "operationalStateId": 1 },
+    { "operationalStateId": 2 },
+    { "operationalStateId": 3 }
   ],
   "operationalState": 0,
-  "operationalError": {"errorStateId": 0}
+  "operationalError": { "errorStateId": 0 }
 }
 ```
 
@@ -80,6 +82,7 @@ Since the controller never errors on a read yet won't render, the gap is likely 
 2. **Apple's RVC client** doesn't fully support an RVC presented this way on the current iOS/tvOS.
 
 **Questions for maintainers:**
+
 - Is Matter RVC (`0x74`) via Homebridge 2.1.x expected to render in Apple Home today, or is it a known gap/limitation?
 - Is the **standalone external node** the correct structure for RVC, and does Apple's RVC client require anything beyond what `@matter/main` 0.17.2 emits for this device type?
 - Are there required RVC attributes/feature‑map bits (e.g. on RVC Operational State, or Service Area conformance) that the device type should be advertising but isn't?
@@ -87,6 +90,7 @@ Since the controller never errors on a read yet won't render, the gap is likely 
 ## How to isolate Homebridge vs Apple definitively
 
 Pair the same RVC node into a **non‑Apple ecosystem with real RVC support (Google Home)**:
+
 - Renders in Google but not Apple ⇒ **Apple RVC client** issue.
 - Fails in Google too ⇒ **Homebridge/matter.js RVC output** issue.
 
