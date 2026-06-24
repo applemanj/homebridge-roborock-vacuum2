@@ -121,7 +121,7 @@ Apple Home may show a generic **Matter Accessory** label during commissioning. T
 
 If you paired the experimental Matter vacuum before version 1.4.28 and Apple Home keeps showing the accessory as **Updating**, remove the Matter vacuum from Apple Home, restart the Roborock child bridge, and pair it again using the fresh code from the log.
 
-If a Matter vacuum stays on **Updating…** on a current Homebridge 2.1.x-beta even after re-pairing, this has been traced to the Homebridge/Matter (matter.js) Robotic Vacuum presentation layer or the Apple Home RVC client rather than to this plugin, and is tracked upstream in [homebridge/homebridge#3951](https://github.com/homebridge/homebridge/issues/3951). The HomeKit fan/switch accessory keeps working in the meantime.
+If a Matter vacuum stays on **Updating…** on a current Homebridge 2.1.x-beta, first remove the stale Matter vacuum from Apple Home, reset/restart the Roborock child bridge's Matter accessory, and pair it again. A live Homebridge 2.1.1-beta test initially reproduced the stuck tile with error-free Matter reads, but a clean reset/re-pair later rendered the full RVC endpoint correctly in Apple Home; the investigation is tracked in [homebridge/homebridge#3951](https://github.com/homebridge/homebridge/issues/3951). The HomeKit fan/switch accessory keeps working in the meantime.
 
 The Matter vacuum controls map to the same Roborock commands used elsewhere in the plugin:
 

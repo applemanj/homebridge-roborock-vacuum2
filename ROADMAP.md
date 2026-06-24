@@ -22,12 +22,12 @@
 - Stabilized Matter publishing: serialized full-snapshot writes with no plugin-side change tracking, restored spec-conformant RVC operational state (null phases, no state labels), and removed synthetic identify/phase churn that left Apple Home stuck on "Updating…" (1.4.58).
 - Added acknowledgement waiting + timing logs to the HomeKit Pause/Return-to-Dock controls (1.4.59, issue #12).
 - Fixed Matter Pause/Return-to-Dock being dropped on slow-syncing models (e.g. S8 / `roborock.vacuum.a51`) while the cached state still reads docked (1.4.60, issue #4).
-- Investigated the persistent Apple Home "Updating…" tile, exonerated the plugin, and filed the findings upstream (homebridge/homebridge#3951); see `docs/matter-rvc-updating-homebridge-report.md`.
+- Investigated the Apple Home Matter RVC "Updating…" tile, captured the upstream evidence, and later verified that a clean reset/re-pair can render the full RVC endpoint correctly (homebridge/homebridge#3951); see `docs/matter-rvc-updating-homebridge-report.md`.
 - Added an `AGENTS.md` handoff guide for AI coding agents.
 
 ## In Progress
 
-- Track upstream homebridge/homebridge#3951 (Matter RVC tile stuck on "Updating…"); cross-check the same node in Google Home to split Homebridge vs Apple.
+- Monitor homebridge/homebridge#3951 for recurrence after Apple Home/controller refresh cycles; close if the clean reset/re-pair result stays stable.
 - Await reporter retests on issues #4 and #12 after the 1.4.59/1.4.60 fixes.
 - Improve scene and room controls so HomeKit exposes room cleaning shortcuts with cleaner names and fewer invalid characteristic warnings.
 - Add clearer model lookup mismatch and unsupported attribute logs.

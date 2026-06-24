@@ -99,6 +99,7 @@ async function loadConfig() {
     typeof window.homebridge.getPluginConfig !== "function"
   ) {
     updateAuthStatus(false, false);
+    await loadMatterPairing();
     return;
   }
 
@@ -108,6 +109,7 @@ async function loadConfig() {
   );
   if (!config) {
     updateAuthStatus(false, false);
+    await loadMatterPairing();
     return;
   }
 
@@ -1005,6 +1007,9 @@ async function updatePluginConfig(patch) {
 function init() {
   loadConfig().catch(() => {
     showToast("error", "Failed to load current config.");
+    loadMatterPairing().catch(() => {
+      showToast("error", "Failed to load Matter pairing codes.");
+    });
   });
   elements.saveSettings.addEventListener("click", () => saveCredentials(true));
   elements.login.addEventListener("click", login);

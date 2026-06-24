@@ -186,10 +186,6 @@ const RVC_BASIC_OPERATIONAL_STATE_LIST = [
   RVC_OPERATIONAL_STATE.PAUSED,
   RVC_OPERATIONAL_STATE.ERROR,
 ] as const;
-const RVC_ERROR_STATE = {
-  NO_ERROR: 0,
-  UNABLE_TO_COMPLETE_OPERATION: 2,
-} as const;
 
 const POWER_SOURCE_STATUS = {
   ACTIVE: 1,
@@ -208,6 +204,10 @@ const BATTERY_CHARGE_STATE = {
   IS_AT_FULL_CHARGE: 2,
   IS_NOT_CHARGING: 3,
 } as const;
+const BATTERY_REPLACEABILITY = {
+  UNSPECIFIED: 0,
+} as const;
+const BATTERY_ESTIMATED_CHARGE_SECONDS_PER_PERCENT = 180;
 
 const SERVICE_AREA_SELECT_STATUS = {
   SUCCESS: 0,
@@ -385,10 +385,7 @@ export default class RoborockMatterVacuumAccessory {
       if (id === "HomeData") {
         this.rememberHomeDataStatus(data);
       }
-      await this.updateMatterStateFromRoborock({
-        includeStaticMetadata:
-          id === "RoomMapping" && this.isServiceAreaEnabled(),
-      });
+      await this.updateMatterStateFromRoborock();
       return;
     }
 
@@ -402,9 +399,7 @@ export default class RoborockMatterVacuumAccessory {
     }
   }
 
-  async updateMatterStateFromRoborock(
-    options: { includeStaticMetadata?: boolean } = {}
-  ): Promise<void> {
+  async updateMatterStateFromRoborock(): Promise<void> {
     if (!this.registered) {
       return;
     }
@@ -414,12 +409,8 @@ export default class RoborockMatterVacuumAccessory {
       return;
     }
 
-    const clusters = options.includeStaticMetadata
-      ? this.buildClusters()
-      : this.buildDynamicClusters();
-
     const updated = await this.updateMatterState(
-      clusters,
+      this.buildClusters(),
       "Roborock state refresh"
     );
     if (updated) {
@@ -737,7 +728,7 @@ export default class RoborockMatterVacuumAccessory {
 
       // Build the snapshot at execution time so it reflects the freshest
       // Roborock and optimistic state instead of a stale captured copy.
-      void this.updateMatterState(this.buildDynamicClusters(), reason)
+      void this.updateMatterState(this.buildClusters(), reason)
         .then((updated) => {
           if (updated) {
             this.ensureMatterStateHeartbeat();
@@ -864,7 +855,7 @@ export default class RoborockMatterVacuumAccessory {
     }
 
     const updated = await this.updateMatterState(
-      this.buildDynamicClusters(),
+      this.buildClusters(),
       "live state"
     );
     if (updated) {
@@ -884,40 +875,6 @@ export default class RoborockMatterVacuumAccessory {
     if (this.isServiceAreaEnabled()) {
       clusters.serviceArea = this.buildServiceAreaCluster();
     }
-
-    return this.applyOptimisticState(clusters);
-  }
-
-  private buildDynamicClusters(): MatterClusterState {
-    const operationalState = this.getOperationalState();
-    const clusters: MatterClusterState = {
-      rvcRunMode: {
-        currentMode: this.isInCleaningRunMode(operationalState)
-          ? RUN_MODE_CLEANING
-          : RUN_MODE_IDLE,
-      },
-      rvcOperationalState: {
-        operationalState,
-        // RVC Operational State requires PhaseList and CurrentPhase to be
-        // null. Writing the nulls on every publish also repairs stores on
-        // installs that upgraded from versions that flapped CurrentPhase as a
-        // refresh signal, without requiring a re-pair.
-        phaseList: null,
-        currentPhase: null,
-        operationalError: {
-          errorStateId:
-            operationalState === RVC_OPERATIONAL_STATE.ERROR
-              ? RVC_ERROR_STATE.UNABLE_TO_COMPLETE_OPERATION
-              : RVC_ERROR_STATE.NO_ERROR,
-        },
-      },
-    };
-
-    if (this.isCleanModeEnabled()) {
-      clusters.rvcCleanMode = { currentMode: this.getCurrentCleanMode() };
-    }
-
-    this.addPowerSourceCluster(clusters);
 
     return this.applyOptimisticState(clusters);
   }
@@ -1185,12 +1142,6 @@ export default class RoborockMatterVacuumAccessory {
 
   private buildOperationalStateCluster(): Record<string, unknown> {
     const operationalState = this.getOperationalState();
-    const operationalError: Record<string, unknown> = {
-      errorStateId:
-        operationalState === RVC_OPERATIONAL_STATE.ERROR
-          ? RVC_ERROR_STATE.UNABLE_TO_COMPLETE_OPERATION
-          : RVC_ERROR_STATE.NO_ERROR,
-    };
 
     return {
       // RVC Operational State requires PhaseList and CurrentPhase to be null.
@@ -1203,7 +1154,6 @@ export default class RoborockMatterVacuumAccessory {
         (operationalStateId) => ({ operationalStateId })
       ),
       operationalState,
-      operationalError,
     };
   }
 
@@ -1224,6 +1174,11 @@ export default class RoborockMatterVacuumAccessory {
       stateValue === undefined ? this.getNumberStatus("state") : stateValue;
     const normalizedBattery =
       battery === null ? null : Math.max(0, Math.min(100, battery));
+    const batChargeState = this.getBatteryChargeState(
+      normalizedBattery,
+      chargeStatus,
+      state
+    );
 
     return {
       status:
@@ -1236,12 +1191,15 @@ export default class RoborockMatterVacuumAccessory {
       batPercentRemaining:
         normalizedBattery === null ? null : normalizedBattery * 2,
       batChargeLevel: this.getBatteryChargeLevel(normalizedBattery),
-      batChargeState: this.getBatteryChargeState(
-        normalizedBattery,
-        chargeStatus,
-        state
-      ),
+      batChargeState,
       batReplacementNeeded: false,
+      batReplaceability: BATTERY_REPLACEABILITY.UNSPECIFIED,
+      batFunctionalWhileCharging: true,
+      batTimeToFullCharge: this.getBatteryTimeToFullCharge(
+        normalizedBattery,
+        batChargeState
+      ),
+      batChargingCurrent: null,
     };
   }
 
@@ -1365,10 +1323,10 @@ export default class RoborockMatterVacuumAccessory {
     }
 
     // Defer the publish so the selectAreas handler returns promptly; the
-    // cluster is rebuilt at execution time from the stored selection.
+    // snapshot is rebuilt at execution time from the stored selection.
     scheduleTimer(() => {
       void this.updateMatterState(
-        { serviceArea: this.buildServiceAreaCluster() },
+        this.buildClusters(),
         "service area selection"
       ).catch((error) => {
         this.platform.log.warn(
@@ -1801,6 +1759,27 @@ export default class RoborockMatterVacuumAccessory {
     return BATTERY_CHARGE_STATE.UNKNOWN;
   }
 
+  private getBatteryTimeToFullCharge(
+    battery: number | null,
+    chargeState: number
+  ): number | null {
+    if (battery === null) {
+      return null;
+    }
+
+    if (chargeState === BATTERY_CHARGE_STATE.IS_AT_FULL_CHARGE) {
+      return 0;
+    }
+
+    if (chargeState !== BATTERY_CHARGE_STATE.IS_CHARGING) {
+      return null;
+    }
+
+    return (
+      Math.ceil(100 - battery) * BATTERY_ESTIMATED_CHARGE_SECONDS_PER_PERCENT
+    );
+  }
+
   private getOperationalState(
     state = this.getNumberStatus("state"),
     chargeStatus = this.getNumberStatus("charge_status")
@@ -1863,6 +1842,8 @@ export default class RoborockMatterVacuumAccessory {
     }
 
     switch (operationalState) {
+      case RVC_OPERATIONAL_STATE.ERROR:
+        return RVC_OPERATIONAL_STATE.STOPPED;
       case RVC_OPERATIONAL_STATE.SEEKING_CHARGER:
         return RVC_OPERATIONAL_STATE.STOPPED;
       case RVC_OPERATIONAL_STATE.EMPTYING_DUST_BIN:
@@ -2147,10 +2128,7 @@ export default class RoborockMatterVacuumAccessory {
     if (options.clearOptimistic === true) {
       this.clearOptimisticState();
     }
-    const updated = await this.updateMatterState(
-      this.buildDynamicClusters(),
-      reason
-    );
+    const updated = await this.updateMatterState(this.buildClusters(), reason);
     if (updated) {
       this.ensureMatterStateHeartbeat();
     }

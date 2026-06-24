@@ -1,12 +1,31 @@
-# Matter Robotic Vacuum Cleaner (device type 0x74) never leaves "Updating…" in Apple Home
+# Matter Robotic Vacuum Cleaner (device type 0x74) "Updating…" investigation in Apple Home
 
-> Draft bug report for **github.com/homebridge/homebridge**. Evidence gathered live from a running Homebridge 2.1.1‑beta.1 container.
+Evidence gathered live from a running Homebridge 2.1.1‑beta.1 container for
+**homebridge/homebridge#3951**.
 
 ## Summary
 
-A Matter Robotic Vacuum Cleaner (RVC, device type `0x74`) exposed through Homebridge 2's Matter API commissions successfully into Apple Home, the controller subscribes and reads every attribute **without error**, but the accessory tile is **permanently stuck on "Updating…"** and never becomes controllable.
+A Matter Robotic Vacuum Cleaner (RVC, device type `0x74`) exposed through Homebridge 2's Matter API commissioned successfully into Apple Home, the controller subscribed and read every attribute **without error**, but the accessory tile initially stayed **stuck on "Updating…"** and never became controllable.
 
-The exposing plugin has been exonerated (see "Ruled out"), so this appears to be in the Homebridge/matter.js RVC presentation layer or an Apple‑side RVC limitation. Filing here because Homebridge owns the Matter device composition and is the layer we can act on; happy to redirect to Apple if maintainers can confirm the device model is correct.
+The exposing plugin was ruled out during the original failure (see "Ruled out"). A later clean reset/re-pair of the same external RVC node, with the full intended cluster set enabled, rendered correctly in Apple Home on both Mac and iPhone. The current read is that the failure was likely stale Apple Home controller/presentation state, or a Homebridge/matter.js/Apple Home presentation edge case that is not deterministic.
+
+## Latest status
+
+After resetting the Homebridge external RVC Matter node and removing the stale Apple Home accessory, the full RVC endpoint paired and rendered successfully:
+
+- Apple Home tile reached `Ready` on Mac and iPhone.
+- The control sheet opened with Start, Clean Mode, Rooms, and Send to Dock.
+- The Rooms sheet rendered the expected Service Area choices.
+- Homebridge logs showed successful commissioning, fresh subscriptions, and full state publishes for `rvcRunMode`, `rvcOperationalState`, `rvcCleanMode`, `serviceArea`, and `powerSource`.
+- No Homebridge conformance errors or subscription cancellations were found.
+
+One Apple Home log remained:
+
+```text
+No options for RVC secondaryCleanControl
+```
+
+That log appeared non-fatal because the UI rendered and was controllable. The earlier `primaryCleanControl` / `Failed to build RVC status button control` messages only appeared on the stale pre-removal accessory and did not recur after fresh pairing.
 
 ## Environment
 
@@ -28,14 +47,14 @@ endpoint#1 type: RoboticVacuumCleaner (0x74, rev 4)
 behaviors: ✓identify ✓rvcRunMode ✓rvcOperationalState ✓rvcCleanMode ✓serviceArea ✓powerSource ✓descriptor
 ```
 
-## Symptom
+## Original symptom
 
 - Commissioning completes: `generalCommissioning.commissioningComplete errorCode: 0`.
 - The controller establishes a subscription and reads the RVC endpoint.
 - The Apple Home tile shows **"Updating…" indefinitely** and is never controllable.
 - It briefly clears if an `Identify` command is invoked (e.g. "Play Sound to Locate"), then reverts — i.e. a command round‑trip forces a one‑time re‑render, but passive subscription data does not.
 
-## Reproduction
+## Original reproduction
 
 1. Expose any Matter RVC (`0x74`) via Homebridge 2.1.x‑beta Matter.
 2. Commission it into Apple Home.
@@ -65,21 +84,20 @@ The persisted RVC Operational State cluster is spec‑conformant (PhaseList/Curr
     { "operationalStateId": 2 },
     { "operationalStateId": 3 }
   ],
-  "operationalState": 0,
-  "operationalError": { "errorStateId": 0 }
+  "operationalState": 0
 }
 ```
 
 `rvcRunMode` / `rvcCleanMode` advertise valid `supportedModes` with conformant `modeTags`, and each `currentMode` exists in its `supportedModes`. The controller reads all of this with no `Status=Unsupported*`/constraint errors (only the benign `OTA Requestor (0x2A)` and Apple vendor‑cluster `0x1349…` probes return UnsupportedCluster, as expected).
 
-So: the controller receives correct, conformant, error‑free RVC data over a healthy subscription, and refuses to render the tile.
+During the original failure, the controller received correct, conformant, error‑free RVC data over a healthy subscription and still refused to render the tile.
 
 ## What we suspect / open question
 
-Since the controller never errors on a read yet won't render, the gap is likely one of:
+Since the controller never errored on a read yet did not render until a later reset/re-pair, the gap is likely one of:
 
-1. **The RVC endpoint composition** Homebridge/matter.js produces for `0x74` is missing or mis‑shaping something Apple's RVC client requires to initialize the tile (a mandatory attribute/feature, cluster revision, or the standalone‑node vs bridged structure), **or**
-2. **Apple's RVC client** doesn't fully support an RVC presented this way on the current iOS/tvOS.
+1. **Stale Apple Home controller/presentation state** for the external RVC node, especially after cluster-set or persisted-state changes, **or**
+2. **A Homebridge/matter.js or Apple RVC presentation edge case** that can be cleared by a clean node reset and fresh Apple Home pairing.
 
 **Questions for maintainers:**
 
@@ -87,9 +105,9 @@ Since the controller never errors on a read yet won't render, the gap is likely 
 - Is the **standalone external node** the correct structure for RVC, and does Apple's RVC client require anything beyond what `@matter/main` 0.17.2 emits for this device type?
 - Are there required RVC attributes/feature‑map bits (e.g. on RVC Operational State, or Service Area conformance) that the device type should be advertising but isn't?
 
-## How to isolate Homebridge vs Apple definitively
+## If it recurs
 
-Pair the same RVC node into a **non‑Apple ecosystem with real RVC support (Google Home)**:
+If the issue recurs after a clean reset/re-pair, pair the same RVC node into a **non‑Apple ecosystem with real RVC support (Google Home)**:
 
 - Renders in Google but not Apple ⇒ **Apple RVC client** issue.
 - Fails in Google too ⇒ **Homebridge/matter.js RVC output** issue.

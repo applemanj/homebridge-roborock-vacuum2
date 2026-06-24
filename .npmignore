@@ -35,5 +35,7 @@ roborockLib/data/
 
 # Local artifacts
 .claude/
+AGENTS.md
+CLAUDE.md
 *.log
 *.tgz

@@ -438,8 +438,8 @@ class RoborockUiServer {
           .filter((device) => typeof device.duid === "string" && device.duid)
           .map((device) => [device.duid, device])
       );
-      const matterPath = path.join(storagePath, "matter");
-      const files = this.findActiveCommissioningFiles(matterPath);
+      const matterPaths = this.getMatterSearchPaths(storagePath);
+      const files = this.findActiveCommissioningFiles(matterPaths);
       const entries = await Promise.all(
         files.map(async (filePath) => {
           const commissioning = this.readJsonFile(filePath);
@@ -469,8 +469,11 @@ class RoborockUiServer {
         ok: true,
         generatedAt: new Date().toISOString(),
         storagePath,
-        matterPath,
-        hasMatterDirectory: fs.existsSync(matterPath),
+        matterPath: matterPaths[0] || path.join(storagePath, "matter"),
+        matterPaths,
+        hasMatterDirectory: matterPaths.some((matterPath) =>
+          fs.existsSync(matterPath)
+        ),
         entries: pairingEntries,
       };
     } catch (error: any) {
@@ -481,19 +484,65 @@ class RoborockUiServer {
     }
   }
 
-  private findActiveCommissioningFiles(matterPath: string): string[] {
-    if (!fs.existsSync(matterPath)) {
-      return [];
+  private getMatterSearchPaths(storagePath: string): string[] {
+    return Array.from(
+      new Set(
+        [
+          path.join(storagePath, "matter"),
+          "/var/lib/homebridge/matter",
+          "/homebridge/matter",
+        ].filter(Boolean)
+      )
+    );
+  }
+
+  private findActiveCommissioningFiles(matterPaths: string[]): string[] {
+    const files: string[] = [];
+    const seen = new Set<string>();
+
+    for (const matterPath of matterPaths) {
+      if (!fs.existsSync(matterPath)) {
+        continue;
+      }
+
+      try {
+        for (const entry of fs.readdirSync(matterPath, {
+          withFileTypes: true,
+        })) {
+          if (!entry.isDirectory() || entry.name.includes(".")) {
+            continue;
+          }
+
+          const filePath = path.join(
+            matterPath,
+            entry.name,
+            "commissioning.json"
+          );
+          if (!fs.existsSync(filePath)) {
+            continue;
+          }
+
+          const key = this.getRealPath(filePath);
+          if (seen.has(key)) {
+            continue;
+          }
+
+          seen.add(key);
+          files.push(filePath);
+        }
+      } catch {
+        // Ignore unreadable Matter storage locations and continue searching.
+      }
     }
 
+    return files;
+  }
+
+  private getRealPath(filePath: string): string {
     try {
-      return fs
-        .readdirSync(matterPath, { withFileTypes: true })
-        .filter((entry) => entry.isDirectory() && !entry.name.includes("."))
-        .map((entry) => path.join(matterPath, entry.name, "commissioning.json"))
-        .filter((filePath) => fs.existsSync(filePath));
+      return fs.realpathSync(filePath);
     } catch {
-      return [];
+      return path.resolve(filePath);
     }
   }
 

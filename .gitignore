@@ -12,6 +12,7 @@ node_modules
 .idea
 openspec/
 .opencode/
+.claude/
 .github/*
 !.github/workflows/
 !.github/workflows/**

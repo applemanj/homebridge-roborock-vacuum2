@@ -103,6 +103,9 @@ describe("Matter clean mode capabilities", () => {
 
     expect(accessory.clusters.rvcCleanMode).toBeDefined();
     expect(accessory.handlers.rvcCleanMode).toBeDefined();
+    expect(accessory.clusters.rvcCleanMode.supportedModes).toHaveLength(1);
+    expect(accessory.clusters.rvcCleanMode).not.toHaveProperty("startUpMode");
+    expect(accessory.clusters.rvcCleanMode).not.toHaveProperty("onMode");
   });
 
   test("can be disabled independently for controller compatibility", async () => {
@@ -212,7 +215,7 @@ describe("Matter startup state updates", () => {
     ).toBe(RVC_OPERATIONAL_STATE_STOPPED);
   });
 
-  test("uses dynamic-only payloads for ordinary Roborock state refreshes", async () => {
+  test("uses full payloads for ordinary Roborock state refreshes", async () => {
     const matterUpdates = [];
     const platform = createPlatform({
       matterUpdates,
@@ -229,10 +232,13 @@ describe("Matter startup state updates", () => {
       (update) => update.cluster === "rvcOperationalState"
     );
 
-    expect(runModeUpdate.attributes).toEqual({ currentMode: RUN_MODE_IDLE });
-    expect(operationalUpdate.attributes).not.toHaveProperty(
-      "operationalStateList"
-    );
+    expect(runModeUpdate.attributes).toMatchObject({
+      currentMode: RUN_MODE_IDLE,
+    });
+    expect(runModeUpdate.attributes.supportedModes).toHaveLength(2);
+    expect(runModeUpdate.attributes).not.toHaveProperty("startUpMode");
+    expect(runModeUpdate.attributes).not.toHaveProperty("onMode");
+    expect(operationalUpdate.attributes).toHaveProperty("operationalStateList");
     expect(operationalUpdate.attributes).not.toHaveProperty("countdownTime");
     expect(operationalUpdate.attributes.operationalState).toBe(
       RVC_OPERATIONAL_STATE_STOPPED
@@ -410,7 +416,7 @@ describe("Matter startup state updates", () => {
     expect(matterUpdates).toEqual([]);
   });
 
-  test("uses dynamic-only room mapping refreshes when service area is disabled", async () => {
+  test("uses full room mapping refreshes when service area is disabled", async () => {
     const matterUpdates = [];
     const platform = createPlatform({
       enableMatterServiceArea: false,
@@ -428,9 +434,10 @@ describe("Matter startup state updates", () => {
       (update) => update.cluster === "rvcOperationalState"
     );
 
-    expect(operationalUpdate.attributes).not.toHaveProperty(
-      "operationalStateList"
-    );
+    expect(operationalUpdate.attributes).toHaveProperty("operationalStateList");
+    expect(
+      matterUpdates.some((update) => update.cluster === "serviceArea")
+    ).toBe(false);
   });
 
   test("retries state refresh when Homebridge endpoint is still initializing", async () => {
@@ -666,6 +673,12 @@ describe("Matter operational state", () => {
     const list = accessory.clusters.rvcOperationalState.operationalStateList;
 
     expect(list.map((entry) => entry.operationalStateId)).toEqual([0, 1, 2, 3]);
+    expect(accessory.clusters.rvcOperationalState).not.toHaveProperty(
+      "operationalError"
+    );
+    expect(accessory.clusters.rvcRunMode.supportedModes).toHaveLength(2);
+    expect(accessory.clusters.rvcRunMode).not.toHaveProperty("startUpMode");
+    expect(accessory.clusters.rvcRunMode).not.toHaveProperty("onMode");
   });
 
   test("adds only Returning when extended operational states are enabled", () => {
@@ -957,6 +970,45 @@ describe("Matter power source", () => {
     const { accessory } = createAccessory(platform);
 
     expect(accessory.clusters.powerSource).toBeDefined();
+  });
+
+  test("publishes rechargeable battery metadata", () => {
+    const platform = createPlatform({
+      status: { state: 8, battery: 50, charge_status: 1 },
+    });
+    const { accessory } = createAccessory(platform);
+
+    expect(accessory.clusters.powerSource).toMatchObject({
+      batReplaceability: 0,
+      batFunctionalWhileCharging: true,
+      batTimeToFullCharge: 9000,
+      batChargingCurrent: null,
+    });
+  });
+
+  test("uses nullable charging estimates when the robot is not charging", () => {
+    const platform = createPlatform({
+      status: { state: 5, battery: 50, charge_status: 0 },
+    });
+    const { accessory } = createAccessory(platform);
+
+    expect(accessory.clusters.powerSource).toMatchObject({
+      batChargeState: 3,
+      batTimeToFullCharge: null,
+      batChargingCurrent: null,
+    });
+  });
+
+  test("reports zero time to full charge when the battery is full", () => {
+    const platform = createPlatform({
+      status: { state: 8, battery: 100, charge_status: 1 },
+    });
+    const { accessory } = createAccessory(platform);
+
+    expect(accessory.clusters.powerSource).toMatchObject({
+      batChargeState: 2,
+      batTimeToFullCharge: 0,
+    });
   });
 
   test("can be disabled independently for controller compatibility", async () => {
