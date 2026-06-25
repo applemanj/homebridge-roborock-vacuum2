@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.62
+
+- Added explicit package author metadata so npm identifies Joshua Appleman as the package author while keeping trusted GitHub Actions publishing intact.
+
 ## 1.4.61
 
 - Kept Matter RVC state publishes as serialized full snapshots for all refresh paths, including live updates and Service Area selection changes, so Apple Home is not left depending on partial cluster writes after controller refreshes.

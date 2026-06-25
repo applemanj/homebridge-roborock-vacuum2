@@ -1,8 +1,13 @@
 {
   "name": "homebridge-roborock-vacuum2",
-  "version": "1.4.61",
+  "version": "1.4.62",
   "description": "Roborock Vacuum Cleaner - plugin for Homebridge.",
   "license": "MIT",
+  "author": {
+    "name": "Joshua Appleman",
+    "email": "joshua@appleman.us",
+    "url": "https://github.com/applemanj"
+  },
   "keywords": [
     "homebridge-plugin",
     "vacuum cleaner",
