@@ -615,23 +615,15 @@ export default class RoborockMatterVacuumAccessory {
       this.isRoborockDockedOrCharging(roborockState, chargeStatus) ||
       (roborockState !== null &&
         !this.isInCleaningRunMode(currentOperationalState));
-    if (
-      looksIdle &&
-      !this.hasActiveOptimisticState() &&
-      !this.hasRecentlyCommandedCleaning()
-    ) {
-      this.platform.log.info(
-        `Ignoring Matter pause request for ${this.getVacuumName()} because it is not cleaning.`
-      );
-      await this.publishCurrentMatterState("ignored pause", {
-        clearOptimistic: true,
-      });
-      return;
-    }
 
+    // Always forward an explicit Matter pause to the robot. The cached snapshot
+    // can lag or be overridden by a stale HomeData refresh while the robot is
+    // really cleaning (issues #4 and #12), so hard-dropping the command based on
+    // it silently failed real pauses. Pausing an already-stopped robot is a
+    // harmless no-op, and the optimistic state self-corrects if it was idle.
     if (looksIdle) {
       this.platform.log.info(
-        `Pausing ${this.getVacuumName()} from Matter despite a stale idle snapshot because a recent Matter command still expects active cleaning.`
+        `Pausing ${this.getVacuumName()} from Matter despite an idle snapshot; the cached state may be stale.`
       );
     } else {
       this.platform.log.info(`Pausing ${this.getVacuumName()} from Matter.`);
@@ -663,29 +655,19 @@ export default class RoborockMatterVacuumAccessory {
   }
 
   private async returnToDock(): Promise<void> {
-    if (
-      this.isDockedOrChargingNow() &&
-      !this.hasActiveOptimisticState() &&
-      !this.hasRecentlyCommandedCleaning()
-    ) {
-      this.platform.log.info(
-        `Ignoring Matter dock request for ${this.getVacuumName()} because it is already docked or charging.`
-      );
-      await this.publishCurrentMatterState("return to dock already docked", {
-        clearOptimistic: true,
-      });
-      return;
-    }
-
+    // Always forward an explicit Matter dock to the robot. As with pause, the
+    // cached snapshot can lag or be overridden by a stale HomeData refresh while
+    // the robot is really cleaning (issues #4 and #12); docking an already-docked
+    // robot is a harmless no-op.
     if (this.isDockedOrChargingNow()) {
       this.platform.log.info(
-        `Sending ${this.getVacuumName()} back to dock from Matter despite a stale docked snapshot because a recent Matter command still expects active cleaning.`
+        `Sending ${this.getVacuumName()} back to dock from Matter despite a docked snapshot; the cached state may be stale.`
+      );
+    } else {
+      this.platform.log.info(
+        `Sending ${this.getVacuumName()} back to dock from Matter.`
       );
     }
-
-    this.platform.log.info(
-      `Sending ${this.getVacuumName()} back to dock from Matter.`
-    );
     const returnOperationalState = this.isExtendedOperationalStateEnabled()
       ? RVC_OPERATIONAL_STATE.SEEKING_CHARGER
       : RVC_OPERATIONAL_STATE.STOPPED;
@@ -2054,6 +2036,21 @@ export default class RoborockMatterVacuumAccessory {
       return;
     }
 
+    // While a start/resume/area-clean is still spinning up, cloud-only models
+    // (e.g. S8 / roborock.vacuum.a51) keep reporting docked/charging for tens of
+    // seconds before they report Cleaning. During the recent-command window,
+    // treat those lagging reports as transitional rather than contradictions, so
+    // the optimistic Cleaning state is not starved and Apple Home does not snap
+    // the tile back to Docked right after Start (issue #4).
+    if (
+      expected === RVC_OPERATIONAL_STATE.RUNNING &&
+      this.isRoborockDockedOrCharging(roborockState, chargeStatus) &&
+      this.hasRecentlyCommandedCleaning()
+    ) {
+      this.contradictingLiveStateCount = 0;
+      return;
+    }
+
     // The command was acknowledged but the robot reports a different state.
     // Tolerate a couple of transitional reports, then trust the live state so
     // an optimistic value cannot stay stuck until the TTL expires (e.g. a start
@@ -2152,22 +2149,6 @@ export default class RoborockMatterVacuumAccessory {
     }, MATTER_STATE_HEARTBEAT_INTERVAL_MS);
     this.matterStateHeartbeatTimer = heartbeatTimer;
     unrefTimer(heartbeatTimer);
-  }
-
-  private isActiveMatterState(clusters: MatterClusterState): boolean {
-    const operationalState = this.getNumberFromValue(
-      clusters.rvcOperationalState?.operationalState
-    );
-
-    return (
-      clusters.rvcRunMode?.currentMode === RUN_MODE_CLEANING ||
-      (operationalState !== null && this.isInCleaningRunMode(operationalState))
-    );
-  }
-
-  private hasActiveOptimisticState(): boolean {
-    const optimistic = this.getActiveOptimisticState();
-    return optimistic !== null && this.isActiveMatterState(optimistic);
   }
 
   private applyOptimisticState(

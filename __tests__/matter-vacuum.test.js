@@ -811,7 +811,7 @@ describe("Matter operational state", () => {
     expect(getStatus).toHaveBeenCalledTimes(8);
   });
 
-  test("does not send a dock command when already docked", async () => {
+  test("forwards a Matter dock even when the cached snapshot says docked", async () => {
     const matterUpdates = [];
     const appCharge = jest.fn().mockResolvedValue(undefined);
     const platform = createPlatform({
@@ -824,23 +824,18 @@ describe("Matter operational state", () => {
     });
     const { accessory } = createAccessory(platform, true);
 
+    // The cached state can be a stale HomeData snapshot while the robot is really
+    // cleaning (issues #4/#12), so an explicit dock is forwarded regardless; a
+    // dock to an already-docked robot is a harmless no-op.
     await accessory.handlers.rvcOperationalState.goHome();
 
-    expect(appCharge).not.toHaveBeenCalled();
-    expect(
-      matterUpdates.find((update) => update.cluster === "rvcRunMode").attributes
-        .currentMode
-    ).toBe(RUN_MODE_IDLE);
-    expect(
-      matterUpdates.find((update) => update.cluster === "rvcOperationalState")
-        .attributes.operationalState
-    ).toBe(RVC_OPERATIONAL_STATE_STOPPED);
+    expect(appCharge).toHaveBeenCalled();
     expect(platform.log.info).toHaveBeenCalledWith(
-      expect.stringContaining("already docked or charging")
+      expect.stringContaining("despite a docked snapshot")
     );
   });
 
-  test("does not publish paused or send pause when already docked", async () => {
+  test("forwards a Matter pause even when the cached snapshot says docked", async () => {
     const matterUpdates = [];
     const appPause = jest.fn().mockResolvedValue(undefined);
     const platform = createPlatform({
@@ -853,20 +848,14 @@ describe("Matter operational state", () => {
     });
     const { accessory } = createAccessory(platform, true);
 
+    // Same rationale as dock: a real pause must not be dropped because the cache
+    // looks idle; pausing an already-stopped robot is a harmless no-op.
     await accessory.handlers.rvcOperationalState.pause();
 
-    expect(appPause).not.toHaveBeenCalled();
-    expect(
-      matterUpdates.find((update) => update.cluster === "rvcOperationalState")
-        .attributes.operationalState
-    ).toBe(RVC_OPERATIONAL_STATE_STOPPED);
-    expect(
-      matterUpdates.some(
-        (update) =>
-          update.cluster === "rvcOperationalState" &&
-          update.attributes.operationalState === 2
-      )
-    ).toBe(false);
+    expect(appPause).toHaveBeenCalled();
+    expect(platform.log.info).toHaveBeenCalledWith(
+      expect.stringContaining("despite an idle snapshot")
+    );
   });
 
   test("passes cloud preference through Matter commands when enabled", async () => {
@@ -1140,7 +1129,7 @@ describe("Matter live status cache", () => {
 });
 
 describe("Matter optimistic state", () => {
-  test("abandons an optimistic state after repeated contradicting live updates", async () => {
+  test("keeps the optimistic cleaning state through lagging docked reports during the start spin-up window", async () => {
     const matterUpdates = [];
     const platform = createPlatform({ matterUpdates });
     const { vacuum } = createAccessory(platform, true);
@@ -1151,18 +1140,51 @@ describe("Matter optimistic state", () => {
     });
     await flush();
 
+    // A cloud-only model (e.g. S8 / roborock.vacuum.a51) keeps reporting docked
+    // for a stretch after Start before it reports Cleaning. Within the post-start
+    // window these lagging reports are transitional, so the optimistic running
+    // state is kept for every publish and Apple Home does not snap the tile back
+    // to Docked (issue #4) — even past the old contradiction limit of 2.
     const chargingMessage = [{ state: 8, battery: 100, charge_status: 1 }];
 
-    // First contradicting update is tolerated: the published snapshot still
-    // carries the optimistic running state rather than the live docked state.
     matterUpdates.length = 0;
     await vacuum.notifyDeviceUpdater("LocalMessage", chargingMessage);
-    expect(
-      matterUpdates.find((update) => update.cluster === "rvcOperationalState")
-        .attributes.operationalState
-    ).toBe(RVC_OPERATIONAL_STATE_RUNNING);
+    await vacuum.notifyDeviceUpdater("LocalMessage", chargingMessage);
+    await vacuum.notifyDeviceUpdater("LocalMessage", chargingMessage);
 
-    // Second contradicting update is trusted: the real stopped/docked state is pushed.
+    const operationalUpdates = matterUpdates.filter(
+      (update) => update.cluster === "rvcOperationalState"
+    );
+    expect(operationalUpdates.length).toBeGreaterThan(0);
+    for (const update of operationalUpdates) {
+      expect(update.attributes.operationalState).toBe(
+        RVC_OPERATIONAL_STATE_RUNNING
+      );
+    }
+  });
+
+  test("abandons the optimistic cleaning state once the start spin-up window passes and the robot stays docked", async () => {
+    jest.useFakeTimers();
+    const matterUpdates = [];
+    const platform = createPlatform({ matterUpdates });
+    const { vacuum } = createAccessory(platform, true);
+
+    await vacuum.accessory.handlers.rvcRunMode.changeToMode({
+      newMode: RUN_MODE_CLEANING,
+    });
+    await flush();
+
+    const chargingMessage = [{ state: 8, battery: 100, charge_status: 1 }];
+
+    // Let the post-start window elapse; a start the robot never acted on (e.g.
+    // the bin is full) must not keep Apple Home on Cleaning indefinitely.
+    await jest.advanceTimersByTimeAsync(61 * 1000);
+
+    // First contradiction after the window is still tolerated by the limit...
+    matterUpdates.length = 0;
+    await vacuum.notifyDeviceUpdater("LocalMessage", chargingMessage);
+
+    // ...the second is trusted: the real stopped/docked state is pushed.
     matterUpdates.length = 0;
     await vacuum.notifyDeviceUpdater("LocalMessage", chargingMessage);
     const operationalUpdate = matterUpdates.find(
@@ -1172,6 +1194,8 @@ describe("Matter optimistic state", () => {
     expect(operationalUpdate.attributes.operationalState).toBe(
       RVC_OPERATIONAL_STATE_STOPPED
     );
+
+    jest.clearAllTimers();
   });
 
   test("forwards a Matter pause and dock during the post-start sync lag even after optimism clears", async () => {
@@ -1205,13 +1229,13 @@ describe("Matter optimistic state", () => {
     await vacuum.accessory.handlers.rvcOperationalState.pause();
     expect(appPause).toHaveBeenCalled();
     expect(platform.log.info).toHaveBeenCalledWith(
-      expect.stringContaining("despite a stale idle snapshot")
+      expect.stringContaining("despite an idle snapshot")
     );
 
     await vacuum.accessory.handlers.rvcOperationalState.goHome();
     expect(appCharge).toHaveBeenCalled();
     expect(platform.log.info).toHaveBeenCalledWith(
-      expect.stringContaining("despite a stale docked snapshot")
+      expect.stringContaining("despite a docked snapshot")
     );
   });
 
@@ -1298,7 +1322,7 @@ describe("Matter optimistic state", () => {
       allowOfflineCloudSend: true,
     });
     expect(platform.log.info).toHaveBeenCalledWith(
-      expect.stringContaining("despite a stale docked snapshot")
+      expect.stringContaining("despite a docked snapshot")
     );
 
     jest.clearAllTimers();
