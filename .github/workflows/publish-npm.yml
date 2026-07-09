@@ -71,7 +71,7 @@ jobs:
 
       - name: Publish to npm
         if: steps.npm.outputs.published != 'true'
-        run: npm publish
+        run: npm publish --provenance=false
 
       - name: Set release tag
         id: release
