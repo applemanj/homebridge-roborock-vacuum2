@@ -767,6 +767,9 @@ class RoborockUiServer {
       const socket = new net.Socket();
       let settled = false;
 
+      // Ensure socket doesn't keep process alive
+      socket.unref();
+
       const finish = (error?: Error) => {
         if (settled) {
           return;
@@ -775,7 +778,13 @@ class RoborockUiServer {
         settled = true;
         clearTimeout(timer);
         socket.removeAllListeners();
-        socket.destroy();
+
+        // Ensure socket is properly destroyed
+        try {
+          socket.destroy();
+        } catch {
+          // Ignore errors during destroy
+        }
 
         if (error) {
           reject(error);
