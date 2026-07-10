@@ -27,6 +27,12 @@ jobs:
           registry-url: "https://registry.npmjs.org"
           cache: "npm"
 
+      # Pinned to the 11.x line: recent enough for OIDC trusted publishing,
+      # but avoids npm 12.0.0's broken provenance module (throws
+      # "Cannot find module 'sigstore'" even with --provenance=false).
+      - name: Upgrade npm
+        run: npm install -g "npm@^11"
+
       - name: Show Node and npm versions
         run: |
           node --version
