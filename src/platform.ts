@@ -15,7 +15,6 @@ import RoborockMatterVacuumAccessory from "./matter_vacuum_accessory";
 import RoborockPlatformLogger from "./logger";
 import { RoborockPlatformConfig } from "./types";
 import { PLATFORM_NAME, PLUGIN_NAME } from "./settings";
-import { forEach } from "jszip";
 import { decryptSession } from "./crypto";
 
 const DEP0040_CODE = "DEP0040";
@@ -238,9 +237,7 @@ export default class RoborockPlatform implements DynamicPlatformPlugin {
     }
 
     for (const vacuum of this.matterVacuums.values()) {
-      vacuum.notifyDeviceUpdater(id, homeData).catch((error) => {
-        this.log.debug("Error updating Matter vacuum state: " + error);
-      });
+      this.notifyMatter(vacuum, id, homeData);
     }
   }
 
@@ -257,10 +254,18 @@ export default class RoborockPlatform implements DynamicPlatformPlugin {
 
     const matterVacuum = this.matterVacuums.get(duid);
     if (matterVacuum) {
-      matterVacuum.notifyDeviceUpdater(id, homeData).catch((error) => {
-        this.log.debug("Error updating Matter vacuum state: " + error);
-      });
+      this.notifyMatter(matterVacuum, id, homeData);
     }
+  }
+
+  private notifyMatter(
+    vacuum: RoborockMatterVacuumAccessory,
+    id: string,
+    homeData: unknown
+  ): void {
+    vacuum.notifyDeviceUpdater(id, homeData).catch((error) => {
+      this.log.debug("Error updating Matter vacuum state: " + error);
+    });
   }
 
   private getScopedLiveMessageDuid(id: string, data: unknown): string | null {
@@ -384,7 +389,7 @@ export default class RoborockPlatform implements DynamicPlatformPlugin {
   }
 
   isSupportedDevice(model: string): boolean {
-    return typeof model === "string" && model.startsWith("roborock.vacuum.");
+    return this.roborockAPI.isSupportedVacuumModel(model);
   }
 
   /**

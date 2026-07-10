@@ -1,20 +1,12 @@
-import {
-  Service,
-  PlatformAccessory,
-  CharacteristicValue,
-  CharacteristicSetCallback,
-  CharacteristicGetCallback,
-  CharacteristicEventTypes,
-} from "homebridge";
+import { Service, PlatformAccessory, CharacteristicValue } from "homebridge";
 import RoborockPlatform from "./platform";
+import { getLiveMessageForThisAccessory } from "./live_message";
 
-import { catchError, concatMap, distinct } from "rxjs";
-import { AccessoryPlugin, API, Logging } from "homebridge";
-import { STATUS_CODES } from "http";
-import { log } from "console";
+const { stateCodes } = require("../roborockLib/lib/deviceFeatures");
 
 const MAX_HOMEKIT_NAME_LENGTH = 64;
 const FALLBACK_SCENE_NAME = "Roborock Scene";
+const CLEANING_STATES = new Set([4, 5, 6, 7, 11, 15, 16, 17, 18, 23, 26]);
 
 export function toHomeKitSafeName(
   name: string | null | undefined,
@@ -51,8 +43,6 @@ export default class RoborockVacuumAccessory {
     private readonly platform: RoborockPlatform,
     private readonly accessory: PlatformAccessory
   ) {
-    const self = this;
-
     // Accessory Information
     // https://developers.homebridge.io/#/service/AccessoryInformation
     this.accessory
@@ -220,20 +210,16 @@ export default class RoborockVacuumAccessory {
     }
 
     const vacuumName = this.getVacuumName();
-    try {
-      this.platform.log.info(`Pausing ${vacuumName}.`);
-      const startedAt = Date.now();
-      await this.platform.roborockAPI.app_pause(this.accessory.context, {
-        waitForResult: true,
-      });
-      this.platform.log.info(
-        `HomeKit pause command for ${vacuumName} was acknowledged by Roborock in ${Date.now() - startedAt} ms.`
-      );
-    } catch (error) {
-      this.platform.log.error(`Error pausing ${vacuumName}: ${error}`);
-    } finally {
-      this.resetMomentaryControlSwitch("pause-cleaning");
-    }
+    await this.executeMomentaryVacuumAction(
+      "pause-cleaning",
+      `Pausing ${vacuumName}.`,
+      "pause command",
+      (error) => `Error pausing ${vacuumName}: ${error}`,
+      () =>
+        this.platform.roborockAPI.app_pause(this.accessory.context, {
+          waitForResult: true,
+        })
+    );
   }
 
   async setReturnToDock(value: CharacteristicValue) {
@@ -242,21 +228,42 @@ export default class RoborockVacuumAccessory {
     }
 
     const vacuumName = this.getVacuumName();
+    await this.executeMomentaryVacuumAction(
+      "return-to-dock",
+      `Sending ${vacuumName} back to dock.`,
+      "return to dock command",
+      (error) => `Error sending ${vacuumName} back to dock: ${error}`,
+      () =>
+        this.platform.roborockAPI.app_charge(this.accessory.context, {
+          waitForResult: true,
+        })
+    );
+  }
+
+  /**
+   * Shared implementation for momentary command switches (pause, return to
+   * dock): logs the start, times the acknowledgement, logs errors, and always
+   * resets the momentary switch afterwards.
+   */
+  private async executeMomentaryVacuumAction(
+    switchKey: string,
+    startMessage: string,
+    ackLabel: string,
+    errorMessage: (error: unknown) => string,
+    apiCall: () => Promise<void>
+  ): Promise<void> {
+    const vacuumName = this.getVacuumName();
     try {
-      this.platform.log.info(`Sending ${vacuumName} back to dock.`);
+      this.platform.log.info(startMessage);
       const startedAt = Date.now();
-      await this.platform.roborockAPI.app_charge(this.accessory.context, {
-        waitForResult: true,
-      });
+      await apiCall();
       this.platform.log.info(
-        `HomeKit return to dock command for ${vacuumName} was acknowledged by Roborock in ${Date.now() - startedAt} ms.`
+        `HomeKit ${ackLabel} for ${vacuumName} was acknowledged by Roborock in ${Date.now() - startedAt} ms.`
       );
     } catch (error) {
-      this.platform.log.error(
-        `Error sending ${vacuumName} back to dock: ${error}`
-      );
+      this.platform.log.error(errorMessage(error));
     } finally {
-      this.resetMomentaryControlSwitch("return-to-dock");
+      this.resetMomentaryControlSwitch(switchKey);
     }
   }
 
@@ -489,15 +496,10 @@ export default class RoborockVacuumAccessory {
             );
           }
 
-          if (messages.hasOwnProperty("battery")) {
-            this.updateBatteryCharacteristics(
-              messages.battery,
-              messages.charge_status,
-              messages.state
-            );
-          }
-
-          if (messages.hasOwnProperty("charge_status")) {
+          if (
+            messages.hasOwnProperty("battery") ||
+            messages.hasOwnProperty("charge_status")
+          ) {
             this.updateBatteryCharacteristics(
               messages.battery,
               messages.charge_status,
@@ -515,11 +517,7 @@ export default class RoborockVacuumAccessory {
           }
         }
 
-        if (
-          rootMessage?.dps &&
-          typeof rootMessage.dps === "object" &&
-          Object.prototype.hasOwnProperty.call(rootMessage.dps, "121")
-        ) {
+        if (this.hasDp(rootMessage, "121")) {
           this.platform.log.debug(
             `${this.platform.roborockAPI.getVacuumDeviceInfo(this.accessory.context, "name")} state update to: ${this.state_code_to_state(rootMessage.dps["121"])}`
           );
@@ -532,11 +530,7 @@ export default class RoborockVacuumAccessory {
           );
         }
 
-        if (
-          rootMessage?.dps &&
-          typeof rootMessage.dps === "object" &&
-          Object.prototype.hasOwnProperty.call(rootMessage.dps, "122")
-        ) {
+        if (this.hasDp(rootMessage, "122")) {
           this.platform.log.debug(
             `${this.platform.roborockAPI.getVacuumDeviceInfo(this.accessory.context, "name")} battery update to: ${rootMessage.dps["122"]}`
           );
@@ -557,34 +551,25 @@ export default class RoborockVacuumAccessory {
     }
   }
 
-  private getLiveMessageForThisAccessory(data): unknown | null {
-    if (!data || typeof data !== "object") {
-      return data;
-    }
+  /**
+   * Whether `msg.dps` is present and carries the given data point key.
+   */
+  private hasDp(msg: any, key: string): boolean {
+    return (
+      !!msg?.dps &&
+      typeof msg.dps === "object" &&
+      Object.prototype.hasOwnProperty.call(msg.dps, key)
+    );
+  }
 
-    if (Array.isArray(data)) {
-      if (!this.platform.shouldAcceptUnscopedLiveMessage()) {
-        this.platform.log.debug(
-          `Ignoring unscoped live Roborock update for ${this.getVacuumName()} because multiple vacuums are configured.`
-        );
-        return null;
-      }
-
-      return data;
-    }
-
-    if (
-      Object.prototype.hasOwnProperty.call(data, "duid") &&
-      Object.prototype.hasOwnProperty.call(data, "payload")
-    ) {
-      if (String(data.duid) !== String(this.accessory.context)) {
-        return null;
-      }
-
-      return data.payload;
-    }
-
-    return data;
+  private getLiveMessageForThisAccessory(data: unknown): unknown | null {
+    return getLiveMessageForThisAccessory(data, {
+      getDuid: () => this.getDuid(),
+      getVacuumName: () => this.getVacuumName(),
+      shouldAcceptUnscopedLiveMessage: () =>
+        this.platform.shouldAcceptUnscopedLiveMessage(),
+      logDebug: (message) => this.platform.log.debug(message),
+    });
   }
 
   async setActive(value: CharacteristicValue) {
@@ -636,35 +621,7 @@ export default class RoborockVacuumAccessory {
   }
 
   state_code_to_state(code: number): string {
-    const RoborockStateCodes = {
-      0: "Unknown",
-      1: "Initiating",
-      2: "Sleeping",
-      3: "Idle",
-      4: "Remote Control",
-      5: "Cleaning",
-      6: "Returning Dock",
-      7: "Manual Mode",
-      8: "Charging",
-      9: "Charging Error",
-      10: "Paused",
-      11: "Spot Cleaning",
-      12: "In Error",
-      13: "Shutting Down",
-      14: "Updating",
-      15: "Docking",
-      16: "Go To",
-      17: "Zone Clean",
-      18: "Room Clean",
-      22: "Empying dust container",
-      23: "Washing the mop",
-      26: "Going to wash the mop",
-      28: "In call",
-      29: "Mapping",
-      100: "Fully Charged",
-    };
-
-    return RoborockStateCodes[code] || "Unknown";
+    return stateCodes[code] || "Unknown";
   }
 
   isCleaning(): boolean {
@@ -677,22 +634,7 @@ export default class RoborockVacuumAccessory {
   }
 
   isCleaningState(state: number): boolean {
-    switch (state) {
-      case 4: // Remote Control
-      case 5: // Cleaning
-      case 6: // Returning Dock
-      case 7: // Manual Mode
-      case 11: // Spot Cleaning
-      case 15: // Docking
-      case 16: // Go To
-      case 17: // Zone Clean
-      case 18: // Room Clean
-      case 23: // Washing the mop
-      case 26: // Going to wash the mop
-        return true;
-      default:
-        return false;
-    }
+    return CLEANING_STATES.has(state);
   }
 
   private updateBatteryCharacteristics(

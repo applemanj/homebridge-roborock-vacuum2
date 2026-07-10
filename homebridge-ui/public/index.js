@@ -41,14 +41,13 @@ const state = {
   hasPassword: false,
   lastDiagnostics: null,
   lastLocalTest: null,
-  lastMatterPairing: null,
   diagnosticsRefreshTimer: null,
   diagnosticsAutoRefreshAttempts: 0,
-  cloudOnlyMode: false,
 };
 
 const DIAGNOSTICS_AUTO_REFRESH_DELAY_MS = 3000;
 const DIAGNOSTICS_AUTO_REFRESH_LIMIT = 2;
+const DEFAULT_TRANSIENT_WARNING_THROTTLE_HOURS = 6;
 
 function showToast(type, message) {
   if (
@@ -94,54 +93,53 @@ async function request(path, body, options = {}) {
 }
 
 async function loadConfig() {
-  if (
-    !window.homebridge ||
-    typeof window.homebridge.getPluginConfig !== "function"
-  ) {
-    updateAuthStatus(false, false);
-    await loadMatterPairing();
-    return;
-  }
+  const canLoadConfig =
+    window.homebridge &&
+    typeof window.homebridge.getPluginConfig === "function";
+  const configs = canLoadConfig
+    ? await window.homebridge.getPluginConfig()
+    : null;
+  const config = configs
+    ? configs.find((entry) => entry.platform === "RoborockVacuumPlatform")
+    : null;
 
-  const configs = await window.homebridge.getPluginConfig();
-  const config = configs.find(
-    (entry) => entry.platform === "RoborockVacuumPlatform"
-  );
   if (!config) {
     updateAuthStatus(false, false);
-    await loadMatterPairing();
-    return;
+  } else {
+    if (config.email) {
+      elements.email.value = config.email;
+    }
+    elements.baseUrl.value = normalizeBaseUrl(
+      config.baseURL || "https://usiot.roborock.com"
+    );
+    if (config.skipDevices) {
+      elements.skipDevices.value = config.skipDevices;
+    }
+    elements.debugMode.checked = Boolean(config.debugMode);
+    elements.enableMatter.checked = Boolean(config.enableMatter);
+    elements.preferCloudForMatterCommands.checked = Boolean(
+      config.preferCloudForMatterCommands
+    );
+    elements.cloudOnlyMode.checked = Boolean(config.cloudOnlyMode);
+    elements.advancedSettings.open = Boolean(
+      config.debugMode ||
+        config.preferCloudForMatterCommands ||
+        config.cloudOnlyMode
+    );
+    elements.transientWarningThrottleHours.value =
+      config.transientWarningThrottleHours ??
+      DEFAULT_TRANSIENT_WARNING_THROTTLE_HOURS;
+
+    state.hasEncryptedToken = Boolean(config.encryptedToken);
+    state.hasPassword = Boolean(config.password);
+    setLoggedInState(state.hasEncryptedToken, state.hasPassword);
   }
 
-  if (config.email) {
-    elements.email.value = config.email;
-  }
-  elements.baseUrl.value = normalizeBaseUrl(
-    config.baseURL || "https://usiot.roborock.com"
-  );
-  if (config.skipDevices) {
-    elements.skipDevices.value = config.skipDevices;
-  }
-  elements.debugMode.checked = Boolean(config.debugMode);
-  elements.enableMatter.checked = Boolean(config.enableMatter);
-  elements.preferCloudForMatterCommands.checked = Boolean(
-    config.preferCloudForMatterCommands
-  );
-  elements.cloudOnlyMode.checked = Boolean(config.cloudOnlyMode);
-  state.cloudOnlyMode = Boolean(config.cloudOnlyMode);
-  elements.advancedSettings.open = Boolean(
-    config.debugMode ||
-      config.preferCloudForMatterCommands ||
-      config.cloudOnlyMode
-  );
-  elements.transientWarningThrottleHours.value =
-    config.transientWarningThrottleHours ?? 6;
-
-  state.hasEncryptedToken = Boolean(config.encryptedToken);
-  state.hasPassword = Boolean(config.password);
-  setLoggedInState(state.hasEncryptedToken, state.hasPassword);
   await loadMatterPairing();
-  await loadDiagnostics({ scheduleFollowUp: true });
+
+  if (config) {
+    await loadDiagnostics({ scheduleFollowUp: true });
+  }
 }
 
 function getEmail() {
@@ -179,12 +177,12 @@ function getCloudOnlyMode() {
 function getTransientWarningThrottleHours() {
   const value = elements.transientWarningThrottleHours.value.trim();
   if (value === "") {
-    return 6;
+    return DEFAULT_TRANSIENT_WARNING_THROTTLE_HOURS;
   }
 
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed < 0) {
-    return 6;
+    return DEFAULT_TRANSIENT_WARNING_THROTTLE_HOURS;
   }
 
   return parsed;
@@ -194,39 +192,38 @@ function getCode() {
   return elements.code.value.trim();
 }
 
+function getFormValues() {
+  return {
+    email: getEmail(),
+    password: getPassword(),
+    baseURL: getBaseUrl(),
+    skipDevices: getSkipDevices(),
+    debugMode: getDebugMode(),
+    enableMatter: getEnableMatter(),
+    preferCloudForMatterCommands: getPreferCloudForMatterCommands(),
+    cloudOnlyMode: getCloudOnlyMode(),
+    transientWarningThrottleHours: getTransientWarningThrottleHours(),
+  };
+}
+
 async function saveCredentials(showSuccess = false) {
-  const email = getEmail();
-  const password = getPassword();
-  const baseURL = getBaseUrl();
-  const skipDevices = getSkipDevices();
-  const debugMode = getDebugMode();
-  const enableMatter = getEnableMatter();
-  const preferCloudForMatterCommands = getPreferCloudForMatterCommands();
-  const cloudOnlyMode = getCloudOnlyMode();
-  const transientWarningThrottleHours = getTransientWarningThrottleHours();
+  const formValues = getFormValues();
+  const { email, password } = formValues;
   if (!email) {
     showToast("error", "Email is required.");
     return;
   }
 
   const patch = {
-    email,
-    baseURL,
-    skipDevices,
-    debugMode,
-    enableMatter,
+    ...formValues,
     enableMatterServiceAreaBeta: undefined,
-    preferCloudForMatterCommands,
-    cloudOnlyMode,
-    transientWarningThrottleHours,
   };
 
-  if (password) {
-    patch.password = password;
+  if (!password) {
+    delete patch.password;
   }
 
   await updatePluginConfig(patch);
-  state.cloudOnlyMode = cloudOnlyMode;
 
   if (password) {
     state.hasPassword = true;
@@ -240,15 +237,8 @@ async function saveCredentials(showSuccess = false) {
 }
 
 async function login() {
-  const email = getEmail();
-  const password = getPassword();
-  const baseURL = getBaseUrl();
-  const skipDevices = getSkipDevices();
-  const debugMode = getDebugMode();
-  const enableMatter = getEnableMatter();
-  const preferCloudForMatterCommands = getPreferCloudForMatterCommands();
-  const cloudOnlyMode = getCloudOnlyMode();
-  const transientWarningThrottleHours = getTransientWarningThrottleHours();
+  const formValues = getFormValues();
+  const { email, password, baseURL } = formValues;
 
   if (!email || !password) {
     showToast("error", "Email and password are required.");
@@ -259,19 +249,10 @@ async function login() {
 
   if (result.ok) {
     await updatePluginConfig({
-      email,
-      password,
-      baseURL,
-      skipDevices,
-      debugMode,
-      enableMatter,
+      ...formValues,
       enableMatterServiceAreaBeta: undefined,
-      preferCloudForMatterCommands,
-      cloudOnlyMode,
-      transientWarningThrottleHours,
       encryptedToken: result.encryptedToken,
     });
-    state.cloudOnlyMode = cloudOnlyMode;
     showToast("success", result.message || "Login successful.");
     state.hasEncryptedToken = true;
     state.hasPassword = true;
@@ -309,15 +290,9 @@ async function sendTwoFactorEmail() {
 }
 
 async function verifyTwoFactorCode() {
-  const email = getEmail();
+  const formValues = getFormValues();
+  const { email, baseURL } = formValues;
   const code = getCode();
-  const baseURL = getBaseUrl();
-  const skipDevices = getSkipDevices();
-  const debugMode = getDebugMode();
-  const enableMatter = getEnableMatter();
-  const preferCloudForMatterCommands = getPreferCloudForMatterCommands();
-  const cloudOnlyMode = getCloudOnlyMode();
-  const transientWarningThrottleHours = getTransientWarningThrottleHours();
   if (!email) {
     showToast("error", "Email is required.");
     return;
@@ -333,19 +308,14 @@ async function verifyTwoFactorCode() {
     baseURL,
   });
   if (result.ok) {
-    await updatePluginConfig({
-      email,
-      baseURL,
-      skipDevices,
-      debugMode,
-      enableMatter,
+    const patch = {
+      ...formValues,
       enableMatterServiceAreaBeta: undefined,
-      preferCloudForMatterCommands,
-      cloudOnlyMode,
-      transientWarningThrottleHours,
       encryptedToken: result.encryptedToken,
-    });
-    state.cloudOnlyMode = cloudOnlyMode;
+    };
+    delete patch.password;
+
+    await updatePluginConfig(patch);
     showToast("success", result.message || "Verification successful.");
     state.hasEncryptedToken = true;
     setLoggedInState(true, state.hasPassword);
@@ -399,7 +369,6 @@ async function loadMatterPairing() {
 }
 
 function renderMatterPairing(result, errorMessage) {
-  state.lastMatterPairing = result || null;
   elements.matterPairingList.innerHTML = "";
 
   if (errorMessage) {
@@ -432,10 +401,14 @@ function renderMatterPairing(result, errorMessage) {
 function renderMatterPairingCard(entry) {
   const isBridge = entry.kind === "bridge";
   const codeLabel = isBridge ? "Manual pairing code" : "11-digit setup code";
-  const codeValue = isBridge
-    ? entry.manualPairingCode || "n/a"
-    : entry.setupCode || entry.manualPairingCode || "n/a";
-  const formattedCode = entry.manualPairingCode || entry.setupCode || "n/a";
+  const rawCodeValue = isBridge
+    ? entry.manualPairingCode
+    : entry.setupCode || entry.manualPairingCode;
+  const rawFormattedCode = entry.manualPairingCode || entry.setupCode;
+  const codeValue = rawCodeValue || "n/a";
+  const formattedCode = rawFormattedCode || "n/a";
+  const hasCodeValue = Boolean(rawCodeValue);
+  const hasFormattedCode = Boolean(rawFormattedCode);
   const qrMarkup = entry.qrCodeDataUrl
     ? `<img class="qr-image" src="${escapeHtml(entry.qrCodeDataUrl)}" alt="${escapeHtml(entry.name || "Matter")} QR code" />`
     : `<div class="qr-placeholder">No QR code available</div>`;
@@ -478,8 +451,8 @@ function renderMatterPairingCard(entry) {
         </dl>
       </div>
       <div class="pairing-actions">
-        <button class="primary compact" data-copy-value="${escapeHtml(codeValue === "n/a" ? "" : codeValue)}" ${codeValue === "n/a" ? "disabled" : ""}>Copy ${escapeHtml(codeLabel)}</button>
-        <button class="secondary compact" data-copy-value="${escapeHtml(formattedCode === "n/a" ? "" : formattedCode)}" ${formattedCode === "n/a" ? "disabled" : ""}>Copy Manual Code</button>
+        <button class="primary compact" data-copy-value="${escapeHtml(hasCodeValue ? codeValue : "")}" ${hasCodeValue ? "" : "disabled"}>Copy ${escapeHtml(codeLabel)}</button>
+        <button class="secondary compact" data-copy-value="${escapeHtml(hasFormattedCode ? formattedCode : "")}" ${hasFormattedCode ? "" : "disabled"}>Copy Manual Code</button>
       </div>
     </article>
   `;
@@ -523,13 +496,17 @@ function maybeScheduleDiagnosticsRefresh(result) {
   }, DIAGNOSTICS_AUTO_REFRESH_DELAY_MS);
 }
 
+function getConnectionStatus(device) {
+  return device.connectionStatus || device.localConnectivityState;
+}
+
 function shouldAutoRefreshDiagnostics(result) {
   if (!result || !result.hasHomeData || !Array.isArray(result.devices)) {
     return false;
   }
 
   return result.devices.some((device) => {
-    const status = device.connectionStatus || device.localConnectivityState;
+    const status = getConnectionStatus(device);
     return (
       status !== "Local connected" || device.tcpConnectionState !== "connected"
     );
@@ -581,7 +558,7 @@ function renderDiagnostics(result, errorMessage) {
     card.innerHTML = `
       <div class="device-header">
         <h3>${escapeHtml(device.name || "Unknown device")}</h3>
-        <span class="pill ${localClass}">${escapeHtml(device.connectionStatus || device.localConnectivityState || "Unknown")}</span>
+        <span class="pill ${localClass}">${escapeHtml(getConnectionStatus(device) || "Unknown")}</span>
       </div>
       <p class="connection-hint">${escapeHtml(device.connectionHint || "No additional transport details are available yet.")}</p>
       <dl>
@@ -627,12 +604,17 @@ async function testLocalConnections() {
     }
 
     renderLocalTestResults(result);
-    const failedCount = (result.devices || []).filter(
-      (device) => device.status === "failed"
-    ).length;
-    const skippedCount = (result.devices || []).filter(
-      (device) => device.status === "skipped"
-    ).length;
+    const { failedCount, skippedCount } = (result.devices || []).reduce(
+      (counts, device) => {
+        if (device.status === "failed") {
+          counts.failedCount += 1;
+        } else if (device.status === "skipped") {
+          counts.skippedCount += 1;
+        }
+        return counts;
+      },
+      { failedCount: 0, skippedCount: 0 }
+    );
     if (failedCount > 0) {
       showToast("warning", "Local connection test found a TCP problem.");
     } else if (skippedCount > 0) {
@@ -742,7 +724,7 @@ function buildDiagnosticsReport(result) {
     `nodeVersion: ${result.nodeVersion || "unknown"}`,
     `token: ${hasToken ? "present" : "missing"}`,
     `homeData: ${result.hasHomeData ? "present" : "missing"}`,
-    `cloudOnlyMode: ${state.cloudOnlyMode ? "enabled" : "disabled"}`,
+    `cloudOnlyMode: ${getCloudOnlyMode() ? "enabled" : "disabled"}`,
     `deviceCount: ${result.deviceCount ?? "unknown"}`,
     "",
   ];
@@ -1007,9 +989,6 @@ async function updatePluginConfig(patch) {
 function init() {
   loadConfig().catch(() => {
     showToast("error", "Failed to load current config.");
-    loadMatterPairing().catch(() => {
-      showToast("error", "Failed to load Matter pairing codes.");
-    });
   });
   elements.saveSettings.addEventListener("click", () => saveCredentials(true));
   elements.login.addEventListener("click", login);

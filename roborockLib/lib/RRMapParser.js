@@ -130,7 +130,6 @@ class RRMapParser {
             break;
           }
           case TYPES.IMAGE: {
-            const offset = this.getSingleByteOffset(blockBuffer);
             const [left, top, width, height] = this.getMapSizes(
               blockBuffer,
               offset1
@@ -162,12 +161,14 @@ class RRMapParser {
               parameters.dimensions.width > 0
             ) {
               let segmenetID = 0;
+              const segmentIdSet = new Set(parameters.segments.id);
 
               for (let i = 0; i < length; i++) {
-                const pixelType = this.getPixelType(
-                  buf,
-                  dataPosition + i + offset1
-                );
+                // offset and offset1 are always equal here (both derive from
+                // blockBuffer.readUInt8(2)), so read the pixel byte once and
+                // derive both the pixel type and segment ID from it.
+                const pixelByte = buf.readUInt8(dataPosition + i + offset1);
+                const pixelType = pixelByte & 0x07;
 
                 if (pixelType == 1) {
                   // Obstacle
@@ -176,11 +177,12 @@ class RRMapParser {
                   // Floor
                   parameters.pixels.floor.push(i);
 
-                  segmenetID =
-                    (buf.readUInt8(offset + dataPosition + i) & 248) >> 3;
+                  segmenetID = (pixelByte & 248) >> 3;
                   if (segmenetID !== 0) {
-                    if (!parameters.segments.id.includes(segmenetID))
+                    if (!segmentIdSet.has(segmenetID)) {
+                      segmentIdSet.add(segmenetID);
                       parameters.segments.id.push(segmenetID); // Add segment ID to array if it doesn't exist
+                    }
 
                     parameters.pixels.segments.push(i | (segmenetID << 21)); // Add segment ID to pixel
                   }
@@ -207,7 +209,7 @@ class RRMapParser {
 
             for (let i = 0; i < length; i++) {
               result[TYPES_REVERSE[type]].push(
-                ...this.readUInt8(buf, dataPosition + i, OFFSETS.PATH, 1)
+                buf.readUInt8(dataPosition + i + OFFSETS.PATH)
               );
             }
 
@@ -420,32 +422,8 @@ class RRMapParser {
     return this.readUInt16LE(buf, dataPosition, offset, 8);
   }
 
-  getSingleByteOffset(buf) {
-    return buf.readUInt8(2);
-  }
-
   getTwoByteOffsets(buf) {
     return [buf.readUInt8(2), buf.readUInt8(4)];
-  }
-
-  getDatatype(buf, offset) {
-    // Get the first byte of the block
-    const byte = buf[offset];
-
-    // Check the byte value
-    if (byte >= 0x00 && byte <= 0xff) {
-      // It's an unsigned byte
-      return "UInt8";
-    } else if (byte >= 0x00 && byte <= 0xffff) {
-      // It's an unsigned 16-bit little-endian integer
-      return "UInt16LE";
-    } else if (byte >= 0x00 && byte <= 0xffffffff) {
-      // It's an unsigned 32-bit little-endian integer
-      return "UInt32LE";
-    } else {
-      // It's an unknown type
-      return "Unknown";
-    }
   }
 
   getNonceData(buf) {
@@ -467,22 +445,6 @@ class RRMapParser {
       result.push(buf.readUInt16LE(dataPosition + offset + j * 2));
     }
     return result;
-  }
-
-  readInt32LE(buf, dataPosition, offset, count) {
-    const array = [];
-    for (let j = 0; j < count; j++) {
-      array.push(buf.readInt32LE(offset + dataPosition + j * 4));
-    }
-    return array;
-  }
-
-  readUInt32LE(buf, dataPosition, offset, count) {
-    const array = [];
-    for (let j = 0; j < count; j++) {
-      array.push(buf.readUInt32LE(offset + dataPosition + j * 4));
-    }
-    return array;
   }
 
   readUInt8(buf, dataPosition, offset, count) {

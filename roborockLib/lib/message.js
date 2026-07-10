@@ -3,7 +3,7 @@
 const crypto = require("crypto");
 const CRC32 = require("crc-32");
 const Parser = require("binary-parser").Parser;
-const forge = require("node-forge");
+const roborockCrypto = require("./roborockCrypto");
 
 let seq = 1;
 let random = 4711; // Should be initialized with a number 0 - 1999?
@@ -32,32 +32,7 @@ class message {
     this.adapter = adapter;
     this.missingLocalKeyWarnings = new Set();
 
-    const keypair = forge.pki.rsa.generateKeyPair(2048);
-    this.keys = {
-      public: { n: null, e: null },
-      private: {
-        n: null,
-        e: null,
-        d: null,
-        p: null,
-        q: null,
-        dmp1: null,
-        dmq1: null,
-        coeff: null,
-      },
-    };
-
-    // Convert the keys to the desired format
-    this.keys.public.n = keypair.publicKey.n.toString(16);
-    this.keys.public.e = keypair.publicKey.e.toString(16);
-    this.keys.private.n = keypair.privateKey.n.toString(16);
-    this.keys.private.e = keypair.privateKey.e.toString(16);
-    this.keys.private.d = keypair.privateKey.d.toString(16);
-    this.keys.private.p = keypair.privateKey.p.toString(16);
-    this.keys.private.q = keypair.privateKey.q.toString(16);
-    this.keys.private.dmp1 = keypair.privateKey.dP.toString(16);
-    this.keys.private.dmq1 = keypair.privateKey.dQ.toString(16);
-    this.keys.private.coeff = keypair.privateKey.qInv.toString(16);
+    this.keys = roborockCrypto.generateRsaKeyPair();
   }
 
   async buildPayload(
@@ -152,18 +127,20 @@ class message {
         this.adapter.localKeys instanceof Map
           ? this.adapter.localKeys.get(duid)
           : null;
-      const aesKey = this.md5bin(
-        this._encodeTimestamp(timestamp) + localKey + salt
+      const aesKey = roborockCrypto.md5bin(
+        roborockCrypto.encodeTimestamp(timestamp) + localKey + salt
       );
       const cipher = crypto.createCipheriv("aes-128-ecb", aesKey, null);
       encrypted = Buffer.concat([cipher.update(payload), cipher.final()]);
     } else if (version == "A01") {
       const localKey = this.adapter.localKeys.get(duid);
 
-      const iv = this.md5hex(
-        currentRandom.toString(16).padStart(8, "0") +
-          "726f626f726f636b2d67a6d6da"
-      ).substring(8, 24); // 726f626f726f636b2d67a6d6da can be found in librrcodec.so of version 4.0 of the roborock app
+      const iv = roborockCrypto
+        .md5hex(
+          currentRandom.toString(16).padStart(8, "0") +
+            "726f626f726f636b2d67a6d6da"
+        )
+        .substring(8, 24); // 726f626f726f636b2d67a6d6da can be found in librrcodec.so of version 4.0 of the roborock app
       const cipher = crypto.createCipheriv("aes-128-cbc", localKey, iv);
       encrypted = Buffer.concat([cipher.update(payload), cipher.final()]);
     } else if (version == "L01") {
@@ -171,7 +148,7 @@ class message {
       const { connectNonce, ackNonce } = this._getL01Nonces(duid);
       const aesKey = crypto
         .createHash("sha256")
-        .update(this._encodeTimestamp(timestamp) + localKey + salt)
+        .update(roborockCrypto.encodeTimestamp(timestamp) + localKey + salt)
         .digest();
       const iv = this._deriveL01Iv(currentSeq, currentRandom, timestamp);
       const aad = this._deriveL01Aad(
@@ -253,8 +230,8 @@ class message {
       }
 
       if (version == "1.0") {
-        const aesKey = this.md5bin(
-          this._encodeTimestamp(data.timestamp) + localKey + salt
+        const aesKey = roborockCrypto.md5bin(
+          roborockCrypto.encodeTimestamp(data.timestamp) + localKey + salt
         );
         const decipher = crypto.createDecipheriv("aes-128-ecb", aesKey, null);
         data.payload = Buffer.concat([
@@ -262,10 +239,12 @@ class message {
           decipher.final(),
         ]);
       } else if (version == "A01") {
-        const iv = this.md5hex(
-          data.random.toString(16).padStart(8, "0") +
-            "726f626f726f636b2d67a6d6da"
-        ).substring(8, 24);
+        const iv = roborockCrypto
+          .md5hex(
+            data.random.toString(16).padStart(8, "0") +
+              "726f626f726f636b2d67a6d6da"
+          )
+          .substring(8, 24);
         const decipher = crypto.createDecipheriv("aes-128-cbc", localKey, iv);
         data.payload = Buffer.concat([
           decipher.update(data.payload),
@@ -275,7 +254,9 @@ class message {
         const { connectNonce, ackNonce } = this._getL01Nonces(duid);
         const aesKey = crypto
           .createHash("sha256")
-          .update(this._encodeTimestamp(data.timestamp) + localKey + salt)
+          .update(
+            roborockCrypto.encodeTimestamp(data.timestamp) + localKey + salt
+          )
           .digest();
         const iv = this._deriveL01Iv(data.seq, data.random, data.timestamp);
         const aad = this._deriveL01Aad(
@@ -368,25 +349,12 @@ class message {
     });
   }
 
-  _encodeTimestamp(timestamp) {
-    const hex = timestamp.toString(16).padStart(8, "0").split("");
-    return [5, 6, 3, 7, 1, 2, 0, 4].map((idx) => hex[idx]).join("");
-  }
-
-  md5bin(str) {
-    return crypto.createHash("md5").update(str).digest();
-  }
-
-  md5hex(str) {
-    return crypto.createHash("md5").update(str).digest("hex");
-  }
-
   _deriveB01Iv(randomSeed) {
     const randomBuffer = Buffer.alloc(4);
     randomBuffer.writeUInt32BE(randomSeed >>> 0, 0);
 
     const randomHex = randomBuffer.toString("hex").toLowerCase();
-    const hash = this.md5hex(randomHex + b01Salt);
+    const hash = roborockCrypto.md5hex(randomHex + b01Salt);
     const iv = hash.substring(9, 25);
 
     return Buffer.from(iv, "utf8");

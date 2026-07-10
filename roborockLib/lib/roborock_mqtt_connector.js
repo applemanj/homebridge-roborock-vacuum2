@@ -4,7 +4,7 @@ const mqtt = require("mqtt");
 const crypto = require("crypto");
 const Parser = require("binary-parser").Parser;
 const zlib = require("zlib");
-const forge = require("node-forge");
+const roborockCrypto = require("./roborockCrypto");
 
 const PHOTO_MAGIC = "ROBOROCK";
 const PHOTO_HEADER_MIN_LENGTH = 9;
@@ -77,40 +77,18 @@ class roborock_mqtt_connector {
 
     this.connected = false;
 
-    const keypair = forge.pki.rsa.generateKeyPair(2048);
-    this.keys = {
-      public: { n: null, e: null },
-      private: {
-        n: null,
-        e: null,
-        d: null,
-        p: null,
-        q: null,
-        dmp1: null,
-        dmq1: null,
-        coeff: null,
-      },
-    };
-
-    // Convert the keys to the desired format
-    this.keys.public.n = keypair.publicKey.n.toString(16);
-    this.keys.public.e = keypair.publicKey.e.toString(16);
-    this.keys.private.n = keypair.privateKey.n.toString(16);
-    this.keys.private.e = keypair.privateKey.e.toString(16);
-    this.keys.private.d = keypair.privateKey.d.toString(16);
-    this.keys.private.p = keypair.privateKey.p.toString(16);
-    this.keys.private.q = keypair.privateKey.q.toString(16);
-    this.keys.private.dmp1 = keypair.privateKey.dP.toString(16);
-    this.keys.private.dmq1 = keypair.privateKey.dQ.toString(16);
-    this.keys.private.coeff = keypair.privateKey.qInv.toString(16);
+    this.keys = roborockCrypto.generateRsaKeyPair();
   }
 
   async initUser(userdata) {
     rriot = userdata.rriot;
 
-    endpoint = this.md5bin(rriot.k).subarray(8, 14).toString("base64"); // Could be a random but rather static string. The app generates it on first run.
-    mqttUser = this.md5hex(rriot.u + ":" + rriot.k).substring(2, 10);
-    mqttPassword = this.md5hex(rriot.s + ":" + rriot.k).substring(16);
+    endpoint = roborockCrypto
+      .md5bin(rriot.k)
+      .subarray(8, 14)
+      .toString("base64"); // Could be a random but rather static string. The app generates it on first run.
+    mqttUser = roborockCrypto.md5hex(rriot.u + ":" + rriot.k).substring(2, 10);
+    mqttPassword = roborockCrypto.md5hex(rriot.s + ":" + rriot.k).substring(16);
     client = mqtt.connect(rriot.r.m, {
       clientId: mqttUser,
       username: mqttUser,
@@ -186,10 +164,6 @@ class roborock_mqtt_connector {
 
       this.connected = false;
     });
-  }
-
-  async isArray(what) {
-    return Object.prototype.toString.call(what) === "[object Array]";
   }
 
   getKnownDeviceDuids() {
@@ -462,11 +436,6 @@ class roborock_mqtt_connector {
     });
   }
 
-  _encodeTimestamp(timestamp) {
-    const hex = timestamp.toString(16).padStart(8, "0").split("");
-    return [5, 6, 3, 7, 1, 2, 0, 4].map((idx) => hex[idx]).join("");
-  }
-
   getEndpoint() {
     return endpoint;
   }
@@ -514,14 +483,6 @@ class roborock_mqtt_connector {
     }
 
     return false;
-  }
-
-  md5hex(str) {
-    return crypto.createHash("md5").update(str).digest("hex");
-  }
-
-  md5bin(str) {
-    return crypto.createHash("md5").update(str).digest();
   }
 
   decryptWithPrivateKey(privateKeyPem, encryptedData) {

@@ -4,6 +4,7 @@ import {
 } from "node:timers";
 
 import RoborockPlatform from "./platform";
+import { getLiveMessageForThisAccessory } from "./live_message";
 
 const MATTER_CLEAN_MODE_COMMAND_TIMEOUT_MS = 2000;
 const MATTER_CLEAN_MODE_PREP_TIMEOUT_MS = 2500;
@@ -180,12 +181,9 @@ const RVC_OPERATIONAL_STATE_LIST = [
   RVC_OPERATIONAL_STATE.SEEKING_CHARGER,
 ] as const;
 
-const RVC_BASIC_OPERATIONAL_STATE_LIST = [
-  RVC_OPERATIONAL_STATE.STOPPED,
-  RVC_OPERATIONAL_STATE.RUNNING,
-  RVC_OPERATIONAL_STATE.PAUSED,
-  RVC_OPERATIONAL_STATE.ERROR,
-] as const;
+// The basic (non-extended) operational state list is the first four entries
+// of the full list, without SEEKING_CHARGER.
+const RVC_BASIC_OPERATIONAL_STATE_LIST = RVC_OPERATIONAL_STATE_LIST.slice(0, 4);
 
 const POWER_SOURCE_STATUS = {
   ACTIVE: 1,
@@ -1075,9 +1073,7 @@ export default class RoborockMatterVacuumAccessory {
       this.lastVacuumFanPower = fanPower;
     }
 
-    const waterBoxMode =
-      this.getNumberStatus("water_box_custom_mode") ??
-      this.getNumberStatus("water_box_mode");
+    const waterBoxMode = this.getWaterBoxModeStatus();
     if (waterBoxMode !== null && waterBoxMode !== ROBOROCK_WATER_BOX_OFF) {
       this.lastWaterBoxMode = waterBoxMode;
     }
@@ -1096,10 +1092,15 @@ export default class RoborockMatterVacuumAccessory {
     return this.lastVacuumFanPower ?? ROBOROCK_FAN_POWER_BALANCED;
   }
 
-  private getPreferredWaterBoxMode(): number {
-    const currentWaterBoxMode =
+  private getWaterBoxModeStatus(): number | null {
+    return (
       this.getNumberStatus("water_box_custom_mode") ??
-      this.getNumberStatus("water_box_mode");
+      this.getNumberStatus("water_box_mode")
+    );
+  }
+
+  private getPreferredWaterBoxMode(): number {
+    const currentWaterBoxMode = this.getWaterBoxModeStatus();
     if (
       currentWaterBoxMode !== null &&
       currentWaterBoxMode !== ROBOROCK_WATER_BOX_OFF
@@ -1959,34 +1960,13 @@ export default class RoborockMatterVacuumAccessory {
   }
 
   private getLiveMessageForThisAccessory(data: unknown): unknown | null {
-    if (!data || typeof data !== "object") {
-      return data;
-    }
-
-    if (Array.isArray(data)) {
-      if (!this.platform.shouldAcceptUnscopedLiveMessage()) {
-        this.platform.log.debug(
-          `Ignoring unscoped live Roborock update for ${this.getVacuumName()} because multiple vacuums are configured.`
-        );
-        return null;
-      }
-
-      return data;
-    }
-
-    const message = data as Record<string, unknown>;
-    if (
-      Object.prototype.hasOwnProperty.call(message, "duid") &&
-      Object.prototype.hasOwnProperty.call(message, "payload")
-    ) {
-      if (String(message.duid) !== this.getDuid()) {
-        return null;
-      }
-
-      return message.payload;
-    }
-
-    return data;
+    return getLiveMessageForThisAccessory(data, {
+      getDuid: () => this.getDuid(),
+      getVacuumName: () => this.getVacuumName(),
+      shouldAcceptUnscopedLiveMessage: () =>
+        this.platform.shouldAcceptUnscopedLiveMessage(),
+      logDebug: (message) => this.platform.log.debug(message),
+    });
   }
 
   private asRecord(value: unknown): Record<string, unknown> | null {

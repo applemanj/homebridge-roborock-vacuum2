@@ -8,6 +8,7 @@ import { encryptSession } from "../crypto";
 const roborockAuth = require("../../roborockLib/lib/roborockAuth");
 
 const ACTIVE_LOCAL_TRANSPORT_MAX_AGE_MS = 5 * 60 * 1000;
+const LOCAL_CONTROL_PORT = 58867;
 
 // Type definition for HomebridgePluginUiServer to maintain type safety
 interface IHomebridgePluginUiServer {
@@ -154,48 +155,28 @@ class RoborockUiServer {
       return { ok: false, message: "Verification code is required." };
     }
 
-    let loginResult;
-    try {
-      const loginApi = await this.buildLoginApi({
-        email,
-        baseURL: payload.baseURL,
-      });
-      const nonce = this.buildNonce();
-      const signData = await roborockAuth.signRequest(loginApi, nonce);
-      if (!signData || !signData.k) {
-        return { ok: false, message: "Failed to create login signature." };
-      }
-
-      const region = roborockAuth.getRegionConfig(
-        payload.baseURL || "usiot.roborock.com"
-      );
-      loginResult = await roborockAuth.loginWithCode(loginApi, {
-        email,
-        code: payload.code,
-        country: region.country,
-        countryCode: region.countryCode,
-        k: signData.k,
-        s: nonce,
-      });
-    } catch (error: any) {
-      console.error(
-        "2FA verification request failed:",
-        error?.message || error
-      );
-      return { ok: false, message: error?.message || "Verification failed." };
-    }
-
-    if (loginResult && loginResult.code === 200 && loginResult.data) {
-      const encrypted = encryptSession(loginResult.data, this.getStoragePath());
-      return {
-        ok: true,
-        message: "Login completed and token saved.",
-        encryptedToken: encrypted,
-      };
-    }
-
-    console.error("2FA verification failed:", loginResult);
-    return { ok: false, message: loginResult?.msg || "Verification failed." };
+    return this.performSignedLogin({
+      email,
+      baseURL: payload.baseURL,
+      requestFailedLogLabel: "2FA verification request failed:",
+      requestFailedFallbackMessage: "Verification failed.",
+      successMessage: "Login completed and token saved.",
+      failureLogLabel: "2FA verification failed:",
+      failureFallbackMessage: "Verification failed.",
+      performLogin: async (loginApi, nonce, k) => {
+        const region = roborockAuth.getRegionConfig(
+          payload.baseURL || "usiot.roborock.com"
+        );
+        return roborockAuth.loginWithCode(loginApi, {
+          email,
+          code: payload.code,
+          country: region.country,
+          countryCode: region.countryCode,
+          k,
+          s: nonce,
+        });
+      },
+    });
   }
 
   private async loginWithPassword(payload: {
@@ -210,39 +191,80 @@ class RoborockUiServer {
       return { ok: false, message: "Email and password are required." };
     }
 
+    return this.performSignedLogin({
+      email,
+      baseURL: payload.baseURL,
+      requestFailedLogLabel: "Login request failed:",
+      requestFailedFallbackMessage: "Login failed.",
+      successMessage: "Login successful. Token saved.",
+      failureLogLabel: "Login failed:",
+      failureFallbackMessage: "Login failed. Check your credentials.",
+      checkTwoFactorRequired: true,
+      performLogin: (loginApi, nonce, k) =>
+        roborockAuth.loginByPassword(loginApi, {
+          email,
+          password,
+          k,
+          s: nonce,
+        }),
+    });
+  }
+
+  // Shared by verifyTwoFactorCode and loginWithPassword: both build a login
+  // API, sign a nonce, invoke a login function with the resulting `k`, then
+  // map the response to the same success/failure shape (loginWithPassword
+  // additionally treats code 2031 as "two-factor required").
+  private async performSignedLogin(options: {
+    email: string;
+    baseURL?: string;
+    requestFailedLogLabel: string;
+    requestFailedFallbackMessage: string;
+    successMessage: string;
+    failureLogLabel: string;
+    failureFallbackMessage: string;
+    checkTwoFactorRequired?: boolean;
+    performLogin: (loginApi: any, nonce: string, k: string) => Promise<any>;
+  }) {
+    const {
+      email,
+      baseURL,
+      requestFailedLogLabel,
+      requestFailedFallbackMessage,
+      successMessage,
+      failureLogLabel,
+      failureFallbackMessage,
+      checkTwoFactorRequired,
+      performLogin,
+    } = options;
+
     let loginResult;
     try {
-      const loginApi = await this.buildLoginApi({
-        email,
-        baseURL: payload.baseURL,
-      });
+      const loginApi = await this.buildLoginApi({ email, baseURL });
       const nonce = this.buildNonce();
       const signData = await roborockAuth.signRequest(loginApi, nonce);
       if (!signData || !signData.k) {
         return { ok: false, message: "Failed to create login signature." };
       }
 
-      loginResult = await roborockAuth.loginByPassword(loginApi, {
-        email,
-        password,
-        k: signData.k,
-        s: nonce,
-      });
+      loginResult = await performLogin(loginApi, nonce, signData.k);
     } catch (error: any) {
-      console.error("Login request failed:", error?.message || error);
-      return { ok: false, message: error?.message || "Login failed." };
+      console.error(requestFailedLogLabel, error?.message || error);
+      return {
+        ok: false,
+        message: error?.message || requestFailedFallbackMessage,
+      };
     }
 
     if (loginResult && loginResult.code === 200 && loginResult.data) {
       const encrypted = encryptSession(loginResult.data, this.getStoragePath());
       return {
         ok: true,
-        message: "Login successful. Token saved.",
+        message: successMessage,
         encryptedToken: encrypted,
       };
     }
 
-    if (loginResult && loginResult.code === 2031) {
+    if (checkTwoFactorRequired && loginResult && loginResult.code === 2031) {
       return {
         ok: false,
         twoFactorRequired: true,
@@ -250,11 +272,8 @@ class RoborockUiServer {
       };
     }
 
-    console.error("Login failed:", loginResult);
-    return {
-      ok: false,
-      message: loginResult?.msg || "Login failed. Check your credentials.",
-    };
+    console.error(failureLogLabel, loginResult);
+    return { ok: false, message: loginResult?.msg || failureFallbackMessage };
   }
 
   private async logout() {
@@ -486,13 +505,11 @@ class RoborockUiServer {
 
   private getMatterSearchPaths(storagePath: string): string[] {
     return Array.from(
-      new Set(
-        [
-          path.join(storagePath, "matter"),
-          "/var/lib/homebridge/matter",
-          "/homebridge/matter",
-        ].filter(Boolean)
-      )
+      new Set([
+        path.join(storagePath, "matter"),
+        "/var/lib/homebridge/matter",
+        "/homebridge/matter",
+      ])
     );
   }
 
@@ -617,7 +634,7 @@ class RoborockUiServer {
     cloudOnlyMode: boolean
   ) {
     const localIp = device.localIp;
-    const port = 58867;
+    const port = LOCAL_CONTROL_PORT;
     const cloudFallbackLikely =
       device.lastTransport === "cloud" ||
       device.connectionStatus === "Cloud fallback";
@@ -637,44 +654,35 @@ class RoborockUiServer {
       latencyMs: null as number | null,
     };
 
+    const skip = (message: string) => ({
+      ...baseResult,
+      status: "skipped",
+      health: "warn",
+      message,
+    });
+
     if (cloudOnlyMode) {
-      return {
-        ...baseResult,
-        status: "skipped",
-        health: "warn",
-        message:
-          "Use Roborock cloud only is enabled, so local LAN probing is skipped until cloud-only mode is disabled and Homebridge is restarted.",
-      };
+      return skip(
+        "Use Roborock cloud only is enabled, so local LAN probing is skipped until cloud-only mode is disabled and Homebridge is restarted."
+      );
     }
 
     if (!device.hasLocalKey) {
-      return {
-        ...baseResult,
-        status: "skipped",
-        health: "warn",
-        message:
-          "No local credential is cached for this vacuum, so a LAN control test cannot run yet.",
-      };
+      return skip(
+        "No local credential is cached for this vacuum, so a LAN control test cannot run yet."
+      );
     }
 
     if (device.online === false) {
-      return {
-        ...baseResult,
-        status: "skipped",
-        health: "warn",
-        message:
-          "Roborock currently reports this vacuum offline. Wake the vacuum or place it on the dock, then test again.",
-      };
+      return skip(
+        "Roborock currently reports this vacuum offline. Wake the vacuum or place it on the dock, then test again."
+      );
     }
 
     if (!localIp) {
-      return {
-        ...baseResult,
-        status: "skipped",
-        health: "warn",
-        message:
-          "No local IP address is cached yet. Let the plugin complete startup or press Refresh after the vacuum wakes up.",
-      };
+      return skip(
+        "No local IP address is cached yet. Let the plugin complete startup or press Refresh after the vacuum wakes up."
+      );
     }
 
     const activeLocalConnection = this.describeActiveLocalConnection(device);
@@ -711,7 +719,7 @@ class RoborockUiServer {
     device: Record<string, any>
   ): { source: string; message: string } | null {
     const localIp = device.localIp;
-    const port = 58867;
+    const port = LOCAL_CONTROL_PORT;
     const lastCommand = device.lastCommandMethod
       ? ` Last local command: ${device.lastCommandMethod}.`
       : "";

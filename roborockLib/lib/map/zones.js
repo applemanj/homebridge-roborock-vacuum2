@@ -223,14 +223,6 @@ window.onload = function () {
     );
   }
 
-  // maybe I need the functions one day
-  // function mapXtoCanvasX(x) {
-  // 	return roundTwoDecimals((x * scaleFactor - mapMinX) * wheelZoom * zoomLevel);
-  // }
-  // function mapYtoCanvasY(y) {
-  // 	return roundTwoDecimals((y * scaleFactor - mapMinY) * wheelZoom * zoomLevel);
-  // }
-
   function getOriginalX(transformedX) {
     return Math.floor(
       (transformedX - map.IMAGE.position.left) * scaleFactor - 2 - mapMinX
@@ -829,12 +821,6 @@ window.onload = function () {
 
         console.log("Square position: " + JSON.stringify(rect));
       }
-
-      // ctx.beginPath();
-      // ctx.arc(100, 100, 50, 0, 2 * Math.PI);
-      // ctx.fillStyle = "red";
-      // ctx.fill();
-      // ctx.stroke();
 
       const goToPosX = (goToX - 8) / zoomLevel;
       const goToPosY = (goToY - 12) / zoomLevel;

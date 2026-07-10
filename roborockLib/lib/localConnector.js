@@ -13,6 +13,22 @@ const LOCAL_CONNECT_TIMEOUT_MS = 4000;
 
 const BROADCAST_TOKEN = Buffer.from("qWKYcdQWrbm9hPqe", "utf8");
 
+// Some adapters provide their own setTimeout/clearTimeout (e.g. to keep timers
+// on the same event loop / for testability). Fall back to the global timer
+// functions when the adapter doesn't provide them.
+function getTimerFns(adapter) {
+  return {
+    setTimer:
+      typeof adapter.setTimeout === "function"
+        ? adapter.setTimeout.bind(adapter)
+        : setTimeout,
+    clearTimer:
+      typeof adapter.clearTimeout === "function"
+        ? adapter.clearTimeout.bind(adapter)
+        : clearTimeout,
+  };
+}
+
 class EnhancedSocket extends net.Socket {
   constructor(options) {
     super(options);
@@ -86,10 +102,7 @@ class localConnector {
 
   scheduleReconnect(duid, ip, delayMs = LOCAL_RECONNECT_DELAY_MS) {
     this.clearReconnectTimer(duid);
-    const setTimer =
-      typeof this.adapter.setTimeout === "function"
-        ? this.adapter.setTimeout.bind(this.adapter)
-        : setTimeout;
+    const { setTimer } = getTimerFns(this.adapter);
     const timer = setTimer(async () => {
       this.reconnectTimers.delete(duid);
       await this.createClient(duid, ip);
@@ -189,14 +202,7 @@ class localConnector {
     // Wrap the connect method in a promise to await its completion
     await new Promise((resolve, reject) => {
       let settled = false;
-      const clearTimer =
-        typeof this.adapter.clearTimeout === "function"
-          ? this.adapter.clearTimeout.bind(this.adapter)
-          : clearTimeout;
-      const setTimer =
-        typeof this.adapter.setTimeout === "function"
-          ? this.adapter.setTimeout.bind(this.adapter)
-          : setTimeout;
+      const { setTimer, clearTimer } = getTimerFns(this.adapter);
       const timeout = setTimer(() => {
         if (settled) {
           return;
@@ -609,11 +615,6 @@ class localConnector {
       // console.debug("decryptECB error:", err);
       return null;
     }
-  }
-
-  removePadding(str) {
-    const paddingLength = str.charCodeAt(str.length - 1);
-    return str.slice(0, -paddingLength);
   }
 
   clearLocalDevicedTimeout() {

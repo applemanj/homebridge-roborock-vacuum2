@@ -299,24 +299,28 @@ class messageQueueHandler {
               );
             }
             this.adapter.rr_mqtt_connector.sendMessage(duid, roborockMessage);
+            const lastTransportReason =
+              [
+                {
+                  condition: !deviceOnline && allowOfflineCloudSend,
+                  reason: "offline-cloud-command",
+                },
+                { condition: secure, reason: "secure-command" },
+                { condition: photo, reason: "photo-command" },
+                { condition: cloudOnlyConnection, reason: "cloud-only-mode" },
+                {
+                  condition: preferCloudConnection,
+                  reason: "preferred-cloud-command",
+                },
+                { condition: remoteConnection, reason: "remote-device" },
+                {
+                  condition: method == "get_network_info",
+                  reason: "network-info-cloud-only",
+                },
+              ].find((entry) => entry.condition)?.reason ?? "cloud-request";
             this.adapter.updateTransportDiagnostics(duid, {
               lastTransport: "cloud",
-              lastTransportReason:
-                !deviceOnline && allowOfflineCloudSend
-                  ? "offline-cloud-command"
-                  : secure
-                    ? "secure-command"
-                    : photo
-                      ? "photo-command"
-                      : cloudOnlyConnection
-                        ? "cloud-only-mode"
-                        : preferCloudConnection
-                          ? "preferred-cloud-command"
-                          : remoteConnection
-                            ? "remote-device"
-                            : method == "get_network_info"
-                              ? "network-info-cloud-only"
-                              : "cloud-request",
+              lastTransportReason,
               lastCommandMethod: method,
             });
             this.adapter.log.debug(

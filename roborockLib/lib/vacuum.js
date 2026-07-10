@@ -107,15 +107,19 @@ class vacuum {
           );
 
           if (mappedRoomList) {
-            for (const mappedRoom in mappedRoomList) {
-              const roomState = await this.adapter.getStateAsync(
-                `Devices.${duid}.floors.${roomFloor.val}.${mappedRoomList[mappedRoom][0]}`
-              );
+            const roomStates = await Promise.all(
+              Object.keys(mappedRoomList).map((mappedRoom) =>
+                this.adapter.getStateAsync(
+                  `Devices.${duid}.floors.${roomFloor.val}.${mappedRoomList[mappedRoom][0]}`
+                )
+              )
+            );
 
-              if (roomState.val) {
+            Object.keys(mappedRoomList).forEach((mappedRoom, index) => {
+              if (roomStates[index].val) {
                 roomList.segments.push(mappedRoomList[mappedRoom][0]);
               }
-            }
+            });
           }
 
           const cleanCount = await this.adapter.getStateAsync(
@@ -684,14 +688,6 @@ class vacuum {
             } else {
               const extractedPhoto = this.extractPhoto(photoData);
 
-              // fs.writeFile("slicedBuffer.jpg", extractedPhoto, (err) => {
-              // 	if (err) {
-              // 		console.error("Fehler beim Schreiben der Datei:", err);
-              // 	} else {
-              // 		console.log("Die Datei wurde erfolgreich gespeichert!");
-              // 	}
-              // });
-
               if (extractedPhoto) {
                 const photo = {};
                 photo.duid = duid;
@@ -838,17 +834,23 @@ class vacuum {
           );
         } else if (mappedAttribute == "records") {
           const cleaningRecordsJSON = [];
+          const cleaningRecordIndexes = Object.keys(
+            cleaningAttributes[cleaningAttribute]
+          );
 
-          for (const cleaningRecord in cleaningAttributes[cleaningAttribute]) {
-            const cleaningRecordID =
-              cleaningAttributes[cleaningAttribute][cleaningRecord];
-            const cleaningRecordAttributes = (
-              await this.adapter.messageQueueHandler.sendRequest(
-                duid,
-                "get_clean_record",
-                [cleaningRecordID]
-              )
-            )[0];
+          const allCleaningRecordAttributes = await Promise.all(
+            cleaningRecordIndexes.map((cleaningRecord) => {
+              const cleaningRecordID =
+                cleaningAttributes[cleaningAttribute][cleaningRecord];
+              return this.adapter.messageQueueHandler
+                .sendRequest(duid, "get_clean_record", [cleaningRecordID])
+                .then((result) => result[0]);
+            })
+          );
+
+          for (let i = 0; i < cleaningRecordIndexes.length; i++) {
+            const cleaningRecord = cleaningRecordIndexes[i];
+            const cleaningRecordAttributes = allCleaningRecordAttributes[i];
 
             cleaningRecordsJSON[cleaningRecord] = cleaningRecordAttributes;
 
@@ -922,25 +924,11 @@ class vacuum {
   }
 
   unzipBuffer(buffer, callback) {
-    zlib.gunzip(buffer, function (err, result) {
-      if (err) {
-        callback(err);
-      } else {
-        callback(null, result);
-      }
-    });
+    zlib.gunzip(buffer, callback);
   }
 
   isGZIP(buffer) {
-    if (buffer.length < 2) {
-      return false;
-    }
-
-    if (buffer[0] == 31 && buffer[1] == 139) {
-      return true;
-    }
-
-    return false;
+    return buffer.length >= 2 && buffer[0] == 31 && buffer[1] == 139;
   }
   extractPhoto(buffer) {
     // Verify that the buffer is long enough to hold the header

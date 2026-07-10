@@ -5,9 +5,6 @@ const fs = require("fs");
 const os = require("os");
 const axios = require("axios");
 const crypto = require("crypto");
-const express = require("express");
-const { debug } = require("console");
-const { get } = require("http");
 
 const roborockAuth = require("./lib/roborockAuth");
 
@@ -21,8 +18,7 @@ const roborockPackageHelper =
 const deviceFeatures = require("./lib/deviceFeatures").deviceFeatures;
 const messageQueueHandler =
   require("./lib/messageQueueHandler").messageQueueHandler;
-
-let socketServer, webserver;
+const roborockCrypto = require("./lib/roborockCrypto");
 
 const PERSISTED_STATE_IDS = new Set([
   "UserData",
@@ -42,16 +38,27 @@ const dockingStationStates = [
   "isUpdownWaterReady",
 ];
 
+// Commands that are forwarded to vacuums[duid].command() as-is, without any
+// command-specific handling in startCommand.
+const SIMPLE_VACUUM_COMMANDS = new Set([
+  "app_zoned_clean",
+  "app_goto_target",
+  "app_start",
+  "app_stop",
+  "stop_zoned_clean",
+  "app_pause",
+  "app_charge",
+  "find_me",
+  "app_segment_clean_by_ids",
+  "load_multi_map",
+]);
+
 const TRANSIENT_ERROR_LOG_THROTTLE_MS = 6 * 60 * 60 * 1000;
 const MATTER_CLEAN_MODE_COMMAND_TIMEOUT_MS = 2000;
 // How long to wait before retrying to cache rooms for a saved map that did not
 // return room segments. Retrying lets newly named/segmented maps appear without
 // switching maps on every poll cycle.
 const SERVICE_AREA_ROOM_MAP_REFRESH_TTL_MS = 6 * 60 * 60 * 1000;
-
-function md5hex(str) {
-  return crypto.createHash("md5").update(str).digest("hex");
-}
 
 class Roborock {
   constructor(options) {
@@ -649,8 +656,7 @@ class Roborock {
 
   getPersistedRoomMappings() {
     const cached = this.getStateAsync("RoomMappings");
-    const value =
-      cached && typeof cached.val === "string" ? cached.val : cached?.val;
+    const value = cached?.val;
 
     if (!value) {
       return {};
@@ -891,51 +897,33 @@ class Roborock {
     const method =
       current.lastCommandMethod || patch.lastCommandMethod || "unknown method";
 
-    if (
-      Object.prototype.hasOwnProperty.call(patch, "tcpConnectionState") &&
-      previous.tcpConnectionState !== current.tcpConnectionState
-    ) {
+    const changed = (field) =>
+      Object.prototype.hasOwnProperty.call(patch, field) &&
+      previous[field] !== current[field];
+
+    if (changed("tcpConnectionState")) {
       return this.describeTcpTransportChange(deviceLabel, current);
     }
 
-    if (
-      (Object.prototype.hasOwnProperty.call(patch, "isRemote") ||
-        Object.prototype.hasOwnProperty.call(patch, "remoteReason")) &&
-      (previous.isRemote !== current.isRemote ||
-        previous.remoteReason !== current.remoteReason)
-    ) {
+    if (changed("isRemote") || changed("remoteReason")) {
       return this.describeRemoteTransportChange(deviceLabel, current);
     }
 
-    if (
-      Object.prototype.hasOwnProperty.call(patch, "online") &&
-      previous.online !== current.online
-    ) {
+    if (changed("online")) {
       return current.online
         ? `Roborock reports ${deviceLabel} is online again; local transport can resume when TCP is connected.`
         : `Roborock reports ${deviceLabel} is offline; commands will wait or fall back to cloud when possible.`;
     }
 
-    if (
-      Object.prototype.hasOwnProperty.call(patch, "localIp") &&
-      previous.localIp !== current.localIp
-    ) {
+    if (changed("localIp")) {
       return `Discovered local IP ${this.formatLocalIpForLog(current.localIp)} for ${deviceLabel}; LAN TCP connection can be attempted.`;
     }
 
-    if (
-      Object.prototype.hasOwnProperty.call(patch, "localDiscoveryState") &&
-      previous.localDiscoveryState !== current.localDiscoveryState
-    ) {
+    if (changed("localDiscoveryState")) {
       return this.describeLocalDiscoveryChange(deviceLabel, current);
     }
 
-    if (
-      (Object.prototype.hasOwnProperty.call(patch, "lastTransport") ||
-        Object.prototype.hasOwnProperty.call(patch, "lastTransportReason")) &&
-      (previous.lastTransport !== current.lastTransport ||
-        previous.lastTransportReason !== current.lastTransportReason)
-    ) {
+    if (changed("lastTransport") || changed("lastTransportReason")) {
       return this.describeTransportRouteChange(
         deviceLabel,
         previous,
@@ -1231,7 +1219,7 @@ class Roborock {
             rriot.s,
             nonce,
             timestamp,
-            md5hex(url.pathname),
+            roborockCrypto.md5hex(url.pathname),
             /*queryparams*/ "",
             /*body*/ "",
           ].join(":");
@@ -1945,18 +1933,19 @@ class Roborock {
     };
   }
 
-  async applyMatterCleanModeSettings(duid, settings, options = {}) {
+  buildCommandOptions(options, extraDefaults = {}) {
     const waitForResult = Boolean(options.waitForResult);
     const commandOptions = waitForResult
-      ? {
-          requestTimeoutMs: MATTER_CLEAN_MODE_COMMAND_TIMEOUT_MS,
-          ...options,
-          throwOnError: true,
-        }
-      : {
-          requestTimeoutMs: MATTER_CLEAN_MODE_COMMAND_TIMEOUT_MS,
-          ...options,
-        };
+      ? { ...extraDefaults, ...options, throwOnError: true }
+      : { ...extraDefaults, ...options };
+
+    return { waitForResult, commandOptions };
+  }
+
+  async applyMatterCleanModeSettings(duid, settings, options = {}) {
+    const { commandOptions } = this.buildCommandOptions(options, {
+      requestTimeoutMs: MATTER_CLEAN_MODE_COMMAND_TIMEOUT_MS,
+    });
 
     if (
       Number.isInteger(settings?.fanPower) &&
@@ -2177,11 +2166,10 @@ class Roborock {
   }
 
   async onlineChecker(duid) {
-    const homedata = await this.getStateAsync("HomeData");
+    const homedataJSON = this.getStoredHomeData();
 
     // If the home data is not found or if its value is not a string, return false.
-    if (homedata && typeof homedata.val == "string") {
-      const homedataJSON = JSON.parse(homedata.val);
+    if (homedataJSON) {
       const device = homedataJSON.devices.find((device) => device.duid == duid);
       const receivedDevice = homedataJSON.receivedDevices.find(
         (device) => device.duid == duid
@@ -2206,10 +2194,9 @@ class Roborock {
   }
 
   async isRemoteDevice(duid) {
-    const homedata = await this.getStateAsync("HomeData");
+    const homedataJSON = this.getStoredHomeData();
 
-    if (homedata && typeof homedata.val == "string") {
-      const homedataJSON = JSON.parse(homedata.val);
+    if (homedataJSON) {
       const receivedDevice = homedataJSON.receivedDevices.find(
         (device) => device.duid == duid
       );
@@ -2723,19 +2710,35 @@ class Roborock {
     });
   }
 
-  async createCommand(duid, command, type, defaultState, states) {
-    const path = `Devices.${duid}.commands.${command}`;
-    const name = this.translations[command];
+  createDeviceObject(pathSegment, duid, state, type, states, options = {}) {
+    const {
+      write = false,
+      unit,
+      hasUnit = false,
+      def,
+      hasDef = false,
+    } = options;
+    const path = `Devices.${duid}.${pathSegment}.${state}`;
+    const name = this.translations[state];
 
     const common = {
       name: name,
       type: type,
       role: "value",
-      read: true,
-      write: true,
-      def: defaultState,
-      states: states,
     };
+
+    if (hasUnit) {
+      common.unit = unit;
+    }
+
+    common.read = true;
+    common.write = write;
+
+    if (hasDef) {
+      common.def = def;
+    }
+
+    common.states = states;
 
     this.setObjectAsync(path, {
       type: "state",
@@ -2744,24 +2747,19 @@ class Roborock {
     });
   }
 
+  async createCommand(duid, command, type, defaultState, states) {
+    this.createDeviceObject("commands", duid, command, type, states, {
+      write: true,
+      hasDef: true,
+      def: defaultState,
+    });
+  }
+
   async createDeviceStatus(duid, state, type, states, unit) {
-    const path = `Devices.${duid}.deviceStatus.${state}`;
-    const name = this.translations[state];
-
-    const common = {
-      name: name,
-      type: type,
-      role: "value",
-      unit: unit,
-      read: true,
+    this.createDeviceObject("deviceStatus", duid, state, type, states, {
       write: false,
-      states: states,
-    };
-
-    this.setObjectAsync(path, {
-      type: "state",
-      common: common,
-      native: {},
+      hasUnit: true,
+      unit,
     });
   }
 
@@ -2786,23 +2784,10 @@ class Roborock {
   }
 
   async createConsumable(duid, state, type, states, unit) {
-    const path = `Devices.${duid}.consumables.${state}`;
-    const name = this.translations[state];
-
-    const common = {
-      name: name,
-      type: type,
-      role: "value",
-      unit: unit,
-      read: true,
+    this.createDeviceObject("consumables", duid, state, type, states, {
       write: false,
-      states: states,
-    };
-
-    this.setObjectAsync(path, {
-      type: "state",
-      common: common,
-      native: {},
+      hasUnit: true,
+      unit,
     });
   }
 
@@ -2926,7 +2911,7 @@ class Roborock {
   }
 
   async createBasicWashingMachineObjects(duid) {
-    this.createNetworkInfoObjects(duid);
+    return this.createBasicVacuumObjects(duid);
   }
 
   async createNetworkInfoObjects(duid) {
@@ -2952,39 +2937,22 @@ class Roborock {
       return;
     }
 
-    const waitForResult = Boolean(options.waitForResult);
-    const commandOptions = waitForResult
-      ? { ...options, throwOnError: true }
-      : options;
+    const { waitForResult, commandOptions } = this.buildCommandOptions(options);
 
-    switch (command) {
-      case "app_zoned_clean":
-      case "app_goto_target":
-      case "app_start":
-      case "app_stop":
-      case "stop_zoned_clean":
-      case "app_pause":
-      case "app_charge":
-      case "find_me":
-      case "app_segment_clean_by_ids":
-      case "load_multi_map": {
-        const commandPromise = this.vacuums[duid].command(
-          duid,
-          command,
-          parameters,
-          commandOptions
-        );
-        if (waitForResult) {
-          await commandPromise;
-        }
-        break;
+    if (SIMPLE_VACUUM_COMMANDS.has(command)) {
+      const commandPromise = this.vacuums[duid].command(
+        duid,
+        command,
+        parameters,
+        commandOptions
+      );
+      if (waitForResult) {
+        await commandPromise;
       }
-
-      case "get_photo":
-        this.vacuums[duid].getParameter(duid, "get_photo", parameters);
-        break;
-      default:
-        this.log.warn(`Command ${command} not found.`);
+    } else if (command === "get_photo") {
+      this.vacuums[duid].getParameter(duid, "get_photo", parameters);
+    } else {
+      this.log.warn(`Command ${command} not found.`);
     }
   }
 
@@ -3007,15 +2975,11 @@ class Roborock {
   }
 
   async getRobotVersion(duid) {
-    const homedata = await this.getStateAsync("HomeData");
-    if (homedata && homedata.val) {
-      const devices = JSON.parse(homedata.val.toString()).devices.concat(
-        JSON.parse(homedata.val.toString()).receivedDevices
-      );
-
-      for (const device in devices) {
-        if (devices[device].duid == duid) return devices[device].pv;
-      }
+    const device = this.getAllHomeDevices().find(
+      (device) => device.duid == duid
+    );
+    if (device) {
+      return device.pv;
     }
 
     return "Error in getRobotVersion. Version not found.";

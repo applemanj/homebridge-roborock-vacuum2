@@ -155,84 +155,31 @@ const deviceStates = {
   distance_off: "number",
 };
 
+// Shared shape for the work-time consumables that both consumablesInt and
+// consumablesString track identically.
+const workTimeConsumable = {
+  type: "number",
+  unit: "h",
+  divider: 60 * 60,
+  write: false,
+};
+const sharedWorkTimeConsumables = {
+  main_brush_work_time: { ...workTimeConsumable },
+  side_brush_work_time: { ...workTimeConsumable },
+  filter_work_time: { ...workTimeConsumable },
+  filter_element_work_time: { ...workTimeConsumable },
+  sensor_dirty_time: { ...workTimeConsumable },
+  dust_collection_work_times: { ...workTimeConsumable },
+};
+
 const consumablesInt = {
-  main_brush_work_time: {
-    type: "number",
-    unit: "h",
-    divider: 60 * 60,
-    write: false,
-  },
-  side_brush_work_time: {
-    type: "number",
-    unit: "h",
-    divider: 60 * 60,
-    write: false,
-  },
-  filter_work_time: {
-    type: "number",
-    unit: "h",
-    divider: 60 * 60,
-    write: false,
-  },
-  filter_element_work_time: {
-    type: "number",
-    unit: "h",
-    divider: 60 * 60,
-    write: false,
-  },
-  sensor_dirty_time: {
-    type: "number",
-    unit: "h",
-    divider: 60 * 60,
-    write: false,
-  },
-  dust_collection_work_times: {
-    type: "number",
-    unit: "h",
-    divider: 60 * 60,
-    write: false,
-  },
+  ...sharedWorkTimeConsumables,
   125: { type: "number", unit: "%", divider: 60 * 60, write: false },
   126: { type: "number", unit: "%", divider: 60 * 60, write: false },
   127: { type: "number", unit: "%", divider: 60 * 60, write: false },
 };
 const consumablesString = {
-  main_brush_work_time: {
-    type: "number",
-    unit: "h",
-    divider: 60 * 60,
-    write: false,
-  },
-  side_brush_work_time: {
-    type: "number",
-    unit: "h",
-    divider: 60 * 60,
-    write: false,
-  },
-  filter_work_time: {
-    type: "number",
-    unit: "h",
-    divider: 60 * 60,
-    write: false,
-  },
-  filter_element_work_time: {
-    type: "number",
-    unit: "h",
-    divider: 60 * 60,
-    write: false,
-  },
-  sensor_dirty_time: {
-    type: "number",
-    unit: "h",
-    divider: 60 * 60,
-    write: false,
-  },
-  dust_collection_work_times: {
-    type: "number",
-    unit: "h",
-    divider: 60 * 60,
-    write: false,
-  },
+  ...sharedWorkTimeConsumables,
   main_brush_life: {
     type: "number",
     unit: "%",
@@ -891,6 +838,25 @@ class deviceFeatures {
     );
 
     if (productCategory == "robot.vacuum.cleaner") {
+      // Shared action list for models with identical processSupportedFeatures config
+      // (Saros 10, and related a140/a95/a159/ss07 models)
+      const saros10ActionSet = [
+        "setCleaningRecordsString",
+        "setConsumablesInt",
+        "set_common_status",
+        "set_dss",
+        "set_rss",
+        "set_kct",
+        "set_in_warmup",
+        "set_last_clean_t",
+        "set_map_flag",
+        "set_back_type",
+        "set_charge_status",
+        "set_clean_percent",
+        "set_cleaned_area",
+        "set_switch_status",
+      ];
+
       // process states etc. depending on model
       const modelConfig = {
         // S6 Pure
@@ -902,8 +868,6 @@ class deviceFeatures {
           "setCleaningRecordsString",
           "setConsumablesInt",
         ],
-        // S4 Max
-        "roborock.vacuum.a19": ["setCleaningRecordsInt", "setConsumablesInt"],
         // S7 MaxV (Ultra)
         "roborock.vacuum.a27": [
           "setCleaningRecordsString",
@@ -1191,86 +1155,11 @@ class deviceFeatures {
           "set_last_clean_t",
         ],
         // Saros 10
-        "roborock.vacuum.a147": [
-          "setCleaningRecordsString",
-          "setConsumablesInt",
-          "set_common_status",
-          "set_dss",
-          "set_rss",
-          "set_kct",
-          "set_in_warmup",
-          "set_last_clean_t",
-          "set_map_flag",
-          "set_back_type",
-          "set_charge_status",
-          "set_clean_percent",
-          "set_cleaned_area",
-          "set_switch_status",
-        ],
-        "roborock.vacuum.a140": [
-          "setCleaningRecordsString",
-          "setConsumablesInt",
-          "set_common_status",
-          "set_dss",
-          "set_rss",
-          "set_kct",
-          "set_in_warmup",
-          "set_last_clean_t",
-          "set_map_flag",
-          "set_back_type",
-          "set_charge_status",
-          "set_clean_percent",
-          "set_cleaned_area",
-          "set_switch_status",
-        ],
-        "roborock.vacuum.a95": [
-          "setCleaningRecordsString",
-          "setConsumablesInt",
-          "set_common_status",
-          "set_dss",
-          "set_rss",
-          "set_kct",
-          "set_in_warmup",
-          "set_last_clean_t",
-          "set_map_flag",
-          "set_back_type",
-          "set_charge_status",
-          "set_clean_percent",
-          "set_cleaned_area",
-          "set_switch_status",
-        ],
-        "roborock.vacuum.a159": [
-          "setCleaningRecordsString",
-          "setConsumablesInt",
-          "set_common_status",
-          "set_dss",
-          "set_rss",
-          "set_kct",
-          "set_in_warmup",
-          "set_last_clean_t",
-          "set_map_flag",
-          "set_back_type",
-          "set_charge_status",
-          "set_clean_percent",
-          "set_cleaned_area",
-          "set_switch_status",
-        ],
-        "roborock.vacuum.ss07": [
-          "setCleaningRecordsString",
-          "setConsumablesInt",
-          "set_common_status",
-          "set_dss",
-          "set_rss",
-          "set_kct",
-          "set_in_warmup",
-          "set_last_clean_t",
-          "set_map_flag",
-          "set_back_type",
-          "set_charge_status",
-          "set_clean_percent",
-          "set_cleaned_area",
-          "set_switch_status",
-        ],
+        "roborock.vacuum.a147": saros10ActionSet,
+        "roborock.vacuum.a140": saros10ActionSet,
+        "roborock.vacuum.a95": saros10ActionSet,
+        "roborock.vacuum.a159": saros10ActionSet,
+        "roborock.vacuum.ss07": saros10ActionSet,
       };
 
       // process modelConfig
@@ -1390,29 +1279,13 @@ class deviceFeatures {
       case 2: // Empty Wash Fill Dock - Onyx2: G10
         this.isWashThenChargeCmdSupported();
         break;
-      case 3: // Empty Wash Fill (Dry) Dock - Onyx3: S7 Pro, MaxV Ultra
-        this.isDustCollectionSettingSupported();
-        this.isWashThenChargeCmdSupported();
-        this.isSupportedDrying();
-        break;
       case 5: // Onyx-C: S8, S8 Plus, Q8, Q8 Max
         this.isDustCollectionSettingSupported();
         break;
+      case 3: // Empty Wash Fill (Dry) Dock - Onyx3: S7 Pro, MaxV Ultra
       case 6: // Onyx3 Plus: S7 Max Ultra
-        this.isDustCollectionSettingSupported();
-        this.isWashThenChargeCmdSupported();
-        this.isSupportedDrying();
-        break;
       case 7: // Onyx4: S8 Pro Ultra
-        this.isDustCollectionSettingSupported();
-        this.isWashThenChargeCmdSupported();
-        this.isSupportedDrying();
-        break;
       case 8: // PEARL: Q Revo, P10
-        this.isDustCollectionSettingSupported();
-        this.isWashThenChargeCmdSupported();
-        this.isSupportedDrying();
-        break;
       // Not much info on this one. Might be missing some features
       case 9: // Unknown codename for now: Q Revo Pro
         this.isDustCollectionSettingSupported();
@@ -1424,26 +1297,20 @@ class deviceFeatures {
     }
   }
 
+  getDivider(table, key) {
+    return table[key]?.divider || false;
+  }
+
   getConsumablesDivider(consumable) {
     const robotModel = this.adapter.getProductAttribute(this.duid, "model");
     const consumables =
       robotModel == "roborock.vacuum.s4" ? consumablesInt : consumablesString;
 
-    if (consumables[consumable]) {
-      return consumables[consumable].divider;
-    } else {
-      return false;
-    }
+    return this.getDivider(consumables, consumable);
   }
 
   getStatusDivider(attribute) {
-    const divider = deviceStates[attribute]?.divider;
-
-    if (divider) {
-      return divider;
-    } else {
-      return false;
-    }
+    return this.getDivider(deviceStates, attribute);
   }
 
   hasDeviceStatusAttribute(attribute) {
@@ -1463,4 +1330,5 @@ class deviceFeatures {
 
 module.exports = {
   deviceFeatures,
+  stateCodes,
 };
