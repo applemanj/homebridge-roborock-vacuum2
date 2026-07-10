@@ -239,6 +239,8 @@ const MATTER_RETURN_TO_DOCK_STATUS_REFRESH_DELAYS_MS = [
 ] as const;
 const MATTER_RETURN_TO_DOCK_RETRY_DELAY_MS = 7000;
 const MATTER_INITIALIZATION_RETRY_DELAYS_MS = [1000, 3000, 10000] as const;
+const ROOM_CLEAN_STATE = 18;
+const PAUSED_STATE = 10;
 // Low-frequency safety net. Every publish is a full coherent snapshot and
 // matter.js suppresses no-op writes, so this generates no Matter traffic
 // unless the store actually drifted from the latest Roborock state.
@@ -259,6 +261,7 @@ export default class RoborockMatterVacuumAccessory {
   private contradictingLiveStateCount = 0;
   private lastCleaningCommandAt = 0;
   private selectedServiceAreaIds: number[] = [];
+  private roomCleaningAreaConfirmed = false;
   private lastServiceAreaSummary = "";
   private selectedCleanMode = CLEAN_MODE_VACUUM;
   private selectedCleanModeNeedsApply = false;
@@ -812,16 +815,49 @@ export default class RoborockMatterVacuumAccessory {
     const state = this.getNumberFromValue(status.state);
     const chargeStatus = this.getNumberFromValue(status.charge_status);
     const battery = this.getNumberFromValue(status.battery);
+    const cleanArea = this.getNumberFromValue(status.clean_area);
+    const cleanTime = this.getNumberFromValue(status.clean_time);
 
-    if (state === null && chargeStatus === null && battery === null) {
+    if (
+      state === null &&
+      chargeStatus === null &&
+      battery === null &&
+      cleanArea === null &&
+      cleanTime === null
+    ) {
       return;
     }
 
     // Remember the freshest live values so a later full cluster rebuild reflects
     // them instead of the slower HomeData snapshot.
+    const previousState = this.getNumberStatus("state");
+    if (
+      state !== null &&
+      state !== ROOM_CLEAN_STATE &&
+      state !== PAUSED_STATE
+    ) {
+      this.roomCleaningAreaConfirmed = false;
+    } else if (
+      state === ROOM_CLEAN_STATE &&
+      previousState !== ROOM_CLEAN_STATE &&
+      previousState !== PAUSED_STATE
+    ) {
+      this.roomCleaningAreaConfirmed = false;
+    }
+
     this.rememberLiveStatus("state", state);
     this.rememberLiveStatus("charge_status", chargeStatus);
     this.rememberLiveStatus("battery", battery);
+    this.rememberLiveStatus("clean_area", cleanArea);
+    this.rememberLiveStatus("clean_time", cleanTime);
+
+    if (
+      (state ?? previousState) === ROOM_CLEAN_STATE &&
+      cleanArea !== null &&
+      cleanTime !== null
+    ) {
+      this.roomCleaningAreaConfirmed = cleanArea > 0 && cleanTime > 0;
+    }
 
     if (state !== null || chargeStatus !== null) {
       // Confirm or contradict any pending optimistic state. While optimism is
@@ -1243,6 +1279,7 @@ export default class RoborockMatterVacuumAccessory {
         },
       })),
       selectedAreas,
+      currentArea: this.getCurrentServiceArea(selectedAreas),
     };
 
     if (supportedMaps.length > 0) {
@@ -1250,6 +1287,17 @@ export default class RoborockMatterVacuumAccessory {
     }
 
     return state;
+  }
+
+  private getCurrentServiceArea(selectedAreas: number[]): number | null {
+    if (selectedAreas.length !== 1 || !this.roomCleaningAreaConfirmed) {
+      return null;
+    }
+
+    const state = this.getNumberStatus("state");
+    return state === ROOM_CLEAN_STATE || state === PAUSED_STATE
+      ? selectedAreas[0]
+      : null;
   }
 
   private async selectServiceAreas(
@@ -1954,7 +2002,9 @@ export default class RoborockMatterVacuumAccessory {
     const hasStatus =
       Object.prototype.hasOwnProperty.call(message, "state") ||
       Object.prototype.hasOwnProperty.call(message, "battery") ||
-      Object.prototype.hasOwnProperty.call(message, "charge_status");
+      Object.prototype.hasOwnProperty.call(message, "charge_status") ||
+      Object.prototype.hasOwnProperty.call(message, "clean_area") ||
+      Object.prototype.hasOwnProperty.call(message, "clean_time");
 
     return hasStatus ? message : null;
   }

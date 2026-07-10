@@ -6,7 +6,41 @@ const { stateCodes } = require("../roborockLib/lib/deviceFeatures");
 
 const MAX_HOMEKIT_NAME_LENGTH = 64;
 const FALLBACK_SCENE_NAME = "Roborock Scene";
+const SCHEDULE_SERVICE_PREFIX = "roborock-schedule-";
 const CLEANING_STATES = new Set([4, 5, 6, 7, 11, 15, 16, 17, 18, 23, 26]);
+
+export interface RoborockSchedule {
+  id: string;
+  enabled: boolean;
+}
+
+export function parseServerTimers(value: unknown): RoborockSchedule[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const schedules = new Map<string, RoborockSchedule>();
+  for (const timer of value) {
+    if (!Array.isArray(timer) || timer.length < 2) {
+      continue;
+    }
+
+    const [rawId, rawStatus] = timer;
+    if (
+      (typeof rawId !== "string" && typeof rawId !== "number") ||
+      (rawStatus !== "on" && rawStatus !== "off")
+    ) {
+      continue;
+    }
+
+    const id = String(rawId);
+    if (id && !schedules.has(id)) {
+      schedules.set(id, { id, enabled: rawStatus === "on" });
+    }
+  }
+
+  return [...schedules.values()];
+}
 
 export function toHomeKitSafeName(
   name: string | null | undefined,
@@ -35,8 +69,10 @@ export function toHomeKitSafeName(
 export default class RoborockVacuumAccessory {
   private services: Service[] = [];
   private sceneServices: Map<string, Service> = new Map();
+  private scheduleServices: Map<string, Service> = new Map();
   private controlSwitches: Map<string, Service> = new Map();
   private currentScenes: any[] = [];
+  private currentSchedules: Map<string, RoborockSchedule> = new Map();
   private lastKnownBatteryLevel: number | null = null;
 
   constructor(
@@ -95,8 +131,9 @@ export default class RoborockVacuumAccessory {
       this.accessory.addService(this.platform.Service.Battery);
     this.services["Fan"].addLinkedService(this.services["Battery"]);
 
-    // Initialize scene switches
+    // Initialize dynamic switches.
     this.updateSceneSwitches();
+    void this.updateScheduleSwitches();
     this.lastKnownBatteryLevel = this.getNormalizedBatteryLevel(
       this.platform.roborockAPI.getVacuumDeviceStatus(
         accessory.context,
@@ -419,6 +456,136 @@ export default class RoborockVacuumAccessory {
     const newIds = nextScenes.map((scene) => scene.id).sort();
 
     return JSON.stringify(currentIds) !== JSON.stringify(newIds);
+  }
+
+  async updateScheduleSwitches(): Promise<void> {
+    try {
+      const schedules = parseServerTimers(
+        await this.platform.roborockAPI.getServerTimers(this.accessory.context)
+      );
+      this.syncScheduleSwitches(schedules);
+    } catch (error) {
+      this.platform.log.debug(
+        `Unable to update schedule switches for ${this.getVacuumName()}: ${error}`
+      );
+    }
+  }
+
+  private syncScheduleSwitches(schedules: RoborockSchedule[]): void {
+    const currentIds = new Set(schedules.map((schedule) => schedule.id));
+
+    schedules.forEach((schedule, index) => {
+      const serviceSubtype = this.getScheduleServiceSubtype(schedule.id);
+      const displayName = `Roborock Schedule ${index + 1}`;
+      let switchService = this.scheduleServices.get(schedule.id);
+
+      if (!switchService) {
+        switchService =
+          this.accessory.getServiceById(
+            this.platform.Service.Switch,
+            serviceSubtype
+          ) ||
+          this.accessory.addService(
+            this.platform.Service.Switch,
+            displayName,
+            serviceSubtype
+          );
+
+        switchService
+          .getCharacteristic(this.platform.Characteristic.On)
+          .onSet(this.setScheduleSwitch.bind(this, schedule.id))
+          .onGet(this.getScheduleSwitch.bind(this, schedule.id));
+        this.scheduleServices.set(schedule.id, switchService);
+      }
+
+      switchService.setCharacteristic(
+        this.platform.Characteristic.Name,
+        displayName
+      );
+      switchService.addOptionalCharacteristic(
+        this.platform.Characteristic.ConfiguredName
+      );
+      switchService.setCharacteristic(
+        this.platform.Characteristic.ConfiguredName,
+        displayName
+      );
+      switchService.updateCharacteristic(
+        this.platform.Characteristic.On,
+        schedule.enabled
+      );
+    });
+
+    for (const [scheduleId, service] of this.scheduleServices) {
+      if (!currentIds.has(scheduleId)) {
+        this.accessory.removeService(service);
+        this.scheduleServices.delete(scheduleId);
+      }
+    }
+
+    for (const service of [...this.accessory.services]) {
+      if (
+        service.subtype?.startsWith(SCHEDULE_SERVICE_PREFIX) &&
+        !schedules.some(
+          (schedule) =>
+            this.getScheduleServiceSubtype(schedule.id) === service.subtype
+        )
+      ) {
+        this.accessory.removeService(service);
+      }
+    }
+
+    this.currentSchedules = new Map(
+      schedules.map((schedule) => [schedule.id, schedule])
+    );
+  }
+
+  private getScheduleServiceSubtype(scheduleId: string): string {
+    return `${SCHEDULE_SERVICE_PREFIX}${encodeURIComponent(scheduleId)}`;
+  }
+
+  async setScheduleSwitch(
+    scheduleId: string,
+    value: CharacteristicValue
+  ): Promise<void> {
+    const enabled = Boolean(value);
+    const previous = this.currentSchedules.get(scheduleId)?.enabled ?? !enabled;
+
+    try {
+      await this.platform.roborockAPI.updateServerTimer(
+        this.accessory.context,
+        scheduleId,
+        enabled
+      );
+      this.currentSchedules.set(scheduleId, { id: scheduleId, enabled });
+      this.platform.log.info(
+        `${enabled ? "Enabled" : "Disabled"} Roborock schedule ${scheduleId} for ${this.getVacuumName()}.`
+      );
+    } catch (error) {
+      this.scheduleServices
+        .get(scheduleId)
+        ?.updateCharacteristic(this.platform.Characteristic.On, previous);
+      this.platform.log.error(
+        `Unable to ${enabled ? "enable" : "disable"} Roborock schedule ${scheduleId}: ${error}`
+      );
+      throw error;
+    }
+  }
+
+  async getScheduleSwitch(scheduleId: string): Promise<CharacteristicValue> {
+    try {
+      const schedules = parseServerTimers(
+        await this.platform.roborockAPI.getServerTimers(this.accessory.context)
+      );
+      this.currentSchedules = new Map(
+        schedules.map((schedule) => [schedule.id, schedule])
+      );
+      return this.currentSchedules.get(scheduleId)?.enabled ?? false;
+    } catch (error) {
+      this.platform.log.debug(
+        `Unable to refresh Roborock schedule ${scheduleId}: ${error}`
+      );
+      return this.currentSchedules.get(scheduleId)?.enabled ?? false;
+    }
   }
 
   /**

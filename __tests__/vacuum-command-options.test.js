@@ -57,4 +57,46 @@ describe("Roborock vacuum command options", () => {
       "roborock.vacuum.ss07"
     );
   });
+
+  test("reads and updates server timers using the Roborock schedule contract", async () => {
+    const timers = [["timer-1", "on", 123]];
+    const sendRequest = jest
+      .fn()
+      .mockResolvedValueOnce(timers)
+      .mockResolvedValueOnce(["ok"]);
+    const adapter = createAdapter(sendRequest);
+    const robot = new vacuum(adapter, "roborock.vacuum.ss07");
+
+    await expect(robot.getServerTimers("device-1")).resolves.toEqual(timers);
+    await robot.updateServerTimer("device-1", "timer-1", false);
+
+    expect(sendRequest).toHaveBeenNthCalledWith(
+      1,
+      "device-1",
+      "get_server_timer",
+      []
+    );
+    expect(sendRequest).toHaveBeenNthCalledWith(
+      2,
+      "device-1",
+      "upd_server_timer",
+      ["timer-1", "off"]
+    );
+  });
+
+  test("surfaces schedule update failures to HomeKit callers", async () => {
+    const error = new Error("Timer update failed");
+    const adapter = createAdapter(jest.fn().mockRejectedValue(error));
+    const robot = new vacuum(adapter, "roborock.vacuum.ss07");
+
+    await expect(
+      robot.updateServerTimer("device-1", "timer-1", true)
+    ).rejects.toThrow("Timer update failed");
+    expect(adapter.catchError).toHaveBeenCalledWith(
+      error,
+      "upd_server_timer",
+      "device-1",
+      "roborock.vacuum.ss07"
+    );
+  });
 });

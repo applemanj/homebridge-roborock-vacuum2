@@ -252,6 +252,32 @@ class vacuum {
     }
   }
 
+  async getServerTimers(duid) {
+    try {
+      return await this.adapter.messageQueueHandler.sendRequest(
+        duid,
+        "get_server_timer",
+        []
+      );
+    } catch (error) {
+      this.adapter.catchError(error, "get_server_timer", duid, this.robotModel);
+      throw error;
+    }
+  }
+
+  async updateServerTimer(duid, timerId, enabled) {
+    try {
+      return await this.adapter.messageQueueHandler.sendRequest(
+        duid,
+        "upd_server_timer",
+        [timerId, enabled ? "on" : "off"]
+      );
+    } catch (error) {
+      this.adapter.catchError(error, "upd_server_timer", duid, this.robotModel);
+      throw error;
+    }
+  }
+
   async getParameter(duid, parameter, attribute, options = {}) {
     let mode;
 

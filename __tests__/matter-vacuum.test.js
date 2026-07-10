@@ -573,6 +573,87 @@ describe("Matter service area selection", () => {
     expect(result.status).toBe(0); // SUCCESS
   });
 
+  test("reports travel and cleaning status for a selected room", async () => {
+    const platform = createPlatform({
+      rooms: [{ segmentId: 16, mapId: 0, name: "Kitchen" }],
+      maps: [{ mapId: 0, name: "Lower Level" }],
+    });
+    const { accessory, vacuum } = createAccessory(platform, true);
+
+    await accessory.handlers.serviceArea.selectAreas({ newAreas: [16] });
+
+    expect(await accessory.getState("serviceArea", "selectedAreas")).toEqual([
+      16,
+    ]);
+    expect(await accessory.getState("serviceArea", "currentArea")).toBeNull();
+
+    await vacuum.notifyDeviceUpdater("LocalMessage", [
+      { state: 18, clean_area: 0, clean_time: 0 },
+    ]);
+
+    expect(await accessory.getState("serviceArea", "currentArea")).toBeNull();
+
+    await vacuum.notifyDeviceUpdater("LocalMessage", [
+      { state: 18, clean_area: 2_280_000, clean_time: 146 },
+    ]);
+
+    expect(await accessory.getState("serviceArea", "currentArea")).toBe(16);
+  });
+
+  test("does not guess the current room when multiple areas are selected", async () => {
+    const platform = createPlatform({
+      rooms: [
+        { segmentId: 16, mapId: 0, name: "Kitchen" },
+        { segmentId: 18, mapId: 0, name: "Office" },
+      ],
+      maps: [{ mapId: 0, name: "Lower Level" }],
+    });
+    const { accessory, vacuum } = createAccessory(platform, true);
+
+    await accessory.handlers.serviceArea.selectAreas({ newAreas: [16, 18] });
+    await vacuum.notifyDeviceUpdater("LocalMessage", [
+      { state: 18, clean_area: 2_280_000, clean_time: 146 },
+    ]);
+
+    expect(await accessory.getState("serviceArea", "currentArea")).toBeNull();
+  });
+
+  test("does not report a selected room during other cleaning modes", async () => {
+    const platform = createPlatform({
+      rooms: [{ segmentId: 16, mapId: 0, name: "Kitchen" }],
+      maps: [{ mapId: 0, name: "Lower Level" }],
+    });
+    const { accessory, vacuum } = createAccessory(platform, true);
+
+    await accessory.handlers.serviceArea.selectAreas({ newAreas: [16] });
+    await vacuum.notifyDeviceUpdater("LocalMessage", [
+      { state: 18, clean_area: 2_280_000, clean_time: 146 },
+    ]);
+    expect(await accessory.getState("serviceArea", "currentArea")).toBe(16);
+
+    for (const state of [5, 11, 17]) {
+      await vacuum.notifyDeviceUpdater("LocalMessage", [{ state }]);
+      expect(await accessory.getState("serviceArea", "currentArea")).toBeNull();
+    }
+  });
+
+  test("does not reuse stale counters when a new room clean starts", async () => {
+    const platform = createPlatform({
+      rooms: [{ segmentId: 16, mapId: 0, name: "Kitchen" }],
+      maps: [{ mapId: 0, name: "Lower Level" }],
+    });
+    const { accessory, vacuum } = createAccessory(platform, true);
+
+    await accessory.handlers.serviceArea.selectAreas({ newAreas: [16] });
+    await vacuum.notifyDeviceUpdater("LocalMessage", [
+      { state: 18, clean_area: 2_280_000, clean_time: 146 },
+    ]);
+    await vacuum.notifyDeviceUpdater("LocalMessage", [{ state: 8 }]);
+    await vacuum.notifyDeviceUpdater("LocalMessage", [{ state: 18 }]);
+
+    expect(await accessory.getState("serviceArea", "currentArea")).toBeNull();
+  });
+
   test("uses cloud-preferred map switching before selected-area cleaning", async () => {
     const loadMultiMap = jest.fn().mockResolvedValue(undefined);
     const appSegmentCleanByIds = jest.fn().mockResolvedValue(undefined);
