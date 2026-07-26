@@ -6,6 +6,7 @@ const elements = {
   skipDevices: document.getElementById("skip-devices"),
   debugMode: document.getElementById("debug-mode"),
   enableMatter: document.getElementById("enable-matter"),
+  onlyExposeMatter: document.getElementById("only-expose-matter"),
   advancedSettings: document.getElementById("advanced-settings"),
   preferCloudForMatterCommands: document.getElementById(
     "prefer-cloud-for-matter-commands"
@@ -117,6 +118,7 @@ async function loadConfig() {
     }
     elements.debugMode.checked = Boolean(config.debugMode);
     elements.enableMatter.checked = Boolean(config.enableMatter);
+    elements.onlyExposeMatter.checked = Boolean(config.onlyExposeMatter);
     elements.preferCloudForMatterCommands.checked = Boolean(
       config.preferCloudForMatterCommands
     );
@@ -174,6 +176,10 @@ function getCloudOnlyMode() {
   return Boolean(elements.cloudOnlyMode.checked);
 }
 
+function getOnlyExposeMatter() {
+  return Boolean(elements.onlyExposeMatter.checked);
+}
+
 function getTransientWarningThrottleHours() {
   const value = elements.transientWarningThrottleHours.value.trim();
   if (value === "") {
@@ -200,6 +206,7 @@ function getFormValues() {
     skipDevices: getSkipDevices(),
     debugMode: getDebugMode(),
     enableMatter: getEnableMatter(),
+    onlyExposeMatter: getOnlyExposeMatter(),
     preferCloudForMatterCommands: getPreferCloudForMatterCommands(),
     cloudOnlyMode: getCloudOnlyMode(),
     transientWarningThrottleHours: getTransientWarningThrottleHours(),

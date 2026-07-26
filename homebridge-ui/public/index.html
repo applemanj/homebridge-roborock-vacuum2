@@ -90,10 +90,21 @@
           >Requires Homebridge 2 with Matter enabled on the Roborock child
           bridge/daughter bridge. Adds a native Matter robot vacuum with Service
           Area room selection while keeping the current HomeKit fan and helper
-          switches.</small
+          switches.</small>
         >
       </span>
     </label>
+
+    <label class="checkbox">
+      <input id="only-expose-matter" type="checkbox" />
+      <span>
+        Only expose Matter vacuum (hide legacy fan &amp; switches)
+        <small
+          >When enabled and Matter is available for this bridge, the plugin will not register the legacy HomeKit fan and helper switch accessories for each vacuum. Use this if you prefer the Matter-native accessory only.</small>
+        >
+      </span>
+    </label>
+
     <p class="help matter-setup-note">
       After saving and restarting the Roborock bridge, use the Matter Pairing
       section below. Apple Home may need both the bridge QR code and the
