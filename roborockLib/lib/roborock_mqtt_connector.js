@@ -450,10 +450,13 @@ if (this.adapter.pendingRequests.has(dps.id)) {
   }
 
   sendMessage(duid, roborockMessage) {
-    client.publish(`rr/m/i/${rriot.u}/${mqttUser}/${duid}`, roborockMessage, {
-      qos: 1,
-    });
-  }
+    client.publish(
+      `rr/m/i/${rriot.u}/${mqttUser}/${duid}`,
+      roborockMessage,
+      {
+        qos: 0,
+      }
+    );
 
   isConnected() {
     return this.connected;
