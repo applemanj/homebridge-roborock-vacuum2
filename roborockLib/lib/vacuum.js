@@ -252,21 +252,32 @@ class vacuum {
     }
   }
 
-  async getServerTimers(duid) {
-    try {
-      return await this.adapter.messageQueueHandler.sendRequest(
-        duid,
-        "get_server_timer",
-        [],
-        false,
-        false,
-        { preferCloud: true }
-      );
-    } catch (error) {
-      this.adapter.catchError(error, "get_server_timer", duid, this.robotModel);
-      throw error;
-    }
+async getServerTimers(duid) {
+  try {
+    const result = await this.adapter.messageQueueHandler.sendRequest(
+      duid,
+      "get_server_timer",
+      [],
+      false,
+      false,
+      { preferCloud: true }
+    );
+
+    this.adapter.log.info(
+      `RAW get_server_timer response for ${duid}: ${JSON.stringify(result)}`
+    );
+
+    return result;
+  } catch (error) {
+    this.adapter.catchError(
+      error,
+      "get_server_timer",
+      duid,
+      this.robotModel
+    );
+    throw error;
   }
+}
 
 async updateServerTimer(duid, timer, enabled) {
   try {
