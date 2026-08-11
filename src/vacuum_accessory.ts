@@ -594,12 +594,22 @@ async setScheduleSwitch(
       `After upd_timer, Roborock schedule ${scheduleId} reports enabled=${actual}`
     );
 
-    if (actual !== enabled) {
-      throw new Error(
-        `Roborock schedule ${scheduleId} still reports ` +
-        `${actual ? "enabled" : "disabled"} after upd_timer.`
-      );
-    }
+if (actual !== enabled) {
+  this.platform.log.warn(
+    `Roborock schedule ${scheduleId} did not change. ` +
+    `Requested ${enabled ? "enabled" : "disabled"}, ` +
+    `actual=${actual}.`
+  );
+
+  this.scheduleServices
+    .get(scheduleId)
+    ?.updateCharacteristic(
+      this.platform.Characteristic.On,
+      previous
+    );
+
+  return;
+}
 
     this.scheduleServices
       .get(scheduleId)
