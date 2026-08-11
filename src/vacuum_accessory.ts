@@ -633,7 +633,6 @@ if (actual !== enabled) {
       `Unable to ${enabled ? "enable" : "disable"} Roborock schedule ${scheduleId}: ${error}`
     );
 
-    throw error;
   }
 }
 
