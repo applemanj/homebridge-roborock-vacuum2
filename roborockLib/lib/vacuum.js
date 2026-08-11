@@ -283,7 +283,7 @@ async updateServerTimer(duid, timer, enabled) {
   try {
     const updatedTimer = Array.isArray(timer)
       ? [...timer]
-      : [timer, enabled ? "on" : "off", 1];
+      : [timerId, enabled ? "on" : "off"];
 
     // Update the enabled/disabled field.
     if (updatedTimer.length < 2) {
@@ -295,9 +295,6 @@ async updateServerTimer(duid, timer, enabled) {
     // Your S7/A15 server-timer records contain a third field of 1.
     // Preserve it when present, or add it when we're constructing
     // the minimal representation.
-    if (updatedTimer.length < 3) {
-      updatedTimer.push(1);
-    }
 
     this.adapter.log.info(
       `Sending upd_server_timer for ${duid}: ${JSON.stringify(updatedTimer)}`
