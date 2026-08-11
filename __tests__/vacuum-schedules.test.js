@@ -8,8 +8,8 @@ describe("Roborock schedule parsing", () => {
         ["weekend", "off", 456],
       ])
     ).toEqual([
-      { id: "weekday", enabled: true },
-      { id: "weekend", enabled: false },
+      { id: "weekday", enabled: true, timer: ["weekday", "on", 123] },
+      { id: "weekend", enabled: false, timer: ["weekend", "off", 456] },
     ]);
   });
 
@@ -22,7 +22,7 @@ describe("Roborock schedule parsing", () => {
         [null, "on", 111],
         "invalid",
       ])
-    ).toEqual([{ id: "valid", enabled: true }]);
+    ).toEqual([{ id: "valid", enabled: true, timer: ["valid", "on", 123] }]);
     expect(parseServerTimers(null)).toEqual([]);
   });
 });
