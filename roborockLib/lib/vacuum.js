@@ -257,7 +257,10 @@ class vacuum {
       return await this.adapter.messageQueueHandler.sendRequest(
         duid,
         "get_server_timer",
-        []
+        [],
+        false,
+        false,
+        { preferCloud: true }
       );
     } catch (error) {
       this.adapter.catchError(error, "get_server_timer", duid, this.robotModel);
@@ -265,15 +268,36 @@ class vacuum {
     }
   }
 
-  async updateServerTimer(duid, timerId, enabled) {
+  async updateServerTimer(duid, timer, enabled) {
     try {
+      const timerId = Array.isArray(timer) ? timer[0] : timer;
       return await this.adapter.messageQueueHandler.sendRequest(
         duid,
         "upd_server_timer",
-        [timerId, enabled ? "on" : "off"]
+        [timerId, enabled ? "on" : "off"],
+        false,
+        false,
+        { preferCloud: true }
       );
     } catch (error) {
       this.adapter.catchError(error, "upd_server_timer", duid, this.robotModel);
+      throw error;
+    }
+  }
+
+  async updateTimer(duid, timer, enabled) {
+    try {
+      const timerId = Array.isArray(timer) ? timer[0] : timer;
+      return await this.adapter.messageQueueHandler.sendRequest(
+        duid,
+        "upd_timer",
+        [timerId, enabled ? "on" : "off"],
+        false,
+        false,
+        { preferCloud: true }
+      );
+    } catch (error) {
+      this.adapter.catchError(error, "upd_timer", duid, this.robotModel);
       throw error;
     }
   }
