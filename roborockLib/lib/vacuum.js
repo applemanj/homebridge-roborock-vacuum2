@@ -285,6 +285,23 @@ class vacuum {
     }
   }
 
+  async updateTimer(duid, timer, enabled) {
+    try {
+      const timerId = Array.isArray(timer) ? timer[0] : timer;
+      return await this.adapter.messageQueueHandler.sendRequest(
+        duid,
+        "upd_timer",
+        [timerId, enabled ? "on" : "off"],
+        false,
+        false,
+        { preferCloud: true }
+      );
+    } catch (error) {
+      this.adapter.catchError(error, "upd_timer", duid, this.robotModel);
+      throw error;
+    }
+  }
+
   async getParameter(duid, parameter, attribute, options = {}) {
     let mode;
 

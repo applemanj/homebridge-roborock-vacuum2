@@ -7,6 +7,7 @@ const { stateCodes } = require("../roborockLib/lib/deviceFeatures");
 const MAX_HOMEKIT_NAME_LENGTH = 64;
 const FALLBACK_SCENE_NAME = "Roborock Scene";
 const SCHEDULE_SERVICE_PREFIX = "roborock-schedule-";
+const SCHEDULE_UPDATE_VERIFY_DELAY_MS = 1500;
 const CLEANING_STATES = new Set([4, 5, 6, 7, 11, 15, 16, 17, 18, 23, 26]);
 
 export interface RoborockSchedule {
@@ -561,14 +562,22 @@ export default class RoborockVacuumAccessory {
         this.getUpdatedScheduleTimer(scheduleId, enabled),
         enabled
       );
-      const currentSchedule = this.currentSchedules.get(scheduleId);
-      if (currentSchedule) {
-        this.currentSchedules.set(scheduleId, {
-          ...currentSchedule,
-          enabled,
-          timer: this.getUpdatedScheduleTimer(scheduleId, enabled),
-        });
+      if (!(await this.verifyScheduleSwitch(scheduleId, enabled))) {
+        this.platform.log.warn(
+          `Roborock schedule ${scheduleId} did not reflect the server timer update for ${this.getVacuumName()}; retrying with the standard timer update command.`
+        );
+        await this.platform.roborockAPI.updateTimer(
+          this.accessory.context,
+          scheduleId,
+          enabled
+        );
+        if (!(await this.verifyScheduleSwitch(scheduleId, enabled))) {
+          throw new Error(
+            `Roborock schedule ${scheduleId} still reports ${enabled ? "disabled" : "enabled"} after update.`
+          );
+        }
       }
+      this.currentSchedules.set(scheduleId, { id: scheduleId, enabled });
       this.platform.log.info(
         `${enabled ? "Enabled" : "Disabled"} Roborock schedule ${scheduleId} for ${this.getVacuumName()}.`
       );
@@ -600,22 +609,20 @@ export default class RoborockVacuumAccessory {
     }
   }
 
-  private getUpdatedScheduleTimer(
+  private async verifyScheduleSwitch(
     scheduleId: string,
     enabled: boolean
-  ): unknown[] {
-    const currentSchedule = this.currentSchedules.get(scheduleId);
-    const timer = currentSchedule?.timer;
-
-    if (!timer) {
-      throw new Error(
-        `Roborock schedule ${scheduleId} is no longer available.`
-      );
-    }
-
-    const updatedTimer = [...timer];
-    updatedTimer[1] = enabled ? "on" : "off";
-    return updatedTimer;
+  ): Promise<boolean> {
+    await new Promise((resolve) =>
+      setTimeout(resolve, SCHEDULE_UPDATE_VERIFY_DELAY_MS)
+    );
+    const schedules = parseServerTimers(
+      await this.platform.roborockAPI.getServerTimers(this.accessory.context)
+    );
+    this.currentSchedules = new Map(
+      schedules.map((schedule) => [schedule.id, schedule])
+    );
+    return this.currentSchedules.get(scheduleId)?.enabled === enabled;
   }
 
   /**
