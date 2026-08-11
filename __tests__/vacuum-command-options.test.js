@@ -74,13 +74,36 @@ describe("Roborock vacuum command options", () => {
       1,
       "device-1",
       "get_server_timer",
-      []
+      [],
+      false,
+      false,
+      { preferCloud: true }
     );
     expect(sendRequest).toHaveBeenNthCalledWith(
       2,
       "device-1",
       "upd_server_timer",
-      ["timer-1", "off"]
+      ["timer-1", "off"],
+      false,
+      false,
+      { preferCloud: true }
+    );
+  });
+
+  test("normalizes legacy full server timer payloads to timer id updates", async () => {
+    const sendRequest = jest.fn().mockResolvedValue(["ok"]);
+    const adapter = createAdapter(sendRequest);
+    const robot = new vacuum(adapter, "roborock.vacuum.ss07");
+
+    await robot.updateServerTimer("device-1", ["timer-1", "on", 123], false);
+
+    expect(sendRequest).toHaveBeenCalledWith(
+      "device-1",
+      "upd_server_timer",
+      ["timer-1", "off"],
+      false,
+      false,
+      { preferCloud: true }
     );
   });
 
