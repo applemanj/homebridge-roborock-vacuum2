@@ -68,7 +68,7 @@ describe("Roborock vacuum command options", () => {
     const robot = new vacuum(adapter, "roborock.vacuum.ss07");
 
     await expect(robot.getServerTimers("device-1")).resolves.toEqual(timers);
-    await robot.updateServerTimer("device-1", "timer-1", false);
+    await robot.updateServerTimer("device-1", ["timer-1", "on", 123], false);
 
     expect(sendRequest).toHaveBeenNthCalledWith(
       1,
