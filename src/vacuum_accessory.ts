@@ -12,6 +12,7 @@ const CLEANING_STATES = new Set([4, 5, 6, 7, 11, 15, 16, 17, 18, 23, 26]);
 export interface RoborockSchedule {
   id: string;
   enabled: boolean;
+  timer: unknown[];
 }
 
 export function parseServerTimers(value: unknown): RoborockSchedule[] {
@@ -35,7 +36,11 @@ export function parseServerTimers(value: unknown): RoborockSchedule[] {
 
     const id = String(rawId);
     if (id && !schedules.has(id)) {
-      schedules.set(id, { id, enabled: rawStatus === "on" });
+      schedules.set(id, {
+        id,
+        enabled: rawStatus === "on",
+        timer: [...timer],
+      });
     }
   }
 
@@ -553,10 +558,17 @@ export default class RoborockVacuumAccessory {
     try {
       await this.platform.roborockAPI.updateServerTimer(
         this.accessory.context,
-        scheduleId,
+        this.getUpdatedScheduleTimer(scheduleId, enabled),
         enabled
       );
-      this.currentSchedules.set(scheduleId, { id: scheduleId, enabled });
+      const currentSchedule = this.currentSchedules.get(scheduleId);
+      if (currentSchedule) {
+        this.currentSchedules.set(scheduleId, {
+          ...currentSchedule,
+          enabled,
+          timer: this.getUpdatedScheduleTimer(scheduleId, enabled),
+        });
+      }
       this.platform.log.info(
         `${enabled ? "Enabled" : "Disabled"} Roborock schedule ${scheduleId} for ${this.getVacuumName()}.`
       );
@@ -586,6 +598,24 @@ export default class RoborockVacuumAccessory {
       );
       return this.currentSchedules.get(scheduleId)?.enabled ?? false;
     }
+  }
+
+  private getUpdatedScheduleTimer(
+    scheduleId: string,
+    enabled: boolean
+  ): unknown[] {
+    const currentSchedule = this.currentSchedules.get(scheduleId);
+    const timer = currentSchedule?.timer;
+
+    if (!timer) {
+      throw new Error(
+        `Roborock schedule ${scheduleId} is no longer available.`
+      );
+    }
+
+    const updatedTimer = [...timer];
+    updatedTimer[1] = enabled ? "on" : "off";
+    return updatedTimer;
   }
 
   /**

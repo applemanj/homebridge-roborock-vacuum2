@@ -265,12 +265,14 @@ class vacuum {
     }
   }
 
-  async updateServerTimer(duid, timerId, enabled) {
+  async updateServerTimer(duid, timer, enabled) {
     try {
+      const updatedTimer = Array.isArray(timer) ? [...timer] : [timer];
+      updatedTimer[1] = enabled ? "on" : "off";
       return await this.adapter.messageQueueHandler.sendRequest(
         duid,
         "upd_server_timer",
-        [timerId, enabled ? "on" : "off"]
+        updatedTimer
       );
     } catch (error) {
       this.adapter.catchError(error, "upd_server_timer", duid, this.robotModel);
