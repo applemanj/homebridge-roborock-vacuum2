@@ -261,29 +261,38 @@ class messageQueueHandler {
             )
           );
         } else {
-          // setup Timeout
-          const requestTimeout = getRequestTimeout(
-            method,
-            options.requestTimeoutMs
-          );
-          const timeoutSeconds = Math.round(requestTimeout / 1000);
-          const timeout = this.adapter.setTimeout(() => {
-            this.adapter.pendingRequests.delete(messageID);
-            this.adapter.localConnector.clearChunkBuffer(duid);
-            if (useCloudConnection) {
-              reject(
-                new Error(
-                  `Cloud request with id ${messageID} with method ${method} timed out after ${timeoutSeconds} seconds. MQTT connection state: ${mqttConnectionState}`
-                )
-              );
-            } else {
-              reject(
-                new Error(
-                  `Local request with id ${messageID} with method ${method} timed out after ${timeoutSeconds} seconds Local connect state: ${localConnectionState}`
-                )
-              );
-            }
-          }, requestTimeout);
+// setup Timeout
+const requestTimeout = getRequestTimeout(
+  method,
+  options.requestTimeoutMs
+);
+const timeoutSeconds = Math.round(requestTimeout / 1000);
+
+const timeout = this.adapter.setTimeout(() => {
+  const pendingRequest = this.adapter.pendingRequests.get(messageID);
+
+  // The request may already have been completed by the MQTT response handler.
+  if (!pendingRequest) {
+    return;
+  }
+
+  this.adapter.pendingRequests.delete(messageID);
+  this.adapter.localConnector.clearChunkBuffer(duid);
+
+  if (useCloudConnection) {
+    pendingRequest.reject(
+      new Error(
+        `Cloud request with id ${messageID} with method ${method} timed out after ${timeoutSeconds} seconds. MQTT connection state: ${mqttConnectionState}`
+      )
+    );
+  } else {
+    pendingRequest.reject(
+      new Error(
+        `Local request with id ${messageID} with method ${method} timed out after ${timeoutSeconds} seconds Local connect state: ${localConnectionState}`
+      )
+    );
+  }
+}, requestTimeout);
 
           // Store request with resolve and reject functions
 this.adapter.pendingRequests.set(messageID, {
