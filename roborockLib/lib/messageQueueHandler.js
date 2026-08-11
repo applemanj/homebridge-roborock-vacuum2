@@ -286,11 +286,12 @@ class messageQueueHandler {
           }, requestTimeout);
 
           // Store request with resolve and reject functions
-          this.adapter.pendingRequests.set(messageID, {
-            resolve,
-            reject,
-            timeout,
-          });
+this.adapter.pendingRequests.set(messageID, {
+  resolve,
+  reject,
+  timeout,
+  waitForFollowup: secure || photo,
+});
 
           if (useCloudConnection) {
             if (!deviceOnline && allowOfflineCloudSend) {
