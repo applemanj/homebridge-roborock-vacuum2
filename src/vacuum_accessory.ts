@@ -561,49 +561,71 @@ export default class RoborockVacuumAccessory {
     return [scheduleId, enabled ? "on" : "off"];
   }
 
-  async setScheduleSwitch(
-    scheduleId: string,
-    value: CharacteristicValue
-  ): Promise<void> {
-    const enabled = Boolean(value);
-    const previous = this.currentSchedules.get(scheduleId)?.enabled ?? !enabled;
+async setScheduleSwitch(
+  scheduleId: string,
+  value: CharacteristicValue
+): Promise<void> {
+  const enabled = Boolean(value);
+  const previous =
+    this.currentSchedules.get(scheduleId)?.enabled ?? !enabled;
 
-    try {
-      await this.platform.roborockAPI.updateServerTimer(
-        this.accessory.context,
-        this.getUpdatedScheduleTimer(scheduleId, enabled),
+  try {
+    this.platform.log.info(
+      `Testing upd_timer for Roborock schedule ${scheduleId}: ${enabled ? "on" : "off"}`
+    );
+
+    await this.platform.roborockAPI.updateTimer(
+      this.accessory.context,
+      scheduleId,
+      enabled
+    );
+
+    const schedules = parseServerTimers(
+      await this.platform.roborockAPI.getServerTimers(this.accessory.context)
+    );
+
+    this.currentSchedules = new Map(
+      schedules.map((schedule) => [schedule.id, schedule])
+    );
+
+    const actual = this.currentSchedules.get(scheduleId)?.enabled;
+
+    this.platform.log.info(
+      `After upd_timer, Roborock schedule ${scheduleId} reports enabled=${actual}`
+    );
+
+    if (actual !== enabled) {
+      throw new Error(
+        `Roborock schedule ${scheduleId} still reports ` +
+        `${actual ? "enabled" : "disabled"} after upd_timer.`
+      );
+    }
+
+    this.scheduleServices
+      .get(scheduleId)
+      ?.updateCharacteristic(
+        this.platform.Characteristic.On,
         enabled
       );
-      if (!(await this.verifyScheduleSwitch(scheduleId, enabled))) {
-        this.platform.log.warn(
-          `Roborock schedule ${scheduleId} did not reflect the server timer update for ${this.getVacuumName()}; retrying with the standard timer update command.`
-        );
-        await this.platform.roborockAPI.updateTimer(
-          this.accessory.context,
-          scheduleId,
-          enabled
-        );
-        if (!(await this.verifyScheduleSwitch(scheduleId, enabled))) {
-          throw new Error(
-            `Roborock schedule ${scheduleId} still reports ${enabled ? "disabled" : "enabled"} after update.`
-          );
-        }
-      }
-      const existingTimer = this.currentSchedules.get(scheduleId)?.timer || [scheduleId, enabled ? "on" : "off"];
-      this.currentSchedules.set(scheduleId, { id: scheduleId, enabled, timer: existingTimer });
-      this.platform.log.info(
-        `${enabled ? "Enabled" : "Disabled"} Roborock schedule ${scheduleId} for ${this.getVacuumName()}.`
+
+    this.platform.log.info(
+      `${enabled ? "Enabled" : "Disabled"} Roborock schedule ${scheduleId}.`
+    );
+  } catch (error) {
+    this.scheduleServices
+      .get(scheduleId)
+      ?.updateCharacteristic(
+        this.platform.Characteristic.On,
+        previous
       );
-    } catch (error) {
-      this.scheduleServices
-        .get(scheduleId)
-        ?.updateCharacteristic(this.platform.Characteristic.On, previous);
-      this.platform.log.error(
-        `Unable to ${enabled ? "enable" : "disable"} Roborock schedule ${scheduleId}: ${error}`
-      );
-      throw error;
-    }
+
+    this.platform.log.error(
+      `Unable to ${enabled ? "enable" : "disable"} Roborock schedule ${scheduleId}: ${error}`
+    );
+
+    throw error;
   }
+}
 
   async getScheduleSwitch(scheduleId: string): Promise<CharacteristicValue> {
     try {
