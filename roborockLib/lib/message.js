@@ -62,15 +62,16 @@ class message {
       method: method,
       params: params,
     };
-    if (secure) {
-      if (!photo) {
-        inner.security = {
-          endpoint: endpoint,
-          nonce: this.adapter.nonce.toString("hex").toUpperCase(),
-        };
-      }
+    // Roborock's V1 cloud MQTT RPC protocol includes the security
+    // envelope on RPC requests. python-roborock does this for the
+    // MQTT RPC channel regardless of whether the individual command
+    // is classified as a "secure" command.
+    if (!photo && (secure || protocol === 101)) {
+      inner.security = {
+        endpoint: endpoint,
+        nonce: this.adapter.nonce.toString("hex").toLowerCase(),
+      };
     }
-
     let payload;
     if (version == "B01" || version == "\x81S\x19") {
       inner.msgId = String(messageID);
