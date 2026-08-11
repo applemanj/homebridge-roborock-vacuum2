@@ -549,6 +549,18 @@ export default class RoborockVacuumAccessory {
     return `${SCHEDULE_SERVICE_PREFIX}${encodeURIComponent(scheduleId)}`;
   }
 
+  private getUpdatedScheduleTimer(scheduleId: string, enabled: boolean): unknown[] {
+    const existing = this.currentSchedules.get(scheduleId);
+    if (existing && Array.isArray(existing.timer)) {
+      const updatedTimer = [...existing.timer];
+      if (updatedTimer.length > 1) {
+        updatedTimer[1] = enabled ? "on" : "off";
+      }
+      return updatedTimer;
+    }
+    return [scheduleId, enabled ? "on" : "off"];
+  }
+
   async setScheduleSwitch(
     scheduleId: string,
     value: CharacteristicValue
@@ -577,7 +589,8 @@ export default class RoborockVacuumAccessory {
           );
         }
       }
-      this.currentSchedules.set(scheduleId, { id: scheduleId, enabled });
+      const existingTimer = this.currentSchedules.get(scheduleId)?.timer || [scheduleId, enabled ? "on" : "off"];
+      this.currentSchedules.set(scheduleId, { id: scheduleId, enabled, timer: existingTimer });
       this.platform.log.info(
         `${enabled ? "Enabled" : "Disabled"} Roborock schedule ${scheduleId} for ${this.getVacuumName()}.`
       );
