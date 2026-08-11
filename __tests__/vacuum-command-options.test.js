@@ -74,13 +74,19 @@ describe("Roborock vacuum command options", () => {
       1,
       "device-1",
       "get_server_timer",
-      []
+      [],
+      false,
+      false,
+      { preferCloud: true }
     );
     expect(sendRequest).toHaveBeenNthCalledWith(
       2,
       "device-1",
       "upd_server_timer",
-      ["timer-1", "off"]
+      ["timer-1", "off"],
+      false,
+      false,
+      { preferCloud: true }
     );
   });
 

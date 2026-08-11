@@ -257,7 +257,10 @@ class vacuum {
       return await this.adapter.messageQueueHandler.sendRequest(
         duid,
         "get_server_timer",
-        []
+        [],
+        false,
+        false,
+        { preferCloud: true }
       );
     } catch (error) {
       this.adapter.catchError(error, "get_server_timer", duid, this.robotModel);
@@ -270,7 +273,10 @@ class vacuum {
       return await this.adapter.messageQueueHandler.sendRequest(
         duid,
         "upd_server_timer",
-        [timerId, enabled ? "on" : "off"]
+        [timerId, enabled ? "on" : "off"],
+        false,
+        false,
+        { preferCloud: true }
       );
     } catch (error) {
       this.adapter.catchError(error, "upd_server_timer", duid, this.robotModel);
