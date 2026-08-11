@@ -76,6 +76,7 @@ export default class RoborockVacuumAccessory {
   private services: Service[] = [];
   private sceneServices: Map<string, Service> = new Map();
   private scheduleServices: Map<string, Service> = new Map();
+  private scheduleWriteInProgress: Set<string> = new Set();
   private controlSwitches: Map<string, Service> = new Map();
   private currentScenes: any[] = [];
   private currentSchedules: Map<string, RoborockSchedule> = new Map();
@@ -569,6 +570,25 @@ export default class RoborockVacuumAccessory {
     const previous =
       this.currentSchedules.get(scheduleId)?.enabled ?? !enabled;
 
+    // HomeKit may retry a write while the characteristic is being settled.
+    // Do not allow overlapping writes for the same Roborock schedule.
+    if (this.scheduleWriteInProgress.has(scheduleId)) {
+      this.platform.log.debug(
+        `Ignoring overlapping HomeKit write for Roborock schedule ${scheduleId}.`
+      );
+
+      this.scheduleServices
+        .get(scheduleId)
+        ?.updateCharacteristic(
+          this.platform.Characteristic.On,
+          previous
+        );
+
+      return;
+    }
+
+    this.scheduleWriteInProgress.add(scheduleId);
+
     try {
       this.platform.log.info(
         `Updating Roborock schedule ${scheduleId}: ${
@@ -576,17 +596,12 @@ export default class RoborockVacuumAccessory {
         }`
       );
 
-      // Send the server-timer command.
-      // updateServerTimer() sends the timer ID, desired state,
-      // and the third field used by the S7 server-timer records.
       await this.platform.roborockAPI.updateServerTimer(
         this.accessory.context,
         this.getUpdatedScheduleTimer(scheduleId, enabled),
         enabled
       );
 
-      // Read the server timer back and verify that Roborock actually
-      // changed the schedule.
       const schedules = parseServerTimers(
         await this.platform.roborockAPI.getServerTimers(
           this.accessory.context
@@ -604,8 +619,6 @@ export default class RoborockVacuumAccessory {
       );
 
       if (actual !== enabled) {
-        // Do not throw here. A rejected HomeKit write can cause
-        // HomeKit to retry the write repeatedly.
         this.platform.log.warn(
           `Roborock schedule ${scheduleId} did not change. ` +
             `Requested ${enabled ? "enabled" : "disabled"}, actual=${actual}.`
@@ -621,8 +634,6 @@ export default class RoborockVacuumAccessory {
         return;
       }
 
-      // Keep our local schedule cache synchronized with the actual
-      // server state.
       const existingTimer =
         this.currentSchedules.get(scheduleId)?.timer ?? [
           scheduleId,
@@ -647,7 +658,6 @@ export default class RoborockVacuumAccessory {
         `${enabled ? "Enabled" : "Disabled"} Roborock schedule ${scheduleId}.`
       );
     } catch (error) {
-      // Restore the previous HomeKit state.
       this.scheduleServices
         .get(scheduleId)
         ?.updateCharacteristic(
@@ -655,16 +665,15 @@ export default class RoborockVacuumAccessory {
           previous
         );
 
-      // Do not re-throw. We don't want HomeKit to continually retry
-      // a failed Roborock operation.
       this.platform.log.error(
         `Unable to ${enabled ? "enable" : "disable"} Roborock schedule ${scheduleId}: ${error}`
       );
 
       return;
+    } finally {
+      this.scheduleWriteInProgress.delete(scheduleId);
     }
   }
-
 
   async getScheduleSwitch(scheduleId: string): Promise<CharacteristicValue> {
     try {
