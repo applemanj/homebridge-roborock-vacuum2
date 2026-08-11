@@ -3192,12 +3192,12 @@ class Roborock {
     return await this.vacuums[duid].getServerTimers(duid);
   }
 
-  async updateServerTimer(duid, timerId, enabled) {
+  async updateServerTimer(duid, timer, enabled) {
     if (!this.vacuums[duid]) {
       throw new Error(`Vacuum ${duid} is not initialized.`);
     }
 
-    return await this.vacuums[duid].updateServerTimer(duid, timerId, enabled);
+    return await this.vacuums[duid].updateServerTimer(duid, timer, enabled);
   }
 
   async getStatus(duid, options = {}) {
