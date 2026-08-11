@@ -90,6 +90,23 @@ describe("Roborock vacuum command options", () => {
     );
   });
 
+  test("normalizes legacy full server timer payloads to timer id updates", async () => {
+    const sendRequest = jest.fn().mockResolvedValue(["ok"]);
+    const adapter = createAdapter(sendRequest);
+    const robot = new vacuum(adapter, "roborock.vacuum.ss07");
+
+    await robot.updateServerTimer("device-1", ["timer-1", "on", 123], false);
+
+    expect(sendRequest).toHaveBeenCalledWith(
+      "device-1",
+      "upd_server_timer",
+      ["timer-1", "off"],
+      false,
+      false,
+      { preferCloud: true }
+    );
+  });
+
   test("surfaces schedule update failures to HomeKit callers", async () => {
     const error = new Error("Timer update failed");
     const adapter = createAdapter(jest.fn().mockRejectedValue(error));

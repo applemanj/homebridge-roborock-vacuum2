@@ -270,8 +270,7 @@ class vacuum {
 
   async updateServerTimer(duid, timer, enabled) {
     try {
-      const updatedTimer = Array.isArray(timer) ? [...timer] : [timer];
-      updatedTimer[1] = enabled ? "on" : "off";
+      const timerId = Array.isArray(timer) ? timer[0] : timer;
       return await this.adapter.messageQueueHandler.sendRequest(
         duid,
         "upd_server_timer",
