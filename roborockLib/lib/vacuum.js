@@ -268,22 +268,40 @@ class vacuum {
     }
   }
 
-  async updateServerTimer(duid, timer, enabled) {
-    try {
-      const timerId = Array.isArray(timer) ? timer[0] : timer;
-      return await this.adapter.messageQueueHandler.sendRequest(
-        duid,
-        "upd_server_timer",
-        [timerId, enabled ? "on" : "off"],
-        false,
-        false,
-        { preferCloud: true }
-      );
-    } catch (error) {
-      this.adapter.catchError(error, "upd_server_timer", duid, this.robotModel);
-      throw error;
+async updateServerTimer(duid, timer, enabled) {
+  try {
+    const updatedTimer = Array.isArray(timer)
+      ? [...timer]
+      : [timer, enabled ? "on" : "off"];
+
+    if (updatedTimer.length < 2) {
+      updatedTimer.push(enabled ? "on" : "off");
+    } else {
+      updatedTimer[1] = enabled ? "on" : "off";
     }
+
+    this.adapter.log.debug(
+      `Updating Roborock server timer ${updatedTimer[0]} with full timer payload: ${JSON.stringify(updatedTimer)}`
+    );
+
+    return await this.adapter.messageQueueHandler.sendRequest(
+      duid,
+      "upd_server_timer",
+      updatedTimer,
+      false,
+      false,
+      { preferCloud: true }
+    );
+  } catch (error) {
+    this.adapter.catchError(
+      error,
+      "upd_server_timer",
+      duid,
+      this.robotModel
+    );
+    throw error;
   }
+}
 
   async updateTimer(duid, timer, enabled) {
     try {
