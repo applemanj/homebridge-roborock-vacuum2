@@ -482,7 +482,7 @@ export default class RoborockVacuumAccessory {
 
     schedules.forEach((schedule, index) => {
       const serviceSubtype = this.getScheduleServiceSubtype(schedule.id);
-      const displayName = `Roborock Schedule ${index + 1}`;
+      const displayName = `Roborock Schedule ${index + 1} (${schedule.id})`;
       let switchService = this.scheduleServices.get(schedule.id);
 
       if (!switchService) {
