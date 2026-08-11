@@ -283,7 +283,7 @@ async updateServerTimer(duid, timer, enabled) {
   try {
     const updatedTimer = Array.isArray(timer)
       ? [...timer]
-      : [timer, enabled ? "on" : "off"];
+      : [timer, enabled ? "on" : "off", 1];
 
     if (updatedTimer.length < 2) {
       updatedTimer.push(enabled ? "on" : "off");
@@ -291,8 +291,12 @@ async updateServerTimer(duid, timer, enabled) {
       updatedTimer[1] = enabled ? "on" : "off";
     }
 
-    this.adapter.log.debug(
-      `Updating Roborock server timer ${updatedTimer[0]} with full timer payload: ${JSON.stringify(updatedTimer)}`
+    if (updatedTimer.length < 3) {
+      updatedTimer.push(1);
+    }
+
+    this.adapter.log.info(
+      `Sending upd_server_timer for ${duid}: ${JSON.stringify(updatedTimer)}`
     );
 
     return await this.adapter.messageQueueHandler.sendRequest(
