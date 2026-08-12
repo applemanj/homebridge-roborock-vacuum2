@@ -534,7 +534,7 @@ export default class RoborockPlatform implements DynamicPlatformPlugin {
           "Turn on debug mode for more information."
       );
       this.log.debug(error);
-    }
+    } 
   }
 
   createRoborockAccessory(accessory: PlatformAccessory) {

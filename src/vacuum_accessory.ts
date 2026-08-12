@@ -12,6 +12,7 @@ const CLEANING_STATES = new Set([4, 5, 6, 7, 11, 15, 16, 17, 18, 23, 26]);
 export interface RoborockSchedule {
   id: string;
   enabled: boolean;
+  timer: unknown[];
 }
 
 export function parseServerTimers(value: unknown): RoborockSchedule[] {
@@ -35,7 +36,11 @@ export function parseServerTimers(value: unknown): RoborockSchedule[] {
 
     const id = String(rawId);
     if (id && !schedules.has(id)) {
-      schedules.set(id, { id, enabled: rawStatus === "on" });
+      schedules.set(id, {
+        id,
+        enabled: rawStatus === "on",
+        timer: [...timer],
+      });
     }
   }
 
@@ -70,6 +75,11 @@ export default class RoborockVacuumAccessory {
   private services: Service[] = [];
   private sceneServices: Map<string, Service> = new Map();
   private scheduleServices: Map<string, Service> = new Map();
+  private scheduleWriteInProgress: Set<string> = new Set();
+  private scheduleWriteSuppression: Map<
+    string,
+    { enabled: boolean; timestamp: number }
+  > = new Map();
   private controlSwitches: Map<string, Service> = new Map();
   private currentScenes: any[] = [];
   private currentSchedules: Map<string, RoborockSchedule> = new Map();
@@ -476,7 +486,7 @@ export default class RoborockVacuumAccessory {
 
     schedules.forEach((schedule, index) => {
       const serviceSubtype = this.getScheduleServiceSubtype(schedule.id);
-      const displayName = `Roborock Schedule ${index + 1}`;
+      const displayName = `Roborock Schedule ${index + 1} (${schedule.id})`;
       let switchService = this.scheduleServices.get(schedule.id);
 
       if (!switchService) {
@@ -543,49 +553,129 @@ export default class RoborockVacuumAccessory {
     return `${SCHEDULE_SERVICE_PREFIX}${encodeURIComponent(scheduleId)}`;
   }
 
+  private getUpdatedScheduleTimer(scheduleId: string, enabled: boolean): unknown[] {
+    const existing = this.currentSchedules.get(scheduleId);
+    if (existing && Array.isArray(existing.timer)) {
+      const updatedTimer = [...existing.timer];
+      if (updatedTimer.length > 1) {
+        updatedTimer[1] = enabled ? "on" : "off";
+      }
+      return updatedTimer;
+    }
+    return [scheduleId, enabled ? "on" : "off"];
+  }
+
   async setScheduleSwitch(
     scheduleId: string,
     value: CharacteristicValue
   ): Promise<void> {
-    const enabled = Boolean(value);
-    const previous = this.currentSchedules.get(scheduleId)?.enabled ?? !enabled;
+const enabled = Boolean(value);
+
+const now = Date.now();
+const previousWrite = this.scheduleWriteSuppression.get(scheduleId);
+
+// HomeKit/Matter can echo the same successful write back to the setter.
+// Ignore an identical write for a short period, but allow a genuine
+// state change immediately.
+if (
+  previousWrite &&
+  previousWrite.enabled === enabled &&
+  now - previousWrite.timestamp < 5000
+) {
+  this.platform.log.debug(
+    `Ignoring duplicate HomeKit write for Roborock schedule ${scheduleId}: ` +
+      `${enabled ? "enable" : "disable"}`
+  );
+
+  return;
+}
+
+// HomeKit may also issue overlapping writes while the first request is
+// still in flight.
+if (this.scheduleWriteInProgress.has(scheduleId)) {
+  this.platform.log.debug(
+    `Ignoring overlapping HomeKit write for Roborock schedule ${scheduleId}.`
+  );
+
+  return;
+}
+
+this.scheduleWriteInProgress.add(scheduleId);
 
     try {
+      this.platform.log.debug(
+        `Updating Roborock schedule ${scheduleId}: ${
+          enabled ? "enable" : "disable"
+        }`
+      );
+
       await this.platform.roborockAPI.updateServerTimer(
         this.accessory.context,
-        scheduleId,
+        this.getUpdatedScheduleTimer(scheduleId, enabled),
         enabled
       );
-      this.currentSchedules.set(scheduleId, { id: scheduleId, enabled });
-      this.platform.log.info(
-        `${enabled ? "Enabled" : "Disabled"} Roborock schedule ${scheduleId} for ${this.getVacuumName()}.`
-      );
-    } catch (error) {
-      this.scheduleServices
-        .get(scheduleId)
-        ?.updateCharacteristic(this.platform.Characteristic.On, previous);
-      this.platform.log.error(
-        `Unable to ${enabled ? "enable" : "disable"} Roborock schedule ${scheduleId}: ${error}`
-      );
-      throw error;
-    }
-  }
 
-  async getScheduleSwitch(scheduleId: string): Promise<CharacteristicValue> {
-    try {
       const schedules = parseServerTimers(
-        await this.platform.roborockAPI.getServerTimers(this.accessory.context)
+        await this.platform.roborockAPI.getServerTimers(
+          this.accessory.context
+        )
       );
+
       this.currentSchedules = new Map(
         schedules.map((schedule) => [schedule.id, schedule])
       );
-      return this.currentSchedules.get(scheduleId)?.enabled ?? false;
-    } catch (error) {
+
+      const actual = this.currentSchedules.get(scheduleId)?.enabled;
+
       this.platform.log.debug(
-        `Unable to refresh Roborock schedule ${scheduleId}: ${error}`
+        `After upd_server_timer, Roborock schedule ${scheduleId} reports enabled=${actual}`
       );
-      return this.currentSchedules.get(scheduleId)?.enabled ?? false;
+
+      if (actual !== enabled) {
+        this.platform.log.warn(
+          `Roborock schedule ${scheduleId} did not change. ` +
+            `Requested ${enabled ? "enabled" : "disabled"}, actual=${actual}.`
+        );
+
+        return;
+      }
+
+      const existingTimer =
+        this.currentSchedules.get(scheduleId)?.timer ?? [
+          scheduleId,
+          enabled ? "on" : "off",
+          1,
+        ];
+
+      this.currentSchedules.set(scheduleId, {
+        id: scheduleId,
+        enabled,
+        timer: existingTimer,
+      });
+
+this.scheduleWriteSuppression.set(scheduleId, {
+  enabled,
+  timestamp: Date.now(),
+});
+
+this.platform.log.debug(
+  `${enabled ? "Enabled" : "Disabled"} Roborock schedule ${scheduleId}.`
+);
+    } catch (error) {
+      this.platform.log.error(
+        `Unable to ${enabled ? "enable" : "disable"} Roborock schedule ${scheduleId}: ${error}`
+      );
+
+      return;
+    } finally {
+      this.scheduleWriteInProgress.delete(scheduleId);
     }
+  }
+
+  async getScheduleSwitch(
+    scheduleId: string
+  ): Promise<CharacteristicValue> {
+    return this.currentSchedules.get(scheduleId)?.enabled ?? false;
   }
 
   /**

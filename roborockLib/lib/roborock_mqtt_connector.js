@@ -274,17 +274,26 @@ class roborock_mqtt_connector {
             }
           }
 
-          // special check for secure request like get_map_v1 etc. Don't process if result is OK. Instead wait for the actual response for protocol 301
-          if (dps.result != "ok") {
-            if (this.adapter.pendingRequests.has(dps.id)) {
-              const { resolve, timeout } = this.adapter.pendingRequests.get(
-                dps.id
-              );
-              this.adapter.clearTimeout(timeout);
-              this.adapter.pendingRequests.delete(dps.id);
-              resolve(dps.result);
-            }
-          }
+// Resolve normal RPC requests when the cloud acknowledges them with "ok".
+// Secure/blob requests may legitimately return "ok" first and deliver the
+// actual payload later via protocol 301, so those requests need to remain
+// pending until their follow-up response arrives.
+if (this.adapter.pendingRequests.has(dps.id)) {
+  const pendingRequest = this.adapter.pendingRequests.get(dps.id);
+
+  if (
+    dps.result === "ok" &&
+    pendingRequest?.waitForFollowup === true
+  ) {
+    this.adapter.log.debug(
+      `Cloud message with protocol 102 and id ${dps.id} acknowledged with "ok"; waiting for follow-up protocol 301 response.`
+    );
+  } else {
+    this.adapter.clearTimeout(pendingRequest.timeout);
+    this.adapter.pendingRequests.delete(dps.id);
+    pendingRequest.resolve(dps.result);
+  }
+}
           // protocol 300 seems to be for get_photo 0 only. get_photo 0 is for large images. 1 is for small images.
         } else if (data.protocol == 300) {
           const photoData = parsePhotoPayload(data.payload);
@@ -441,11 +450,14 @@ class roborock_mqtt_connector {
   }
 
   sendMessage(duid, roborockMessage) {
-    client.publish(`rr/m/i/${rriot.u}/${mqttUser}/${duid}`, roborockMessage, {
-      qos: 1,
-    });
+    client.publish(
+      `rr/m/i/${rriot.u}/${mqttUser}/${duid}`,
+      roborockMessage,
+      {
+        qos: 0,
+      }
+    );
   }
-
   isConnected() {
     return this.connected;
   }
