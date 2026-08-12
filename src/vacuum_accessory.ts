@@ -647,12 +647,10 @@ export default class RoborockVacuumAccessory {
         timer: existingTimer,
       });
 
-      this.scheduleServices
-        .get(scheduleId)
-        ?.updateCharacteristic(
-          this.platform.Characteristic.On,
-          enabled
-        );
+      // The HomeKit write that entered this method already represents
+      // the requested state. Do not call updateCharacteristic() here,
+      // because the Matter external-accessory layer can feed that
+      // update back into this write handler.
 
       this.platform.log.info(
         `${enabled ? "Enabled" : "Disabled"} Roborock schedule ${scheduleId}.`
