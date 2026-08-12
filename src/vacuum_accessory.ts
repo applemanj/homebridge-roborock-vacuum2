@@ -567,8 +567,6 @@ export default class RoborockVacuumAccessory {
     value: CharacteristicValue
   ): Promise<void> {
     const enabled = Boolean(value);
-    const previous =
-      this.currentSchedules.get(scheduleId)?.enabled ?? !enabled;
 
     // HomeKit may retry a write while the characteristic is being settled.
     // Do not allow overlapping writes for the same Roborock schedule.
@@ -576,13 +574,6 @@ export default class RoborockVacuumAccessory {
       this.platform.log.debug(
         `Ignoring overlapping HomeKit write for Roborock schedule ${scheduleId}.`
       );
-
-      this.scheduleServices
-        .get(scheduleId)
-        ?.updateCharacteristic(
-          this.platform.Characteristic.On,
-          previous
-        );
 
       return;
     }
@@ -624,13 +615,6 @@ export default class RoborockVacuumAccessory {
             `Requested ${enabled ? "enabled" : "disabled"}, actual=${actual}.`
         );
 
-        this.scheduleServices
-          .get(scheduleId)
-          ?.updateCharacteristic(
-            this.platform.Characteristic.On,
-            previous
-          );
-
         return;
       }
 
@@ -647,22 +631,10 @@ export default class RoborockVacuumAccessory {
         timer: existingTimer,
       });
 
-      // The HomeKit write that entered this method already represents
-      // the requested state. Do not call updateCharacteristic() here,
-      // because the Matter external-accessory layer can feed that
-      // update back into this write handler.
-
       this.platform.log.info(
         `${enabled ? "Enabled" : "Disabled"} Roborock schedule ${scheduleId}.`
       );
     } catch (error) {
-      this.scheduleServices
-        .get(scheduleId)
-        ?.updateCharacteristic(
-          this.platform.Characteristic.On,
-          previous
-        );
-
       this.platform.log.error(
         `Unable to ${enabled ? "enable" : "disable"} Roborock schedule ${scheduleId}: ${error}`
       );
