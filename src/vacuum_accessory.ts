@@ -77,6 +77,10 @@ export default class RoborockVacuumAccessory {
   private sceneServices: Map<string, Service> = new Map();
   private scheduleServices: Map<string, Service> = new Map();
   private scheduleWriteInProgress: Set<string> = new Set();
+  private scheduleWriteSuppression: Map<
+    string,
+    { enabled: boolean; timestamp: number }
+  > = new Map();
   private controlSwitches: Map<string, Service> = new Map();
   private currentScenes: any[] = [];
   private currentSchedules: Map<string, RoborockSchedule> = new Map();
@@ -566,19 +570,38 @@ export default class RoborockVacuumAccessory {
     scheduleId: string,
     value: CharacteristicValue
   ): Promise<void> {
-    const enabled = Boolean(value);
+const enabled = Boolean(value);
 
-    // HomeKit may retry a write while the characteristic is being settled.
-    // Do not allow overlapping writes for the same Roborock schedule.
-    if (this.scheduleWriteInProgress.has(scheduleId)) {
-      this.platform.log.debug(
-        `Ignoring overlapping HomeKit write for Roborock schedule ${scheduleId}.`
-      );
+const now = Date.now();
+const previousWrite = this.scheduleWriteSuppression.get(scheduleId);
 
-      return;
-    }
+// HomeKit/Matter can echo the same successful write back to the setter.
+// Ignore an identical write for a short period, but allow a genuine
+// state change immediately.
+if (
+  previousWrite &&
+  previousWrite.enabled === enabled &&
+  now - previousWrite.timestamp < 5000
+) {
+  this.platform.log.debug(
+    `Ignoring duplicate HomeKit write for Roborock schedule ${scheduleId}: ` +
+      `${enabled ? "enable" : "disable"}`
+  );
 
-    this.scheduleWriteInProgress.add(scheduleId);
+  return;
+}
+
+// HomeKit may also issue overlapping writes while the first request is
+// still in flight.
+if (this.scheduleWriteInProgress.has(scheduleId)) {
+  this.platform.log.debug(
+    `Ignoring overlapping HomeKit write for Roborock schedule ${scheduleId}.`
+  );
+
+  return;
+}
+
+this.scheduleWriteInProgress.add(scheduleId);
 
     try {
       this.platform.log.info(
@@ -631,9 +654,14 @@ export default class RoborockVacuumAccessory {
         timer: existingTimer,
       });
 
-      this.platform.log.info(
-        `${enabled ? "Enabled" : "Disabled"} Roborock schedule ${scheduleId}.`
-      );
+this.scheduleWriteSuppression.set(scheduleId, {
+  enabled,
+  timestamp: Date.now(),
+});
+
+this.platform.log.info(
+  `${enabled ? "Enabled" : "Disabled"} Roborock schedule ${scheduleId}.`
+);
     } catch (error) {
       this.platform.log.error(
         `Unable to ${enabled ? "enable" : "disable"} Roborock schedule ${scheduleId}: ${error}`
