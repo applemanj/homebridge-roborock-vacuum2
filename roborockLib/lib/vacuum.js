@@ -252,28 +252,78 @@ class vacuum {
     }
   }
 
-  async getServerTimers(duid) {
-    try {
-      return await this.adapter.messageQueueHandler.sendRequest(
-        duid,
-        "get_server_timer",
-        []
-      );
-    } catch (error) {
-      this.adapter.catchError(error, "get_server_timer", duid, this.robotModel);
-      throw error;
-    }
-  }
+async getServerTimers(duid) {
+  try {
+    const result = await this.adapter.messageQueueHandler.sendRequest(
+      duid,
+      "get_server_timer",
+      [],
+      false,
+      false,
+      { preferCloud: true }
+    );
 
-  async updateServerTimer(duid, timerId, enabled) {
+this.adapter.log.debug(
+  `get_server_timer response for ${duid}: ${JSON.stringify(result)}`
+);
+
+    return result;
+  } catch (error) {
+    this.adapter.catchError(
+      error,
+      "get_server_timer",
+      duid,
+      this.robotModel
+    );
+    throw error;
+  }
+}
+
+async updateServerTimer(duid, timer, enabled) {
+  try {
+    const timerId = Array.isArray(timer) ? timer[0] : timer;
+
+    const updatedTimer = [
+      timerId,
+      enabled ? "on" : "off",
+    ];
+
+this.adapter.log.debug(
+  `Sending upd_server_timer for ${duid}: ${JSON.stringify([updatedTimer])}`
+);
+
+    return await this.adapter.messageQueueHandler.sendRequest(
+      duid,
+      "upd_server_timer",
+      [updatedTimer],
+      false,
+      false,
+      { preferCloud: true }
+    );
+  } catch (error) {
+    this.adapter.catchError(
+      error,
+      "upd_server_timer",
+      duid,
+      this.robotModel
+    );
+    throw error;
+  }
+}
+
+  async updateTimer(duid, timer, enabled) {
     try {
+      const timerId = Array.isArray(timer) ? timer[0] : timer;
       return await this.adapter.messageQueueHandler.sendRequest(
         duid,
-        "upd_server_timer",
-        [timerId, enabled ? "on" : "off"]
+        "upd_timer",
+        [timerId, enabled ? "on" : "off"],
+        false,
+        false,
+        { preferCloud: true }
       );
     } catch (error) {
-      this.adapter.catchError(error, "upd_server_timer", duid, this.robotModel);
+      this.adapter.catchError(error, "upd_timer", duid, this.robotModel);
       throw error;
     }
   }

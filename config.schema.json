@@ -92,6 +92,12 @@
         "type": "boolean",
         "default": false
       },
+      "hideOnlyLegacyFanService": {
+        "title": "Hide Only legacy fan service",
+        "description": "Hides only the legacy HomeKit Fan service while keeping legacy HomeKit switches such as Pause Cleaning, Return to Dock, schedules, scenes, and other controls. The Matter vacuum remains exposed when Matter is enabled.",
+        "type": "boolean",
+        "default": false
+      },
       "cloudOnlyMode": {
         "title": "Use Roborock Cloud Only",
         "description": "Disables local LAN discovery and local TCP commands for this plugin, routing commands and status polling through Roborock cloud when available. Useful when local LAN connections appear connected but consistently time out. Restart the Roborock child bridge after changing this setting.",

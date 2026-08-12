@@ -68,7 +68,12 @@ describe("Roborock vacuum command options", () => {
     const robot = new vacuum(adapter, "roborock.vacuum.ss07");
 
     await expect(robot.getServerTimers("device-1")).resolves.toEqual(timers);
-    await robot.updateServerTimer("device-1", "timer-1", false);
+
+    await robot.updateServerTimer(
+      "device-1",
+      ["timer-1", "on", 123],
+      false
+    );
 
     expect(sendRequest).toHaveBeenNthCalledWith(
       1,
@@ -76,11 +81,15 @@ describe("Roborock vacuum command options", () => {
       "get_server_timer",
       []
     );
+
     expect(sendRequest).toHaveBeenNthCalledWith(
       2,
       "device-1",
       "upd_server_timer",
-      ["timer-1", "off"]
+      ["timer-1", "off"],
+      false,
+      false,
+      { preferCloud: true }
     );
   });
 
