@@ -672,21 +672,10 @@ this.platform.log.debug(
     }
   }
 
-  async getScheduleSwitch(scheduleId: string): Promise<CharacteristicValue> {
-    try {
-      const schedules = parseServerTimers(
-        await this.platform.roborockAPI.getServerTimers(this.accessory.context)
-      );
-      this.currentSchedules = new Map(
-        schedules.map((schedule) => [schedule.id, schedule])
-      );
-      return this.currentSchedules.get(scheduleId)?.enabled ?? false;
-    } catch (error) {
-      this.platform.log.debug(
-        `Unable to refresh Roborock schedule ${scheduleId}: ${error}`
-      );
-      return this.currentSchedules.get(scheduleId)?.enabled ?? false;
-    }
+  async getScheduleSwitch(
+    scheduleId: string
+  ): Promise<CharacteristicValue> {
+    return this.currentSchedules.get(scheduleId)?.enabled ?? false;
   }
 
   /**
