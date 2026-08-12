@@ -116,30 +116,45 @@ export default class RoborockVacuumAccessory {
         ) || "Unknown"
       );
 
-    this.services["Fan"] =
-      this.accessory.getService(this.platform.Service.Fanv2) ||
-      this.accessory.addService(this.platform.Service.Fanv2);
+    const hideOnlyLegacyFanService =
+      this.platform.platformConfig.hideOnlyLegacyFanService === true;
 
-    // This is what is displayed as the default name on the Home app
-    this.services["Fan"].setCharacteristic(
-      this.platform.Characteristic.Name,
-      this.platform.roborockAPI.getVacuumDeviceInfo(
-        accessory.context,
-        "name"
-      ) || "Roborock Vacuum"
+    const existingFanService = this.accessory.getService(
+      this.platform.Service.Fanv2
     );
 
-    this.services["Fan"]
-      .getCharacteristic(this.platform.Characteristic.Active)
-      .onSet(this.setActive.bind(this))
-      .onGet(this.getActive.bind(this));
+    if (hideOnlyLegacyFanService) {
+      if (existingFanService) {
+        this.accessory.removeService(existingFanService);
+      }
+    } else {
+      this.services["Fan"] =
+        existingFanService ||
+        this.accessory.addService(this.platform.Service.Fanv2);
+
+      // This is what is displayed as the default name on the Home app
+      this.services["Fan"].setCharacteristic(
+        this.platform.Characteristic.Name,
+        this.platform.roborockAPI.getVacuumDeviceInfo(
+          accessory.context,
+          "name"
+        ) || "Roborock Vacuum"
+      );
+
+      this.services["Fan"]
+        .getCharacteristic(this.platform.Characteristic.Active)
+        .onSet(this.setActive.bind(this))
+        .onGet(this.getActive.bind(this));
+    }
 
     this.setupControlSwitches();
 
     this.services["Battery"] =
       this.accessory.getService(this.platform.Service.Battery) ||
       this.accessory.addService(this.platform.Service.Battery);
-    this.services["Fan"].addLinkedService(this.services["Battery"]);
+    if (this.services["Fan"]) {
+      this.services["Fan"].addLinkedService(this.services["Battery"]);
+    }
 
     // Initialize dynamic switches.
     this.updateSceneSwitches();
@@ -316,17 +331,19 @@ export default class RoborockVacuumAccessory {
 
   updateDeviceState() {
     try {
-      this.services["Fan"].updateCharacteristic(
-        this.platform.Characteristic.Active,
-        this.platform.roborockAPI.isCleaning(
-          this.platform.roborockAPI.getVacuumDeviceStatus(
-            this.accessory.context,
-            "state"
+      if (this.services["Fan"]) {
+        this.services["Fan"].updateCharacteristic(
+          this.platform.Characteristic.Active,
+          this.platform.roborockAPI.isCleaning(
+            this.platform.roborockAPI.getVacuumDeviceStatus(
+              this.accessory.context,
+              "state"
+            )
           )
-        )
-          ? this.platform.Characteristic.Active.ACTIVE
-          : this.platform.Characteristic.Active.INACTIVE
-      );
+            ? this.platform.Characteristic.Active.ACTIVE
+            : this.platform.Characteristic.Active.INACTIVE
+        );
+      }
 
       this.updateBatteryCharacteristics(
         this.platform.roborockAPI.getVacuumDeviceStatus(
@@ -744,13 +761,26 @@ this.platform.log.debug(
           if (!messages || typeof messages !== "object") {
             return;
           }
-          if (messages.hasOwnProperty("state")) {
+          if (
+
+            messages.hasOwnProperty("state") &&
+
+            this.services["Fan"]
+
+          ) {
+
             this.services["Fan"].updateCharacteristic(
+
               this.platform.Characteristic.Active,
+
               this.isCleaningState(messages.state)
+
                 ? this.platform.Characteristic.Active.ACTIVE
+
                 : this.platform.Characteristic.Active.INACTIVE
+
             );
+
           }
 
           if (
@@ -764,13 +794,36 @@ this.platform.log.debug(
             );
           }
 
-          if (messages.hasOwnProperty("in_cleaning")) {
+          if (
+
+
+            messages.hasOwnProperty("in_cleaning") &&
+
+
+            this.services["Fan"]
+
+
+          ) {
+
+
             this.services["Fan"].updateCharacteristic(
+
+
               this.platform.Characteristic.Active,
+
+
               messages.in_cleaning != 0
+
+
                 ? this.platform.Characteristic.Active.ACTIVE
+
+
                 : this.platform.Characteristic.Active.INACTIVE
+
+
             );
+
+
           }
         }
 
@@ -779,12 +832,14 @@ this.platform.log.debug(
             `${this.platform.roborockAPI.getVacuumDeviceInfo(this.accessory.context, "name")} state update to: ${this.state_code_to_state(rootMessage.dps["121"])}`
           );
 
-          this.services["Fan"].updateCharacteristic(
-            this.platform.Characteristic.Active,
-            this.isCleaningState(rootMessage.dps["121"])
-              ? this.platform.Characteristic.Active.ACTIVE
-              : this.platform.Characteristic.Active.INACTIVE
-          );
+          if (this.services["Fan"]) {
+            this.services["Fan"].updateCharacteristic(
+              this.platform.Characteristic.Active,
+              this.isCleaningState(rootMessage.dps["121"])
+                ? this.platform.Characteristic.Active.ACTIVE
+                : this.platform.Characteristic.Active.INACTIVE
+            );
+          }
         }
 
         if (this.hasDp(rootMessage, "122")) {
