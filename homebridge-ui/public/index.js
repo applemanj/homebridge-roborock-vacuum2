@@ -7,6 +7,9 @@ const elements = {
   debugMode: document.getElementById("debug-mode"),
   enableMatter: document.getElementById("enable-matter"),
   onlyExposeMatter: document.getElementById("only-expose-matter"),
+  hideOnlyLegacyFanService: document.getElementById(
+    "hide-only-legacy-fan-service"
+  ),
   advancedSettings: document.getElementById("advanced-settings"),
   preferCloudForMatterCommands: document.getElementById(
     "prefer-cloud-for-matter-commands"
@@ -119,6 +122,9 @@ async function loadConfig() {
     elements.debugMode.checked = Boolean(config.debugMode);
     elements.enableMatter.checked = Boolean(config.enableMatter);
     elements.onlyExposeMatter.checked = Boolean(config.onlyExposeMatter);
+    elements.hideOnlyLegacyFanService.checked = Boolean(
+      config.hideOnlyLegacyFanService
+    );
     elements.preferCloudForMatterCommands.checked = Boolean(
       config.preferCloudForMatterCommands
     );
@@ -168,6 +174,10 @@ function getEnableMatter() {
   return Boolean(elements.enableMatter.checked);
 }
 
+function getHideOnlyLegacyFanService() {
+  return Boolean(elements.hideOnlyLegacyFanService.checked);
+}
+
 function getPreferCloudForMatterCommands() {
   return Boolean(elements.preferCloudForMatterCommands.checked);
 }
@@ -207,6 +217,7 @@ function getFormValues() {
     debugMode: getDebugMode(),
     enableMatter: getEnableMatter(),
     onlyExposeMatter: getOnlyExposeMatter(),
+    hideOnlyLegacyFanService: getHideOnlyLegacyFanService(),
     preferCloudForMatterCommands: getPreferCloudForMatterCommands(),
     cloudOnlyMode: getCloudOnlyMode(),
     transientWarningThrottleHours: getTransientWarningThrottleHours(),
@@ -1026,6 +1037,9 @@ function init() {
   elements.skipDevices.addEventListener("change", () => saveCredentials(false));
   elements.debugMode.addEventListener("change", () => saveCredentials(false));
   elements.enableMatter.addEventListener("change", () =>
+    saveCredentials(false)
+  );
+  elements.hideOnlyLegacyFanService.addEventListener("change", () =>
     saveCredentials(false)
   );
   elements.preferCloudForMatterCommands.addEventListener("change", () =>
