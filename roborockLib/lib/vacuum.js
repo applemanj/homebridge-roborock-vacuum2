@@ -263,9 +263,9 @@ async getServerTimers(duid) {
       { preferCloud: true }
     );
 
-    this.adapter.log.info(
-      `RAW get_server_timer response for ${duid}: ${JSON.stringify(result)}`
-    );
+this.adapter.log.debug(
+  `get_server_timer response for ${duid}: ${JSON.stringify(result)}`
+);
 
     return result;
   } catch (error) {
@@ -288,9 +288,9 @@ async updateServerTimer(duid, timer, enabled) {
       enabled ? "on" : "off",
     ];
 
-    this.adapter.log.info(
-      `Sending upd_server_timer for ${duid}: ${JSON.stringify([updatedTimer])}`
-    );
+this.adapter.log.debug(
+  `Sending upd_server_timer for ${duid}: ${JSON.stringify([updatedTimer])}`
+);
 
     return await this.adapter.messageQueueHandler.sendRequest(
       duid,
