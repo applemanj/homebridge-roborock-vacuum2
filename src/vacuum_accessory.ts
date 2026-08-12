@@ -7,7 +7,6 @@ const { stateCodes } = require("../roborockLib/lib/deviceFeatures");
 const MAX_HOMEKIT_NAME_LENGTH = 64;
 const FALLBACK_SCENE_NAME = "Roborock Scene";
 const SCHEDULE_SERVICE_PREFIX = "roborock-schedule-";
-const SCHEDULE_UPDATE_VERIFY_DELAY_MS = 1500;
 const CLEANING_STATES = new Set([4, 5, 6, 7, 11, 15, 16, 17, 18, 23, 26]);
 
 export interface RoborockSchedule {
@@ -604,7 +603,7 @@ if (this.scheduleWriteInProgress.has(scheduleId)) {
 this.scheduleWriteInProgress.add(scheduleId);
 
     try {
-      this.platform.log.info(
+      this.platform.log.debug(
         `Updating Roborock schedule ${scheduleId}: ${
           enabled ? "enable" : "disable"
         }`
@@ -628,7 +627,7 @@ this.scheduleWriteInProgress.add(scheduleId);
 
       const actual = this.currentSchedules.get(scheduleId)?.enabled;
 
-      this.platform.log.info(
+      this.platform.log.debug(
         `After upd_server_timer, Roborock schedule ${scheduleId} reports enabled=${actual}`
       );
 
@@ -659,7 +658,7 @@ this.scheduleWriteSuppression.set(scheduleId, {
   timestamp: Date.now(),
 });
 
-this.platform.log.info(
+this.platform.log.debug(
   `${enabled ? "Enabled" : "Disabled"} Roborock schedule ${scheduleId}.`
 );
     } catch (error) {
@@ -688,22 +687,6 @@ this.platform.log.info(
       );
       return this.currentSchedules.get(scheduleId)?.enabled ?? false;
     }
-  }
-
-  private async verifyScheduleSwitch(
-    scheduleId: string,
-    enabled: boolean
-  ): Promise<boolean> {
-    await new Promise((resolve) =>
-      setTimeout(resolve, SCHEDULE_UPDATE_VERIFY_DELAY_MS)
-    );
-    const schedules = parseServerTimers(
-      await this.platform.roborockAPI.getServerTimers(this.accessory.context)
-    );
-    this.currentSchedules = new Map(
-      schedules.map((schedule) => [schedule.id, schedule])
-    );
-    return this.currentSchedules.get(scheduleId)?.enabled === enabled;
   }
 
   /**
