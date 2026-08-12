@@ -457,7 +457,7 @@ if (this.adapter.pendingRequests.has(dps.id)) {
         qos: 0,
       }
     );
-
+  }
   isConnected() {
     return this.connected;
   }
