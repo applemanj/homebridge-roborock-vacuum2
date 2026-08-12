@@ -146,7 +146,6 @@ export default class RoborockVacuumAccessory {
         .onSet(this.setActive.bind(this))
         .onGet(this.getActive.bind(this));
 
-      this.services["Fan"].setPrimaryService(true);
     }
 
     this.setupControlSwitches();
