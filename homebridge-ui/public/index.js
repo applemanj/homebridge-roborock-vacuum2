@@ -1039,9 +1039,6 @@ function init() {
   elements.enableMatter.addEventListener("change", () =>
     saveCredentials(false)
   );
-  elements.hideOnlyLegacyFanService.addEventListener("change", () =>
-    saveCredentials(false)
-  );
   elements.preferCloudForMatterCommands.addEventListener("change", () =>
     saveCredentials(false)
   );
