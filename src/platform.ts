@@ -80,6 +80,7 @@ export default class RoborockPlatform implements DynamicPlatformPlugin {
   private readonly matterAccessories: any[] = [];
   private readonly matterVacuums: Map<string, RoborockMatterVacuumAccessory> =
     new Map();
+  private scheduleRefreshTimer: ReturnType<typeof setInterval> | null = null;
   private matterUnavailableLogged = false;
 
   public readonly roborockAPI: any;
@@ -153,6 +154,11 @@ export default class RoborockPlatform implements DynamicPlatformPlugin {
     this.api.on(APIEvent.SHUTDOWN, () => {
       this.log.debug("Shutting down...");
 
+      if (this.scheduleRefreshTimer) {
+        clearInterval(this.scheduleRefreshTimer);
+        this.scheduleRefreshTimer = null;
+      }
+
       if (this.roborockAPI) {
         this.roborockAPI.stopService();
       }
@@ -161,6 +167,30 @@ export default class RoborockPlatform implements DynamicPlatformPlugin {
 
   async configurePlugin() {
     await this.loginAndDiscoverDevices();
+  }
+
+  private startScheduleRefreshTimer(): void {
+    if (this.scheduleRefreshTimer) {
+      return;
+    }
+
+    const updateIntervalSeconds = Number(
+      this.roborockAPI?.updateInterval ?? 180
+    );
+
+    const intervalMs = Math.max(30, updateIntervalSeconds) * 1000;
+
+    this.scheduleRefreshTimer = setInterval(() => {
+      for (const vacuum of this.vacuums) {
+        void vacuum.updateScheduleSwitches();
+      }
+    }, intervalMs);
+
+    this.log.debug(
+      `Schedule refresh timer started with ${Math.round(
+        intervalMs / 1000
+      )} second interval.`
+    );
   }
 
   private normalizeTransientWarningThrottleHours(value: unknown): number {
@@ -534,6 +564,8 @@ export default class RoborockPlatform implements DynamicPlatformPlugin {
           "Turn on debug mode for more information."
       );
       this.log.debug(error);
+    } finally {
+      this.startScheduleRefreshTimer();
     }
   }
 
