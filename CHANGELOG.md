@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.68
+
+- Added Node.js 26 to the supported `engines.node` range. Node 26 is the current release line and Homebridge 2.4.0 already supports `^26`; every runtime dependency in this plugin accepts Node 26 as well, so the previous range was the only thing causing Homebridge UI to report the plugin as incompatible with Node v26.x. Addresses the Node v26.8.2 compatibility report.
+
 ## 1.4.66
 
 - Exposed each Roborock app schedule as a persistent HomeKit switch, with live enable/disable state backed by `get_server_timer` and `upd_server_timer`. Addresses issue #6.

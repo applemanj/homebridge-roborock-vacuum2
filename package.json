@@ -1,6 +1,6 @@
 {
   "name": "homebridge-roborock-vacuum2",
-  "version": "1.4.67",
+  "version": "1.4.68",
   "description": "Roborock Vacuum Cleaner - plugin for Homebridge.",
   "license": "MIT",
   "author": {
@@ -25,7 +25,7 @@
   "main": "dist/index.js",
   "engines": {
     "homebridge": "^1.6.0 || ^2.0.0-beta.0",
-    "node": "^18.20.4 || ^20.15.1 || ^22 || ^24"
+    "node": "^18.20.4 || ^20.15.1 || ^22 || ^24 || ^26"
   },
   "scripts": {
     "clean": "rimraf ./dist",
