@@ -35,6 +35,19 @@ class message {
     this.keys = roborockCrypto.generateRsaKeyPair();
   }
 
+  /**
+   * @param {string} duid
+   * @param {number} protocol
+   * @param {number} messageID
+   * @param {string} method
+   * @param {unknown} params
+   * @param {boolean} [secure=false]
+   * @param {boolean} [photo=false]
+   * @param {{b01Q10Dps?: Record<string, any>}} [options] `b01Q10Dps` carries a
+   * pre-built datapoint map for the B01 Q10 dialect (`roborock.vacuum.ss*`),
+   * which writes numbered datapoints directly instead of wrapping an RPC
+   * envelope on datapoint 10000.
+   */
   async buildPayload(
     duid,
     protocol,
@@ -42,7 +55,8 @@ class message {
     method,
     params,
     secure = false,
-    photo = false
+    photo = false,
+    options = {}
   ) {
     const timestamp = Math.floor(Date.now() / 1000);
     const endpoint = this.adapter.rr_mqtt_connector.getEndpoint();
@@ -72,7 +86,14 @@ class message {
     }
 
     let payload;
-    if (version == "B01" || version == "\x81S\x19") {
+    if (options && options.b01Q10Dps) {
+      // B01 Q10 (`ss*`) wire format: the datapoint is written directly. No
+      // method, no msgId, no datapoint 10000 and no `t` — the Q10 envelope
+      // carries only `dps`. Sending the Q7 envelope below to a Q10 addresses a
+      // datapoint it does not have, so it is discarded in silence and the
+      // caller waits out its full timeout (issue #10).
+      payload = JSON.stringify({ dps: options.b01Q10Dps });
+    } else if (version == "B01" || version == "\x81S\x19") {
       inner.msgId = String(messageID);
 
       if (method == "get_prop") {

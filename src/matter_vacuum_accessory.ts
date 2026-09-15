@@ -214,6 +214,14 @@ const SERVICE_AREA_SELECT_STATUS = {
   INVALID_SET: 3,
 } as const;
 
+// Matter ServiceArea ProgressStatusEnum values.
+const SERVICE_AREA_PROGRESS = {
+  PENDING: 0,
+  OPERATING: 1,
+  SKIPPED: 2,
+  COMPLETED: 3,
+} as const;
+
 const MATTER_LOCATION_NAME_MAX_LENGTH = 64;
 const MATTER_MAP_NAME_MAX_LENGTH = 64;
 const MATTER_AREA_ID_MAP_MULTIPLIER = 1_000_000;
@@ -262,6 +270,8 @@ export default class RoborockMatterVacuumAccessory {
   private lastCleaningCommandAt = 0;
   private selectedServiceAreaIds: number[] = [];
   private roomCleaningAreaConfirmed = false;
+  private serviceAreaProgress: Array<{ areaId: number; status: number }> = [];
+  private serviceAreaCurrentArea: number | null = null;
   private lastServiceAreaSummary = "";
   private selectedCleanMode = CLEAN_MODE_VACUUM;
   private selectedCleanModeNeedsApply = false;
@@ -533,6 +543,7 @@ export default class RoborockMatterVacuumAccessory {
           },
         };
         this.setAndScheduleOptimisticState(state, "selected-area start");
+        this.beginServiceAreaProgress(areasToClean.map((area) => area.areaId));
         this.dispatchRoborockMatterCommand("service area clean", async () => {
           await this.applySelectedCleanModeIfNeeded();
           await this.loadMatterMapIfNeeded(duid, targetMapId);
@@ -553,6 +564,7 @@ export default class RoborockMatterVacuumAccessory {
         },
       };
       this.setAndScheduleOptimisticState(state, "start");
+      this.beginFullCleanServiceAreaProgress();
       this.dispatchRoborockMatterCommand("start", async () => {
         await this.applySelectedCleanModeIfNeeded();
         await this.api.app_start(duid, this.getMatterCommandOptions());
@@ -868,6 +880,16 @@ export default class RoborockMatterVacuumAccessory {
         state,
         chargeStatus
       );
+
+      // Keep the announced cleaning progress in step with the robot. A run can
+      // end without any Matter command (schedule, app, or self-completion), so
+      // completion is driven from the live status rather than the command.
+      if (state !== null) {
+        this.completeServiceAreaProgressIfDone(
+          this.getOperationalState(state, chargeStatus)
+        );
+        this.beginFullCleanServiceAreaProgressIfUnannounced(state, chargeStatus);
+      }
     }
 
     const updated = await this.updateMatterState(
@@ -1263,6 +1285,15 @@ export default class RoborockMatterVacuumAccessory {
     this.logMatterServiceAreaSummary(areas, supportedMaps);
 
     const state: Record<string, unknown> = {
+      // Live cleaning progress. These attributes are ALWAYS present (empty
+      // list / null when idle): Homebridge derives Matter cluster features from
+      // which attributes are provided at registration (see homebridge #3914 for
+      // the PowerSource equivalent), so omitting progress here would leave the
+      // Service Area progress feature unannounced at commissioning. Controllers
+      // that render a progress pill (Apple Home) then sit on a generic
+      // "Preparing"/"heading to the room" label for the entire run.
+      progress: this.serviceAreaProgress.map((entry) => ({ ...entry })),
+      estimatedEndTime: null,
       supportedAreas: areas.map((area) => ({
         areaId: area.areaId,
         mapId: area.mapId,
@@ -1279,7 +1310,8 @@ export default class RoborockMatterVacuumAccessory {
         },
       })),
       selectedAreas,
-      currentArea: this.getCurrentServiceArea(selectedAreas),
+      currentArea:
+        this.serviceAreaCurrentArea ?? this.getCurrentServiceArea(selectedAreas),
     };
 
     if (supportedMaps.length > 0) {
@@ -1298,6 +1330,109 @@ export default class RoborockMatterVacuumAccessory {
     return state === ROOM_CLEAN_STATE || state === PAUSED_STATE
       ? selectedAreas[0]
       : null;
+  }
+
+  /**
+   * Announce a selected-area run: the first requested area is reported as
+   * currently cleaning and the remainder as pending. This is what lets Apple
+   * Home show "Cleaning <room>" instead of a generic travel label for
+   * multi-room runs, which previously always published `currentArea: null`.
+   */
+  private beginServiceAreaProgress(areaIds: number[]): void {
+    this.clearServiceAreaProgress();
+    if (areaIds.length === 0) {
+      return;
+    }
+
+    this.serviceAreaCurrentArea = areaIds[0];
+    this.serviceAreaProgress = areaIds.map((areaId, index) => ({
+      areaId,
+      status:
+        index === 0
+          ? SERVICE_AREA_PROGRESS.OPERATING
+          : SERVICE_AREA_PROGRESS.PENDING,
+    }));
+  }
+
+  /**
+   * Announce a whole-home run. Every area is reported as operating and no area
+   * is current.
+   *
+   * Matter has four progress values and none of them means "running, exact
+   * position unknown". All-pending would read as "the robot is still on its way
+   * to every room", which is the stuck "Traveling to Room" label this fix
+   * exists to remove. Reporting every area as operating makes the true
+   * statement — the robot is cleaning, it is not traveling — at the only place
+   * a person looks.
+   */
+  private beginFullCleanServiceAreaProgress(): void {
+    this.clearServiceAreaProgress();
+    const areaIds = this.getMatterServiceAreas().map((area) => area.areaId);
+    if (areaIds.length === 0) {
+      return;
+    }
+
+    this.serviceAreaProgress = areaIds.map((areaId) => ({
+      areaId,
+      status: SERVICE_AREA_PROGRESS.OPERATING,
+    }));
+  }
+
+  private clearServiceAreaProgress(): void {
+    this.serviceAreaCurrentArea = null;
+    this.serviceAreaProgress = [];
+  }
+
+  /**
+   * Flip a finished run to completed. Completion is status-driven rather than
+   * command-driven because a run can end on its own (finished, blocked, or
+   * returned by schedule) without any Matter command arriving.
+   */
+  private completeServiceAreaProgressIfDone(operationalState: number): void {
+    if (this.serviceAreaProgress.length === 0) {
+      return;
+    }
+    if (this.isInCleaningRunMode(operationalState)) {
+      return;
+    }
+
+    this.serviceAreaCurrentArea = null;
+    this.serviceAreaProgress = this.serviceAreaProgress.map((entry) => ({
+      areaId: entry.areaId,
+      status: SERVICE_AREA_PROGRESS.COMPLETED,
+    }));
+  }
+
+  /**
+   * Announce a whole-home run that started outside Matter (the app, a schedule,
+   * or a voice assistant). Those runs never pass through the Matter command
+   * handlers, so without this the very first live status would show nothing
+   * announced and Apple Home would sit on the travel label for the whole run.
+   * Only an empty or stale all-completed list is widened; a run already
+   * announced here keeps its narrower, better-known scope.
+   */
+  private beginFullCleanServiceAreaProgressIfUnannounced(
+    state: number | null,
+    chargeStatus: number | null
+  ): void {
+    if (
+      this.getRoborockOperationalState(state, chargeStatus) !==
+      RVC_OPERATIONAL_STATE.RUNNING
+    ) {
+      return;
+    }
+
+    if (
+      this.serviceAreaProgress.some(
+        (entry) =>
+          entry.status === SERVICE_AREA_PROGRESS.OPERATING ||
+          entry.status === SERVICE_AREA_PROGRESS.PENDING
+      )
+    ) {
+      return;
+    }
+
+    this.beginFullCleanServiceAreaProgress();
   }
 
   private async selectServiceAreas(

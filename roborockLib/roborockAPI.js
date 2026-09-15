@@ -1021,6 +1021,8 @@ class Roborock {
 
   describeTransportReason(reason) {
     const reasons = {
+      "b01-q10-fire-and-forget":
+        "the B01 Q10 dialect writes datapoints and expects no reply, so no response was awaited",
       "cloud-only-mode": "cloud-only mode is enabled",
       "cloud-only-mqtt-unavailable":
         "cloud-only mode is enabled but Roborock cloud MQTT is unavailable",
@@ -3041,6 +3043,17 @@ class Roborock {
 
   async catchError(error, attribute, duid, model) {
     if (error) {
+      if (error.code === "B01_METHOD_UNSUPPORTED") {
+        // A capability gap, not a failure. The Q10 dialect writes datapoints
+        // and sends no reply, so reads cannot be served over it at all. Logging
+        // this at error level would put a stack trace in every user's log each
+        // time status or the room list is refreshed.
+        this.log.debug(
+          `Skipped ${attribute} on robot ${duid} (${model || "unknown model"}): ${error.message}`
+        );
+        return;
+      }
+
       const errorText = error.toString();
       const transientErrorKind = this.getTransientErrorKind(errorText);
       const message = `Failed to execute ${attribute} on robot ${duid} (${model || "unknown model"}): ${error}`;

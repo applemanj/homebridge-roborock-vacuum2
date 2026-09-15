@@ -109,3 +109,20 @@ describe("Matter Service Area map/area metadata", () => {
     ]);
   });
 });
+
+describe("Matter Service Area progress attributes", () => {
+  // Homebridge derives Matter cluster features from which attributes are
+  // provided at registration, so the progress attributes must exist even while
+  // the robot is idle. Omitting them leaves Apple Home on a generic travel
+  // label for the whole run instead of showing the room being cleaned.
+  test("always advertises progress and estimatedEndTime while idle", () => {
+    const cluster = buildServiceAreaCluster({
+      rooms: [{ segmentId: 16, mapId: 0, name: "Kitchen" }],
+    });
+
+    expect(cluster).toHaveProperty("progress");
+    expect(cluster.progress).toEqual([]);
+    expect(cluster).toHaveProperty("estimatedEndTime");
+    expect(cluster.estimatedEndTime).toBeNull();
+  });
+});

@@ -2,6 +2,10 @@
 "use strict";
 
 const DEFAULT_REQUEST_TIMEOUT = 10000; // 10s
+
+const b01Q10Adapter = require("./b01Q10Adapter");
+const { isB01Protocol, b01FamilyForModel, B01_FAMILY } = require("./b01Family");
+
 // Some commands legitimately take longer to acknowledge. Switching the active
 // saved map (load_multi_map) can take well over the default timeout on older
 // models such as the S6 Pure, so give it more headroom before timing out.
@@ -40,7 +44,7 @@ function getRequestTimeout(method, requestTimeoutMs) {
 
 /**
  * @typedef {Object} MessageBuilder
- * @property {(duid: string, protocol: number, messageID: number, method: string, params: unknown[], secure: boolean, photo: boolean) => Promise<unknown>} buildPayload
+ * @property {(duid: string, protocol: number, messageID: number, method: string, params: unknown[], secure: boolean, photo: boolean, options?: {b01Q10Dps?: Record<string, any>}) => Promise<unknown>} buildPayload
  * @property {(duid: string, protocol: number, timestamp: number, payload: unknown) => Promise<Buffer | null | undefined>} buildRoborockMessage
  */
 
@@ -74,6 +78,7 @@ function getRequestTimeout(method, requestTimeoutMs) {
  * @property {RoborockConfig} [config]
  * @property {(duid: string) => Promise<boolean>} isRemoteDevice
  * @property {(duid: string) => Promise<string>} getRobotVersion
+ * @property {(duid: string, attribute: string) => string | null} [getProductAttribute]
  * @property {(duid: string) => Promise<boolean>} onlineChecker
  * @property {MqttConnector} rr_mqtt_connector
  * @property {LocalConnector} localConnector
@@ -123,6 +128,37 @@ class messageQueueHandler {
   ) {
     const remoteConnection = await this.adapter.isRemoteDevice(duid);
     const version = await this.adapter.getRobotVersion(duid);
+
+    // B01 covers two different wire dialects. `ss*` models (Q10) write numbered
+    // datapoints directly and never reply, so the Q7 envelope below would be
+    // discarded by the robot and the request would sit until its timeout
+    // expired. Translate here, at the single choke point every B01 write passes
+    // through, and hand the encoder a pre-built datapoint map. This runs before
+    // any connection work because a refused method must not reach the wire, and
+    // must not trigger a local reconnect on its way to being refused.
+    /** @type {Record<string, any> | null} */
+    let b01Q10Dps = null;
+    if (isB01Protocol(version)) {
+      const model = this.adapter.getProductAttribute?.(duid, "model");
+      if (b01FamilyForModel(model) === B01_FAMILY.Q10) {
+        const q10 = b01Q10Adapter.translateOutgoing(method, params);
+        if (!q10) {
+          // Reads, and any command with no datapoint equivalent, are refused
+          // immediately. Refusing beats translating: a read's answer *is* the
+          // value, and the Q10 dialect never answers, so a translated read
+          // would have to invent one. `catchError` treats this code as an
+          // expected capability gap rather than a failure.
+          const error = Object.assign(
+            new Error(
+              `Robot ${duid} (${model || "ss*"}) speaks the B01 Q10 dialect, which writes numbered datapoints and sends no reply. It has no equivalent for ${method}, which would need a reply to be meaningful, so nothing was sent.`
+            ),
+            { code: "B01_METHOD_UNSUPPORTED" }
+          );
+          throw error;
+        }
+        b01Q10Dps = b01Q10Adapter.buildDps(q10.dp, q10.params);
+      }
+    }
 
     const deviceOnline = await this.adapter.onlineChecker(duid);
     const mqttConnectionState = this.adapter.rr_mqtt_connector.isConnected();
@@ -200,7 +236,8 @@ class messageQueueHandler {
       method,
       params,
       secure,
-      photo
+      photo,
+      b01Q10Dps ? { b01Q10Dps } : {}
     );
     const roborockMessage = await this.adapter.message.buildRoborockMessage(
       duid,
@@ -260,6 +297,42 @@ class messageQueueHandler {
               `Local connection not available for ${duid}. Not sending method ${method} request.`
             )
           );
+        } else if (b01Q10Dps) {
+          // The Q10 dialect is fire-and-forget: it defines no reply, so there is
+          // no msgId to correlate and no response to wait for. Resolving here
+          // confirms the write left this plugin, NOT that the robot acted on it.
+          // A pending request and a timeout would only guarantee a false error
+          // on a perfectly healthy link, which is exactly issue #10.
+          if (useCloudConnection) {
+            this.adapter.rr_mqtt_connector.sendMessage(duid, roborockMessage);
+            this.adapter.updateTransportDiagnostics(duid, {
+              lastTransport: "cloud",
+              lastTransportReason: "b01-q10-fire-and-forget",
+              lastCommandMethod: method,
+            });
+            this.adapter.log.debug(
+              `Sent payload for ${duid} with ${payload} using cloud connection`
+            );
+          } else {
+            const lengthBuffer = Buffer.alloc(4);
+            lengthBuffer.writeUInt32BE(roborockMessage.length, 0);
+            this.adapter.localConnector.sendMessage(
+              duid,
+              Buffer.concat([lengthBuffer, roborockMessage])
+            );
+            this.adapter.updateTransportDiagnostics(duid, {
+              lastTransport: "local",
+              lastTransportReason: "b01-q10-fire-and-forget",
+              lastCommandMethod: method,
+            });
+            this.adapter.log.debug(
+              `Sent payload for ${duid} with ${payload} using local connection`
+            );
+          }
+          this.adapter.log.debug(
+            `Published B01 Q10 datapoint write for ${duid} with ${payload}. The Q10 dialect is fire-and-forget, so this is a publish confirmation and not a robot acknowledgement; no reply is expected.`
+          );
+          resolve(["ok"]);
         } else {
           // setup Timeout
           const requestTimeout = getRequestTimeout(

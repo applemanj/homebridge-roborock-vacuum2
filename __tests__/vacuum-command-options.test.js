@@ -59,7 +59,7 @@ describe("Roborock vacuum command options", () => {
   });
 
   test("reads and updates server timers using the Roborock schedule contract", async () => {
-    const timers = [["timer-1", "on", 123]];
+    const timers = [["1652974973014", "on", 123]];
     const sendRequest = jest
       .fn()
       .mockResolvedValueOnce(timers)
@@ -68,7 +68,7 @@ describe("Roborock vacuum command options", () => {
     const robot = new vacuum(adapter, "roborock.vacuum.ss07");
 
     await expect(robot.getServerTimers("device-1")).resolves.toEqual(timers);
-    await robot.updateServerTimer("device-1", "timer-1", false);
+    await robot.updateServerTimer("device-1", "1652974973014", false);
 
     expect(sendRequest).toHaveBeenNthCalledWith(
       1,
@@ -80,7 +80,7 @@ describe("Roborock vacuum command options", () => {
       2,
       "device-1",
       "upd_server_timer",
-      ["timer-1", "off"]
+      [[1652974973014, "off"]]
     );
   });
 
@@ -90,7 +90,7 @@ describe("Roborock vacuum command options", () => {
     const robot = new vacuum(adapter, "roborock.vacuum.ss07");
 
     await expect(
-      robot.updateServerTimer("device-1", "timer-1", true)
+      robot.updateServerTimer("device-1", "1652974973014", true)
     ).rejects.toThrow("Timer update failed");
     expect(adapter.catchError).toHaveBeenCalledWith(
       error,

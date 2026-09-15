@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.69
+
+- Added B01 Q10 (`roborock.vacuum.ss*`) dialect support. Q10 models write numbered datapoints directly and never send replies, so commands sent in the Q7 envelope were silently discarded and every request waited out its full timeout. Outgoing commands are now translated at the single choke point and sent fire-and-forget; reads and commands with no datapoint equivalent are refused immediately and logged at debug level instead of erroring. Addresses issue #10.
+- Fixed schedule switches not enabling/disabling on real robots: `upd_server_timer` was sending the timer ID as a string in a flat array; the Roborock contract requires a numeric ID nested in an array.
+- Added Matter Service Area live progress reporting. Progress attributes are now always announced at commissioning so Apple Home shows "Cleaning <room>" and per-room progress instead of a generic "Preparing"/"Traveling to Room" label for the whole run; completion is driven from the live robot status so runs ended by schedule or the app also report correctly.
+- Relaxed `engines.homebridge` to `>=1.8.0 <3.0.0-0`, which satisfies every Homebridge 1.x and 2.x release including prereleases (e.g. `2.4.1-beta.x`) under npm's resolver.
+
 ## 1.4.68
 
 - Added Node.js 26 to the supported `engines.node` range. Node 26 is the current release line and Homebridge 2.4.0 already supports `^26`; every runtime dependency in this plugin accepts Node 26 as well, so the previous range was the only thing causing Homebridge UI to report the plugin as incompatible with Node v26.x. Addresses the Node v26.8.2 compatibility report.

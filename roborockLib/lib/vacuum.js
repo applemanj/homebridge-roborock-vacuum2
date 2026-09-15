@@ -270,7 +270,7 @@ class vacuum {
       return await this.adapter.messageQueueHandler.sendRequest(
         duid,
         "upd_server_timer",
-        [timerId, enabled ? "on" : "off"]
+        [[Number(timerId), enabled ? "on" : "off"]]
       );
     } catch (error) {
       this.adapter.catchError(error, "upd_server_timer", duid, this.robotModel);

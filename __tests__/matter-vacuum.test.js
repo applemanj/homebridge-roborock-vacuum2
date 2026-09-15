@@ -654,6 +654,107 @@ describe("Matter service area selection", () => {
     expect(await accessory.getState("serviceArea", "currentArea")).toBeNull();
   });
 
+  test("announces the requested rooms when a selected-area run starts", async () => {
+    const platform = createPlatform({
+      rooms: [
+        { segmentId: 16, mapId: 0, name: "Kitchen" },
+        { segmentId: 18, mapId: 0, name: "Office" },
+      ],
+      maps: [{ mapId: 0, name: "Lower Level" }],
+    });
+    const { accessory } = createAccessory(platform, true);
+
+    await accessory.handlers.serviceArea.selectAreas({ newAreas: [16, 18] });
+    await accessory.handlers.rvcRunMode.changeToMode({
+      newMode: RUN_MODE_CLEANING,
+    });
+    await flush();
+
+    // The first requested room is cleaned first and the rest are queued. This
+    // is what previously always reported currentArea = null for multi-room runs.
+    expect(await accessory.getState("serviceArea", "currentArea")).toBe(16);
+    expect(await accessory.getState("serviceArea", "progress")).toEqual([
+      { areaId: 16, status: 1 }, // OPERATING
+      { areaId: 18, status: 0 }, // PENDING
+    ]);
+  });
+
+  test("announces a whole-home run started outside Matter", async () => {
+    const platform = createPlatform({
+      rooms: [
+        { segmentId: 16, mapId: 0, name: "Kitchen" },
+        { segmentId: 18, mapId: 0, name: "Office" },
+      ],
+      maps: [{ mapId: 0, name: "Lower Level" }],
+    });
+    const { accessory, vacuum } = createAccessory(platform, true);
+
+    // No Matter command was issued - the app or a schedule started the run.
+    await vacuum.notifyDeviceUpdater("LocalMessage", [
+      { state: 18, clean_area: 2_280_000, clean_time: 146 },
+    ]);
+
+    // Every mapped room is reported as operating and no room is claimed as
+    // current, because the robot's live position is not known.
+    expect(await accessory.getState("serviceArea", "progress")).toEqual([
+      { areaId: 16, status: 1 },
+      { areaId: 18, status: 1 },
+    ]);
+    expect(await accessory.getState("serviceArea", "currentArea")).toBeNull();
+  });
+
+  test("marks an announced run completed once cleaning stops", async () => {
+    const platform = createPlatform({
+      rooms: [{ segmentId: 16, mapId: 0, name: "Kitchen" }],
+      maps: [{ mapId: 0, name: "Lower Level" }],
+    });
+    const { accessory, vacuum } = createAccessory(platform, true);
+
+    await accessory.handlers.serviceArea.selectAreas({ newAreas: [16] });
+    await accessory.handlers.rvcRunMode.changeToMode({
+      newMode: RUN_MODE_CLEANING,
+    });
+    await flush();
+    expect(await accessory.getState("serviceArea", "progress")).toEqual([
+      { areaId: 16, status: 1 },
+    ]);
+
+    // state 8 is charging, so the run is over.
+    await vacuum.notifyDeviceUpdater("LocalMessage", [{ state: 8 }]);
+
+    expect(await accessory.getState("serviceArea", "progress")).toEqual([
+      { areaId: 16, status: 3 }, // COMPLETED
+    ]);
+    expect(await accessory.getState("serviceArea", "currentArea")).toBeNull();
+  });
+
+  test("keeps an already-announced run scope instead of widening it", async () => {
+    const platform = createPlatform({
+      rooms: [
+        { segmentId: 16, mapId: 0, name: "Kitchen" },
+        { segmentId: 18, mapId: 0, name: "Office" },
+      ],
+      maps: [{ mapId: 0, name: "Lower Level" }],
+    });
+    const { accessory, vacuum } = createAccessory(platform, true);
+
+    await accessory.handlers.serviceArea.selectAreas({ newAreas: [16] });
+    await accessory.handlers.rvcRunMode.changeToMode({
+      newMode: RUN_MODE_CLEANING,
+    });
+    await flush();
+
+    await vacuum.notifyDeviceUpdater("LocalMessage", [
+      { state: 18, clean_area: 2_280_000, clean_time: 146 },
+    ]);
+
+    // Only the requested room stays announced; the run must not widen to the
+    // whole home just because the robot is running.
+    expect(await accessory.getState("serviceArea", "progress")).toEqual([
+      { areaId: 16, status: 1 },
+    ]);
+  });
+
   test("uses cloud-preferred map switching before selected-area cleaning", async () => {
     const loadMultiMap = jest.fn().mockResolvedValue(undefined);
     const appSegmentCleanByIds = jest.fn().mockResolvedValue(undefined);
