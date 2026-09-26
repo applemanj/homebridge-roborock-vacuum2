@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.70
+
+- Fixed a stray `>` character rendering in the Homebridge UI help text for the "Enable Matter vacuum" and "Only expose Matter vacuum" options. The `<small>` elements were closed inline with an extra dangling `>` on the following line, so the UI displayed a literal `>` after each description.
+- Restored a green CI lint job. `prettier --check` had been failing since 1.4.66 on `homebridge-ui/public/index.html` and `src/platform.ts`, and since 1.4.69 on `src/matter_vacuum_accessory.ts` and `__tests__/b01-q10-protocol.test.js`. Formatting only — no behavior changes.
+- Corrected the 1.4.66 changelog entry, which claimed Matter Service Area current-room reporting that the release did not actually provide. 1.4.66 added a `currentArea` attribute for single-room cleans only; the `progress` and `estimatedEndTime` attributes Apple Home reads for a room name were not announced until 1.4.69.
+
 ## 1.4.69
 
 - Added B01 Q10 (`roborock.vacuum.ss*`) dialect support. Q10 models write numbered datapoints directly and never send replies, so commands sent in the Q7 envelope were silently discarded and every request waited out its full timeout. Outgoing commands are now translated at the single choke point and sent fire-and-forget; reads and commands with no datapoint equivalent are refused immediately and logged at debug level instead of erroring. Addresses issue #10.
@@ -14,7 +20,7 @@
 ## 1.4.66
 
 - Exposed each Roborock app schedule as a persistent HomeKit switch, with live enable/disable state backed by `get_server_timer` and `upd_server_timer`. Addresses issue #6.
-- Added Matter Service Area current-room reporting for active room cleaning, including resets that prevent stale room status during whole-home, spot, or zone cleaning. Addresses issue #7.
+- Added a Matter Service Area `currentArea` attribute for single-room cleans, with resets that clear it during whole-home, spot, or zone cleaning so a stale room is not reported. This alone did not change what Apple Home displayed — it reads the `progress` and `estimatedEndTime` attributes for a room name, and those were not announced until 1.4.69 — so the reporter-visible symptom in issue #7 stayed open until then. (Corrected entry: it previously claimed full current-room reporting for active room cleaning.)
 
 ## 1.4.65
 

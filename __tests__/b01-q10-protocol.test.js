@@ -36,7 +36,10 @@ const {
   messageQueueHandler,
 } = require("../roborockLib/lib/messageQueueHandler");
 const b01Q10Adapter = require("../roborockLib/lib/b01Q10Adapter");
-const { b01FamilyForModel, B01_FAMILY } = require("../roborockLib/lib/b01Family");
+const {
+  b01FamilyForModel,
+  B01_FAMILY,
+} = require("../roborockLib/lib/b01Family");
 
 function createLog() {
   return {
@@ -332,10 +335,12 @@ describe("a Q10 gets Q10 frames", () => {
     });
 
     test("max+ suction is 8 on a Q10, not the Q7's 5", () => {
-      expect(b01Q10Adapter.translateOutgoing("set_custom_mode", [108])).toEqual({
-        dp: 123,
-        params: 8,
-      });
+      expect(b01Q10Adapter.translateOutgoing("set_custom_mode", [108])).toEqual(
+        {
+          dp: 123,
+          params: 8,
+        }
+      );
     });
 
     test("off is a real suction level on a Q10 and is not degraded to quiet", () => {

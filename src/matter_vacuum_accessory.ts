@@ -888,7 +888,10 @@ export default class RoborockMatterVacuumAccessory {
         this.completeServiceAreaProgressIfDone(
           this.getOperationalState(state, chargeStatus)
         );
-        this.beginFullCleanServiceAreaProgressIfUnannounced(state, chargeStatus);
+        this.beginFullCleanServiceAreaProgressIfUnannounced(
+          state,
+          chargeStatus
+        );
       }
     }
 
@@ -1311,7 +1314,8 @@ export default class RoborockMatterVacuumAccessory {
       })),
       selectedAreas,
       currentArea:
-        this.serviceAreaCurrentArea ?? this.getCurrentServiceArea(selectedAreas),
+        this.serviceAreaCurrentArea ??
+        this.getCurrentServiceArea(selectedAreas),
     };
 
     if (supportedMaps.length > 0) {

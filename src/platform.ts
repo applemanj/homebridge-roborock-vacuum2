@@ -430,7 +430,9 @@ export default class RoborockPlatform implements DynamicPlatformPlugin {
           // legacy HomeKit fan + helper switches when Matter is available.
           const matter = self.getMatterApi();
           const matterSupported = Boolean(
-            matter && matter.deviceTypes && matter.deviceTypes.RoboticVacuumCleaner
+            matter &&
+              matter.deviceTypes &&
+              matter.deviceTypes.RoboticVacuumCleaner
           );
 
           if (self.platformConfig.onlyExposeMatter && matterSupported) {
@@ -439,9 +441,11 @@ export default class RoborockPlatform implements DynamicPlatformPlugin {
                 `Removing legacy HomeKit accessory '${existingAccessory.displayName}' (${uuid}) from cache because onlyExposeMatter is enabled and Matter is available.`
               );
               try {
-                self.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [
-                  existingAccessory,
-                ]);
+                self.api.unregisterPlatformAccessories(
+                  PLUGIN_NAME,
+                  PLATFORM_NAME,
+                  [existingAccessory]
+                );
               } catch (e) {
                 self.log.debug(`Failed to unregister accessory ${uuid}: ${e}`);
               }
