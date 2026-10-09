@@ -1054,3 +1054,52 @@ describe("Roborock API model and diagnostics helpers", () => {
     ).toBe(false);
   });
 });
+
+describe("Roborock API startup retry", () => {
+  function networkError(code) {
+    const error = new Error(`getaddrinfo ${code} usiot.roborock.com`);
+    error.code = code;
+    return error;
+  }
+
+  test("retries a startup request after a network error until it succeeds", async () => {
+    const api = createRoborock({ startupRetryDelaysMs: [1, 1] });
+    const request = jest
+      .fn()
+      .mockRejectedValueOnce(networkError("ENOTFOUND"))
+      .mockRejectedValueOnce(networkError("EAI_AGAIN"))
+      .mockResolvedValueOnce("home details");
+
+    await expect(
+      api.withStartupRetry("Getting home details", request)
+    ).resolves.toBe("home details");
+    expect(request).toHaveBeenCalledTimes(3);
+    expect(api.log.warn).toHaveBeenCalledTimes(2);
+  });
+
+  test("does not retry when the server responded with an error", async () => {
+    const api = createRoborock({ startupRetryDelaysMs: [1] });
+    const error = new Error("Request failed with status code 401");
+    error.code = "ERR_BAD_REQUEST";
+    error.response = { status: 401 };
+    const request = jest.fn().mockRejectedValue(error);
+
+    await expect(
+      api.withStartupRetry("Getting home details", request)
+    ).rejects.toBe(error);
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  test("stopService cancels a pending startup retry", async () => {
+    const api = createRoborock({ startupRetryDelaysMs: [60 * 60 * 1000] });
+    const error = networkError("ENOTFOUND");
+    const request = jest.fn().mockRejectedValue(error);
+
+    const pending = api.withStartupRetry("Getting home details", request);
+    await new Promise((resolve) => setImmediate(resolve));
+    await api.stopService();
+
+    await expect(pending).rejects.toBe(error);
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+});
