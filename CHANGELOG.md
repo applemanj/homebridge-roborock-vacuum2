@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.71
+
+- Startup now retries the initial Roborock cloud requests after transient network errors (for example DNS not ready yet right after a restart) instead of staying uninitialized until Homebridge was restarted. Only requests that fail before reaching the server are retried (with 5s/15s/30s/1m/2m backoff, then every 5 minutes); errors with a server response, such as an expired login, still fail immediately. Addresses issue #21, with thanks to @jtannahill for the contribution in PR #22.
+
 ## 1.4.70
 
 - Fixed a stray `>` character rendering in the Homebridge UI help text for the "Enable Matter vacuum" and "Only expose Matter vacuum" options. The `<small>` elements were closed inline with an extra dangling `>` on the following line, so the UI displayed a literal `>` after each description.
