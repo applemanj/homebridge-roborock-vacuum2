@@ -59,6 +59,20 @@ const MATTER_CLEAN_MODE_COMMAND_TIMEOUT_MS = 2000;
 // return room segments. Retrying lets newly named/segmented maps appear without
 // switching maps on every poll cycle.
 const SERVICE_AREA_ROOM_MAP_REFRESH_TTL_MS = 6 * 60 * 60 * 1000;
+// Delays between retries of the startup cloud requests when they fail before
+// reaching the server (for example DNS not ready yet after a restart). The last
+// delay repeats until the request succeeds or the service is stopped.
+const STARTUP_RETRY_DELAYS_MS = [5000, 15000, 30000, 60000, 120000, 300000];
+const NETWORK_ERROR_CODES = new Set([
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "ECONNABORTED",
+  "ETIMEDOUT",
+  "ENETUNREACH",
+  "EHOSTUNREACH",
+]);
 
 class Roborock {
   constructor(options) {
@@ -123,6 +137,11 @@ class Roborock {
     this.errorLogThrottle = new Map();
     this.now =
       typeof options.now === "function" ? options.now : () => Date.now();
+    this.startupRetryDelaysMs = Array.isArray(options.startupRetryDelaysMs)
+      ? options.startupRetryDelaysMs
+      : STARTUP_RETRY_DELAYS_MS;
+    this.startupCancelled = false;
+    this.cancelStartupRetryWait = null;
   }
 
   isInited() {
@@ -1137,6 +1156,7 @@ class Roborock {
     this.log.info(
       `Starting adapter. This might take a few minutes depending on your setup. Please wait.`
     );
+    this.startupCancelled = false;
     this.translations = require(
       `./i18n/${this.language || "en"}/translations.json`
     );
@@ -1241,15 +1261,23 @@ class Roborock {
 
     // Get home details.
     try {
-      const homeDetail = await this.loginApi.get("api/v1/getHomeDetail");
+      const homeDetail = await this.withStartupRetry(
+        "Getting home details",
+        () => this.loginApi.get("api/v1/getHomeDetail")
+      );
       if (homeDetail) {
         const homeId = homeDetail.data.data.rrHomeId;
 
         if (this.api) {
-          const homedata = await this.api.get(`v2/user/homes/${homeId}`);
+          const homedata = await this.withStartupRetry(
+            "Getting home data",
+            () => this.api.get(`v2/user/homes/${homeId}`)
+          );
           const homedataResult = homedata.data.result;
 
-          const scene = await this.api.get(`user/scene/home/${homeId}`);
+          const scene = await this.withStartupRetry("Getting scenes", () =>
+            this.api.get(`user/scene/home/${homeId}`)
+          );
 
           await this.setStateAsync("HomeData", {
             val: JSON.stringify(homedataResult),
@@ -1396,7 +1424,48 @@ class Roborock {
     }
   }
 
+  isNetworkError(error) {
+    return (
+      Boolean(error) && !error.response && NETWORK_ERROR_CODES.has(error.code)
+    );
+  }
+
+  // Runs a startup cloud request, retrying while it fails before reaching the
+  // server. Errors with a server response (for example an expired login) are
+  // thrown straight away, as is any error once stopService() has been called.
+  async withStartupRetry(label, request) {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await request();
+      } catch (error) {
+        if (!this.isNetworkError(error) || this.startupCancelled) {
+          throw error;
+        }
+        const delays = this.startupRetryDelaysMs;
+        const delay = delays[Math.min(attempt, delays.length - 1)];
+        this.log.warn(
+          `${label} failed (${error.code}). Retrying in ${Math.round(delay / 1000)}s.`
+        );
+        await new Promise((resolve) => {
+          const timer = setTimeout(resolve, delay);
+          this.cancelStartupRetryWait = () => {
+            clearTimeout(timer);
+            resolve();
+          };
+        });
+        this.cancelStartupRetryWait = null;
+        if (this.startupCancelled) {
+          throw error;
+        }
+      }
+    }
+  }
+
   async stopService() {
+    this.startupCancelled = true;
+    if (this.cancelStartupRetryWait) {
+      this.cancelStartupRetryWait();
+    }
     try {
       await this.clearTimersAndIntervals();
       this.bInited = false;
