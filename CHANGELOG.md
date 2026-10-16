@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.72
+
+- Schedule switches now verify writes by reading the timer list back from the robot about 3 seconds after a change: the switch state follows the robot's actual answer, reverts when the robot did not apply the change, and keeps the requested state when the verification read itself fails.
+- Schedule reads are now shared across switches with a 5-minute cache and in-flight coalescing, so toggling or reading several schedules no longer triggers one cloud request per switch.
+- Schedule switch names renamed in the Home app are now preserved across restarts; the generated default name is only applied when the name is unset or still a previous generated default. A schedule reading that unexpectedly returns no timers no longer tears down existing schedule switches.
+- With thanks to @pponce for reviewing the schedule implementation and suggesting these changes, and to the `mathiashornbek/homebridge-roborock-matter` fork for the reference implementation.
+
 ## 1.4.71
 
 - Startup now retries the initial Roborock cloud requests after transient network errors (for example DNS not ready yet right after a restart) instead of staying uninitialized until Homebridge was restarted. Only requests that fail before reaching the server are retried (with 5s/15s/30s/1m/2m backoff, then every 5 minutes); errors with a server response, such as an expired login, still fail immediately. Addresses issue #21, with thanks to @jtannahill for the contribution in PR #22.

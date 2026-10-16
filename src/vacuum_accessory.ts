@@ -8,6 +8,15 @@ const MAX_HOMEKIT_NAME_LENGTH = 64;
 const FALLBACK_SCENE_NAME = "Roborock Scene";
 const SCHEDULE_SERVICE_PREFIX = "roborock-schedule-";
 const CLEANING_STATES = new Set([4, 5, 6, 7, 11, 15, 16, 17, 18, 23, 26]);
+// How long a schedule reading stays fresh. A HomeKit read inside this window
+// is served from the cache instead of issuing another get_server_timer; a
+// write always refreshes so it can verify the robot accepted the change.
+const SCHEDULE_CACHE_TTL_MS = 5 * 60 * 1000;
+// How long to wait after a write before reading the schedule list back to
+// confirm the robot applied the change. A timeout can mean the write landed
+// but the reply was lost, so the read-back decides instead of the write's
+// own error.
+const SCHEDULE_VERIFY_DELAY_MS = 3000;
 
 export interface RoborockSchedule {
   id: string;
@@ -73,6 +82,9 @@ export default class RoborockVacuumAccessory {
   private controlSwitches: Map<string, Service> = new Map();
   private currentScenes: any[] = [];
   private currentSchedules: Map<string, RoborockSchedule> = new Map();
+  private scheduleCache: { schedules: RoborockSchedule[]; at: number } | null =
+    null;
+  private scheduleRefreshInFlight: Promise<RoborockSchedule[]> | null = null;
   private lastKnownBatteryLevel: number | null = null;
 
   constructor(
@@ -458,12 +470,43 @@ export default class RoborockVacuumAccessory {
     return JSON.stringify(currentIds) !== JSON.stringify(newIds);
   }
 
-  async updateScheduleSwitches(): Promise<void> {
-    try {
+  /**
+   * Read the vacuum's schedule list, sharing one in-flight request across
+   * every caller and serving repeat reads from a short-lived cache so a
+   * HomeKit poll of several switches costs one request, not one per switch.
+   */
+  private async readSchedules(): Promise<RoborockSchedule[]> {
+    const now = Date.now();
+    if (
+      this.scheduleCache &&
+      now - this.scheduleCache.at < SCHEDULE_CACHE_TTL_MS
+    ) {
+      return this.scheduleCache.schedules;
+    }
+
+    if (this.scheduleRefreshInFlight) {
+      return this.scheduleRefreshInFlight;
+    }
+
+    const refresh = (async () => {
       const schedules = parseServerTimers(
         await this.platform.roborockAPI.getServerTimers(this.accessory.context)
       );
-      this.syncScheduleSwitches(schedules);
+      this.scheduleCache = { schedules, at: Date.now() };
+      return schedules;
+    })();
+
+    this.scheduleRefreshInFlight = refresh;
+    try {
+      return await refresh;
+    } finally {
+      this.scheduleRefreshInFlight = null;
+    }
+  }
+
+  async updateScheduleSwitches(): Promise<void> {
+    try {
+      this.syncScheduleSwitches(await this.readSchedules());
     } catch (error) {
       this.platform.log.debug(
         `Unable to update schedule switches for ${this.getVacuumName()}: ${error}`
@@ -472,6 +515,24 @@ export default class RoborockVacuumAccessory {
   }
 
   private syncScheduleSwitches(schedules: RoborockSchedule[]): void {
+    // An unexpected response that parses to an empty list must not tear down
+    // switches that already exist: a robot that briefly fails its timer
+    // reading would otherwise drop every schedule switch until the next
+    // refresh rebuilt them. Keep the current switches until a trustworthy
+    // reading confirms the change.
+    if (
+      schedules.length === 0 &&
+      (this.scheduleServices.size > 0 ||
+        this.accessory.services.some((service) =>
+          service.subtype?.startsWith(SCHEDULE_SERVICE_PREFIX)
+        ))
+    ) {
+      this.platform.log.warn(
+        "Roborock schedule reading returned no schedules; keeping existing schedule switches"
+      );
+      return;
+    }
+
     const currentIds = new Set(schedules.map((schedule) => schedule.id));
 
     schedules.forEach((schedule, index) => {
@@ -505,10 +566,19 @@ export default class RoborockVacuumAccessory {
       switchService.addOptionalCharacteristic(
         this.platform.Characteristic.ConfiguredName
       );
-      switchService.setCharacteristic(
-        this.platform.Characteristic.ConfiguredName,
-        displayName
+      // Only set ConfiguredName when it is unset or still a previous
+      // generated default; a name the user renamed in the Home app is kept.
+      const configuredName = switchService.getCharacteristic(
+        this.platform.Characteristic.ConfiguredName
       );
+      const currentConfiguredName = configuredName.value;
+      if (
+        currentConfiguredName == null ||
+        String(currentConfiguredName).trim().length === 0 ||
+        String(currentConfiguredName).startsWith("Roborock Schedule ")
+      ) {
+        configuredName.setValue(displayName);
+      }
       switchService.updateCharacteristic(
         this.platform.Characteristic.On,
         schedule.enabled
@@ -556,10 +626,6 @@ export default class RoborockVacuumAccessory {
         scheduleId,
         enabled
       );
-      this.currentSchedules.set(scheduleId, { id: scheduleId, enabled });
-      this.platform.log.info(
-        `${enabled ? "Enabled" : "Disabled"} Roborock schedule ${scheduleId} for ${this.getVacuumName()}.`
-      );
     } catch (error) {
       this.scheduleServices
         .get(scheduleId)
@@ -569,13 +635,55 @@ export default class RoborockVacuumAccessory {
       );
       throw error;
     }
+
+    // The write returning does not prove the robot accepted the change: a
+    // timeout can mean the change applied but the reply was lost. Read the
+    // schedule list back and let the robot's own answer decide the switch.
+    try {
+      await new Promise<void>((resolve) =>
+        setTimeout(resolve, SCHEDULE_VERIFY_DELAY_MS)
+      );
+      this.scheduleCache = null;
+      const schedules = parseServerTimers(
+        await this.platform.roborockAPI.getServerTimers(this.accessory.context)
+      );
+      this.scheduleCache = { schedules, at: Date.now() };
+      const confirmed = schedules.find(
+        (schedule) => schedule.id === scheduleId
+      );
+      if (confirmed) {
+        this.currentSchedules.set(scheduleId, confirmed);
+        this.scheduleServices
+          .get(scheduleId)
+          ?.updateCharacteristic(
+            this.platform.Characteristic.On,
+            confirmed.enabled
+          );
+        this.platform.log.info(
+          `${confirmed.enabled ? "Enabled" : "Disabled"} Roborock schedule ${scheduleId} for ${this.getVacuumName()}.`
+        );
+      } else {
+        // The schedule vanished from the robot's list; revert the switch.
+        this.scheduleServices
+          .get(scheduleId)
+          ?.updateCharacteristic(this.platform.Characteristic.On, previous);
+        this.platform.log.warn(
+          `Roborock schedule ${scheduleId} was not present when read back for ${this.getVacuumName()}; reverted the switch.`
+        );
+      }
+    } catch (error) {
+      // The write itself succeeded; a failed verification read is logged,
+      // and the optimistic state stands until the next refresh corrects it.
+      this.currentSchedules.set(scheduleId, { id: scheduleId, enabled });
+      this.platform.log.debug(
+        `Unable to verify Roborock schedule ${scheduleId} update for ${this.getVacuumName()}: ${error}`
+      );
+    }
   }
 
   async getScheduleSwitch(scheduleId: string): Promise<CharacteristicValue> {
     try {
-      const schedules = parseServerTimers(
-        await this.platform.roborockAPI.getServerTimers(this.accessory.context)
-      );
+      const schedules = await this.readSchedules();
       this.currentSchedules = new Map(
         schedules.map((schedule) => [schedule.id, schedule])
       );
