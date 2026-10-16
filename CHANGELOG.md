@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.73
+
+- Vacuum names from the Roborock app are now sanitized to what HAP accepts before they are set on accessories: a name like "Q5 Max+" no longer logs an invalid-'Name' characteristic warning on every boot ("+" reads as " Plus "), unsupported characters become spaces, and names are cut to the 64-character limit with the start and end kept as a letter or number. A name HAP already accepts is never touched.
+- Debug logs of live device updates now redact secrets (`localKey`, serial numbers, tokens, the `rriot` signing block) before they are written, including JSON nested inside message strings, so a debug log is safe to paste into a GitHub issue.
+- With thanks to the `mathiashornbek/homebridge-roborock-matter` fork for both implementations.
+
 ## 1.4.72
 
 - Schedule switches now verify writes by reading the timer list back from the robot about 3 seconds after a change: the switch state follows the robot's actual answer, reverts when the robot did not apply the change, and keeps the requested state when the verification read itself fails.

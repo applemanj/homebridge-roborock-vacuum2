@@ -5,6 +5,7 @@ import {
 
 import RoborockPlatform from "./platform";
 import { getLiveMessageForThisAccessory } from "./live_message";
+import { hapName } from "./hap_name";
 
 const MATTER_CLEAN_MODE_COMMAND_TIMEOUT_MS = 2000;
 const MATTER_CLEAN_MODE_PREP_TIMEOUT_MS = 2500;
@@ -360,10 +361,12 @@ export default class RoborockMatterVacuumAccessory {
 
   updateMetadata(device: RoborockDevice): void {
     const duid = device.duid;
-    const displayName =
+    const displayName = hapName(
       this.api.getVacuumDeviceInfo(duid, "name") ||
-      device.name ||
-      "Roborock Vacuum";
+        device.name ||
+        "Roborock Vacuum",
+      "Roborock Vacuum"
+    );
 
     this.accessory.displayName = displayName;
     // Some Matter layers label the node from `name` rather than `displayName`;

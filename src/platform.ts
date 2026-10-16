@@ -16,6 +16,8 @@ import RoborockPlatformLogger from "./logger";
 import { RoborockPlatformConfig } from "./types";
 import { PLATFORM_NAME, PLUGIN_NAME } from "./settings";
 import { decryptSession } from "./crypto";
+import { hapName } from "./hap_name";
+import { redactSecrets } from "./redact_secrets";
 
 const DEP0040_CODE = "DEP0040";
 let dep0040FilterInstalled = false;
@@ -209,7 +211,9 @@ export default class RoborockPlatform implements DynamicPlatformPlugin {
   }
 
   private dispatchDeviceUpdate(id: string, homeData: unknown): void {
-    this.log.debug(`${id} notifyDeviceUpdater:${JSON.stringify(homeData)}`);
+    this.log.debug(
+      `${id} notifyDeviceUpdater:${JSON.stringify(redactSecrets(homeData))}`
+    );
     if (
       typeof this.roborockAPI.recordRoborockDiagnosticMessage === "function"
     ) {
@@ -409,7 +413,7 @@ export default class RoborockPlatform implements DynamicPlatformPlugin {
 
         for (const device of devices) {
           const duid = device.duid;
-          const name = device.name;
+          const name = hapName(device.name, "Roborock Vacuum");
           const model = self.roborockAPI.getProductAttribute(duid, "model");
 
           if (!self.isSupportedDevice(model)) {
@@ -421,7 +425,6 @@ export default class RoborockPlatform implements DynamicPlatformPlugin {
           }
 
           const uuid = self.api.hap.uuid.generate(device.duid);
-
           const existingAccessory = self.accessories.find(
             (accessory) => accessory.UUID === uuid
           );
@@ -630,10 +633,12 @@ export default class RoborockPlatform implements DynamicPlatformPlugin {
 
   private applyMatterAccessoryIdentity(accessory: any, device: any): void {
     const duid = String(device.duid);
-    const displayName =
+    const displayName = hapName(
       this.roborockAPI.getVacuumDeviceInfo(duid, "name") ||
-      device.name ||
-      "Roborock Vacuum";
+        device.name ||
+        "Roborock Vacuum",
+      "Roborock Vacuum"
+    );
     const firmwareRevision = this.roborockAPI.getVacuumDeviceInfo(duid, "fv");
 
     accessory.displayName = displayName;
