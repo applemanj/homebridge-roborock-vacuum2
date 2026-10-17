@@ -90,6 +90,9 @@ function getRequestTimeout(method, requestTimeoutMs) {
  * @property {LoggerLike} log
  * @property {(duid: string, update: TransportDiagnosticsUpdate) => Promise<void>} updateTransportDiagnostics
  * @property {(duid: string) => Promise<boolean>} [ensureLocalConnection]
+ * @property {(duid: string) => void} [recordLocalTimeout]
+ * @property {(duid: string) => void} [recordLocalSuccess]
+ * @property {(duid: string) => boolean} [shouldPreferCloudLocally]
  * @property {(message: string, location: string, duid?: string) => void} catchError
  */
 
@@ -383,7 +386,7 @@ class messageQueueHandler {
 
           // Track a successful response so a recovered local connection is
           // used again (clears the local failover state).
-          const trackedResolve = (value) => {
+          const trackedResolve = /** @param {unknown} value */ (value) => {
             if (
               !useCloudConnection &&
               typeof this.adapter.recordLocalSuccess === "function"
