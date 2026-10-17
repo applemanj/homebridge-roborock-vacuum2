@@ -76,8 +76,6 @@ class roborock_mqtt_connector {
     this.adapter = adapter;
 
     this.connected = false;
-
-    this.keys = roborockCrypto.generateRsaKeyPair();
   }
 
   async initUser(userdata) {
@@ -98,30 +96,26 @@ class roborock_mqtt_connector {
   }
 
   async initMQTT_Subscribe() {
-    const timeout = setTimeout(async () => {
-      this.adapter.restart();
+    // If the connection is not up within 30s, just log it. The mqtt client
+    // keeps reconnecting on its own; calling into the adapter here used to
+    // throw (restart() does not exist) and crash the whole process.
+    const timeout = setTimeout(() => {
+      this.adapter.log.warn(
+        "MQTT connection not established within 30 seconds. " +
+          "Will keep retrying in the background."
+      );
     }, 30000);
 
-    await client.on("connect", (result) => {
+    client.on("connect", (result) => {
       if (typeof result != "undefined") {
-        client.subscribe(`rr/m/o/${rriot.u}/${mqttUser}/#`, (err, granted) => {
-          if (err) {
-            this.adapter.catchError(
-              `Failed to subscribe to Roborock MQTT Server! Error: ${err}, granted: ${JSON.stringify(granted)}`,
-              `client.on("connect")`
-            );
-          }
-        });
-        clearTimeout(timeout);
-
-        this.connected = true;
+        this.subscribeAndMarkConnected(timeout, `client.on("connect")`);
       }
       this.adapter.log.debug(
         `MQTT connection connected ${JSON.stringify(result)}.`
       );
     });
 
-    await client.on("error", (result) => {
+    client.on("error", (result) => {
       this.adapter.catchError(
         `MQTT connection error: ${result}`,
         `client.on("error")`
@@ -130,39 +124,59 @@ class roborock_mqtt_connector {
       this.connected = false;
     });
 
-    await client.on("close", () => {
+    client.on("close", () => {
       this.adapter.log.info(`MQTT connection close.`);
 
       this.connected = false;
     });
 
-    await client.on("reconnect", (error) => {
+    client.on("reconnect", (error) => {
       if (error) {
         this.adapter.catchError(
           `Failed to reconnect to MQTT server.`,
           `mqtt client reconnect`
         );
       } else {
-        client.subscribe(`rr/m/o/${rriot.u}/${mqttUser}/#`, (err, granted) => {
-          if (err) {
-            this.adapter.catchError(
-              `Failed to subscribe to Roborock MQTT Server! Error: ${err}, granted: ${JSON.stringify(granted)}`,
-              `client.on("reconnect")`
-            );
-          }
-        });
-        clearTimeout(timeout);
+        this.subscribeAndMarkConnected(timeout, `client.on("reconnect")`);
       }
       this.adapter.log.info(`MQTT connection reconnect.`);
     });
 
-    await client.on("offline", (result) => {
+    client.on("offline", (result) => {
       this.adapter.catchError(
         `MQTT connection offline: ${result}`,
         `client.on("offline")`
       );
 
       this.connected = false;
+    });
+  }
+
+  // Subscribe to the Roborock MQTT topic and only mark the connection as
+  // connected once the broker has actually granted the subscription. Some
+  // brokers reject a subscription with qos 128 instead of returning an
+  // error, which the old inline code silently treated as success.
+  subscribeAndMarkConnected(timeout, context) {
+    client.subscribe(`rr/m/o/${rriot.u}/${mqttUser}/#`, (err, granted) => {
+      if (err) {
+        this.adapter.catchError(
+          `Failed to subscribe to Roborock MQTT Server! Error: ${err}, granted: ${JSON.stringify(granted)}`,
+          context
+        );
+        return;
+      }
+
+      const rejected = granted.find((g) => g.qos === 128);
+      if (rejected) {
+        this.adapter.catchError(
+          `Roborock MQTT Server rejected the subscription (qos 128) for topic ${rejected.topic}.`,
+          context
+        );
+        return;
+      }
+
+      clearTimeout(timeout);
+      this.connected = true;
     });
   }
 

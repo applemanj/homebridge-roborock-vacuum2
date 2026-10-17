@@ -208,6 +208,26 @@ class messageQueueHandler {
       );
     }
 
+    // Some devices keep the local socket connected but never answer, so the
+    // disconnect-based fallback above never triggers. After repeated local
+    // timeouts, prefer cloud for a cooldown window.
+    if (
+      !useCloudConnection &&
+      mqttConnectionState &&
+      typeof this.adapter.shouldPreferCloudLocally === "function" &&
+      this.adapter.shouldPreferCloudLocally(duid)
+    ) {
+      useCloudConnection = true;
+      await this.adapter.updateTransportDiagnostics(duid, {
+        lastTransport: "cloud",
+        lastTransportReason: "local-unresponsive-fallback",
+        lastCommandMethod: method,
+      });
+      this.adapter.log.info(
+        `Local connection for ${duid} is unresponsive. Falling back to cloud connection for method ${method}.`
+      );
+    }
+
     if (!useCloudConnection && version == "L01") {
       try {
         if (this.adapter.localConnector.ensureL01Handshake) {
@@ -350,6 +370,9 @@ class messageQueueHandler {
                 )
               );
             } else {
+              if (typeof this.adapter.recordLocalTimeout === "function") {
+                this.adapter.recordLocalTimeout(duid);
+              }
               reject(
                 new Error(
                   `Local request with id ${messageID} with method ${method} timed out after ${timeoutSeconds} seconds Local connect state: ${localConnectionState}`
@@ -358,9 +381,21 @@ class messageQueueHandler {
             }
           }, requestTimeout);
 
+          // Track a successful response so a recovered local connection is
+          // used again (clears the local failover state).
+          const trackedResolve = (value) => {
+            if (
+              !useCloudConnection &&
+              typeof this.adapter.recordLocalSuccess === "function"
+            ) {
+              this.adapter.recordLocalSuccess(duid);
+            }
+            resolve(value);
+          };
+
           // Store request with resolve and reject functions
           this.adapter.pendingRequests.set(messageID, {
-            resolve,
+            resolve: trackedResolve,
             reject,
             timeout,
           });

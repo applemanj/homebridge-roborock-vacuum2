@@ -2,6 +2,7 @@
 
 const crypto = require("crypto");
 const CRC32 = require("crc-32");
+const { getRsaKeys } = require("./rsaKeys");
 const Parser = require("binary-parser").Parser;
 const roborockCrypto = require("./roborockCrypto");
 
@@ -31,8 +32,6 @@ class message {
   constructor(adapter) {
     this.adapter = adapter;
     this.missingLocalKeyWarnings = new Set();
-
-    this.keys = roborockCrypto.generateRsaKeyPair();
   }
 
   /**
@@ -63,11 +62,13 @@ class message {
     const version = await this.adapter.getRobotVersion(duid);
     // this.adapter.log.debug("sendRequest started with: " + requestId);
 
+    let keys = null;
     if (photo) {
+      keys = await getRsaKeys();
       params.endpoint = endpoint;
       params.security = {
         cipher_suite: 0,
-        pub_key: this.keys.public,
+        pub_key: keys.public,
       };
     }
 
@@ -119,26 +120,42 @@ class message {
     return payload;
   }
 
-  async buildRoborockMessage(duid, protocol, timestamp, payload) {
-    const version = await this.adapter.getRobotVersion(duid);
+  async buildRoborockMessage(duid, protocol, timestamp, payload, options = {}) {
+    // options.version overrides the HomeData protocol version, for probing
+    // the local protocol (see localConnector.detectLocalVersion).
+    const version =
+      options.version || (await this.adapter.getRobotVersion(duid));
 
     let encrypted;
 
     const currentSeq = seq & 0xffffffff;
     const currentRandom = random & 0xffffffff;
 
-    if (protocol == 1) {
-      const msg = Buffer.alloc(23);
+    // Header-only frames (HELLO request/response, protocols 0/1, and PING
+    // request/response, protocols 2/3) carry no encrypted payload, so they
+    // have NO payloadLen field — just version(3) + seq(4) + random(4) +
+    // timestamp(4) + protocol(2) + CRC32(4) = 21 bytes. The previous build
+    // emitted a 23-byte frame with a spurious payloadLen, which L01 robots
+    // silently drop, so the handshake never completed. Optional explicit
+    // seq/random let the HELLO pin seq=1 and a stable connect_nonce without
+    // disturbing the module-global counters used by data messages.
+    if (protocol >= 0 && protocol <= 3) {
+      const headerSeq =
+        (options.seq !== undefined ? options.seq : currentSeq) >>> 0;
+      const headerRandom =
+        (options.random !== undefined ? options.random : currentRandom) >>> 0;
+      const msg = Buffer.alloc(21);
       msg.write(version);
-      msg.writeUint32BE(currentSeq, 3);
-      msg.writeUint32BE(currentRandom, 7);
+      msg.writeUint32BE(headerSeq, 3);
+      msg.writeUint32BE(headerRandom, 7);
       msg.writeUint32BE(timestamp, 11);
       msg.writeUint16BE(protocol, 15);
-      msg.writeUint16BE(0, 17);
-      const crc32 = CRC32.buf(msg.subarray(0, msg.length - 4)) >>> 0;
-      msg.writeUint32BE(crc32, msg.length - 4);
-      seq++;
-      random++;
+      const crc32 = CRC32.buf(msg.subarray(0, 17)) >>> 0;
+      msg.writeUint32BE(crc32, 17);
+      if (options.seq === undefined) {
+        seq++;
+        random++;
+      }
 
       return msg;
     }

@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.4.74
+
+Ported five stability fixes verified against our code from the upstream project this plugin forked from, `tasict/homebridge-roborock-vacuum` (many thanks for the reference implementations):
+
+- Fixed a crash when the MQTT connection is not established within 30 seconds: the timeout handler called an `adapter.restart()` method that does not exist, throwing a TypeError. It now logs a warning and lets the MQTT client's own reconnect loop keep trying. The subscription is also only marked connected once the broker actually grants it — a broker that rejects with qos 128 is now reported as an error instead of silently treated as success.
+- Fixed the L01 local handshake never completing: the HELLO frame was built with a spurious payload-length field (23 bytes instead of 21), which L01 robots silently drop, and inbound routing only accepted 17-byte handshake segments while the real HELLO response is 21 bytes. The HELLO is now sent as protocol 0 with seq 1 and a connect nonce stored before sending, inbound routing accepts both segment sizes, and a 30-second keepalive PING keeps L01 connections open. Robots that report protocol "1.0" in the cloud but only speak L01 on the LAN are detected by a probe on connect.
+- Added local-to-cloud failover for devices whose local connection stays connected but never answers (issue #4): after 3 consecutive local timeouts the plugin prefers the cloud path for 5 minutes, and a successful local request clears the state so a recovered local connection is used again. Self-healing, no configuration change needed.
+- RSA-2048 key generation for photo/secure requests no longer blocks the event loop for seconds: the pure-JavaScript node-forge keygen ran synchronously at startup in two places (one of them dead code). Keys are now generated lazily with the native async crypto implementation and shared process-wide.
+- `isCleaning` now recognizes the mop-wash states 23 and 25 (Q7 Max), the mop attach/detach states 33 and 34 (G20S Ultra), and the 2025 B01/Q10-series mopping states 6301–6310, so those robots no longer flip to "stopped" mid-run. The HomeKit accessory's cleaning-state set was aligned to match.
+
 ## 1.4.73
 
 - Vacuum names from the Roborock app are now sanitized to what HAP accepts before they are set on accessories: a name like "Q5 Max+" no longer logs an invalid-'Name' characteristic warning on every boot ("+" reads as " Plus "), unsupported characters become spaces, and names are cut to the 64-character limit with the start and end kept as a letter or number. A name HAP already accepts is never touched.

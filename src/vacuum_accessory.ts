@@ -7,7 +7,10 @@ const { stateCodes } = require("../roborockLib/lib/deviceFeatures");
 const MAX_HOMEKIT_NAME_LENGTH = 64;
 const FALLBACK_SCENE_NAME = "Roborock Scene";
 const SCHEDULE_SERVICE_PREFIX = "roborock-schedule-";
-const CLEANING_STATES = new Set([4, 5, 6, 7, 11, 15, 16, 17, 18, 23, 26]);
+const CLEANING_STATES = new Set([
+  4, 5, 6, 7, 11, 15, 16, 17, 18, 23, 25, 26, 33, 34, 6301, 6302, 6303, 6304,
+  6305, 6306, 6307, 6308, 6309, 6310,
+]);
 // How long a schedule reading stays fresh. A HomeKit read inside this window
 // is served from the cache instead of issuing another get_server_timer; a
 // write always refreshes so it can verify the robot accepted the change.

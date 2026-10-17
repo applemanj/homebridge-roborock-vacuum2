@@ -10,6 +10,11 @@ const PORT = 58866;
 const TIMEOUT = 5000; // 5 Sekunden Timeout
 const LOCAL_RECONNECT_DELAY_MS = 60000;
 const LOCAL_CONNECT_TIMEOUT_MS = 4000;
+// How long the local protocol probe waits for an answer to its L01 HELLO.
+const PROBE_TIMEOUT = 3000;
+// PING spacing for L01 devices, which close a local connection after 60 s
+// without traffic.
+const KEEPALIVE_INTERVAL = 30000;
 
 const BROADCAST_TOKEN = Buffer.from("qWKYcdQWrbm9hPqe", "utf8");
 
@@ -29,11 +34,24 @@ function getTimerFns(adapter) {
   };
 }
 
+// Local TCP frames are sent with a 4-byte big-endian length prefix.
+function withLengthPrefix(message) {
+  const lengthBuffer = Buffer.alloc(4);
+  lengthBuffer.writeUInt32BE(message.length, 0);
+  return Buffer.concat([lengthBuffer, message]);
+}
+
+// Random value in [10000, 32767], the range used for the L01 connect_nonce.
+function randomNonce() {
+  return 10000 + Math.floor(Math.random() * 22768);
+}
+
 class EnhancedSocket extends net.Socket {
   constructor(options) {
     super(options);
     this.connected = false;
     this.chunkBuffer = Buffer.alloc(0);
+    this.keepaliveTimer = null;
 
     this.on("connect", () => {
       this.connected = true;
@@ -41,6 +59,7 @@ class EnhancedSocket extends net.Socket {
 
     this.on("close", () => {
       this.connected = false;
+      this.stopKeepalive();
     });
 
     this.on("error", () => {
@@ -50,6 +69,13 @@ class EnhancedSocket extends net.Socket {
     this.on("end", () => {
       this.connected = false;
     });
+  }
+
+  stopKeepalive() {
+    if (this.keepaliveTimer) {
+      clearInterval(this.keepaliveTimer);
+      this.keepaliveTimer = null;
+    }
   }
 }
 
@@ -192,6 +218,20 @@ class localConnector {
       return;
     }
 
+    // Some firmwares report pv "1.0" in HomeData but only speak L01 on the
+    // LAN and silently drop 1.0 frames. Probe over a throwaway connection: a
+    // device that answers an L01 HELLO gets L01 for all its local traffic.
+    // 1.0 devices don't answer, which costs them up to PROBE_TIMEOUT per
+    // connect. Only an L01 answer is remembered, so a device that switches
+    // to L01 with a firmware update is picked up on its next reconnect.
+    try {
+      await this.detectLocalVersion(duid, ip);
+    } catch (error) {
+      this.adapter.log.debug(
+        `Local protocol probe failed for ${duid}: ${error.message}`
+      );
+    }
+
     const client = new EnhancedSocket();
     await this.adapter.updateTransportDiagnostics(duid, {
       localIp: ip,
@@ -233,6 +273,11 @@ class localConnector {
           this.ensureL01Handshake(duid).catch((error) => {
             this.adapter.log.debug(
               `L01 handshake on connect failed for ${duid}: ${error.message}`
+            );
+          });
+          this.startKeepalive(duid, client).catch((error) => {
+            this.adapter.log.debug(
+              `Keepalive setup failed for ${duid}: ${error.message}`
             );
           });
           finish(resolve);
@@ -289,9 +334,12 @@ class localConnector {
               offset + 4,
               offset + segmentLength + 4
             );
-            // length of 17 does not contain any useful data.
-            // It seems to be protocol handshake metadata.
-            if (segmentLength != 17) {
+            // Short, header-only handshake frames carry no encrypted payload:
+            // the L01 HELLO_RESPONSE is 21 bytes (version+seq+random+timestamp+
+            // protocol+CRC32); a bare 17-byte header may also appear. Route both
+            // to the shortMessage handler below; anything larger is a data
+            // message with an encrypted payload.
+            if (segmentLength != 17 && segmentLength != 21) {
               const data = this.adapter.message._decodeMsg(currentBuffer, duid);
               if (!data) {
                 offset += 4 + segmentLength;
@@ -329,9 +377,12 @@ class localConnector {
             } else {
               try {
                 const shortMessage = shortMessageParser.parse(currentBuffer);
+                // HELLO_RESPONSE (protocol 1) echoing our seq=1 HELLO; its
+                // random field is the ack_nonce.
                 if (
                   shortMessage.version == "L01" &&
-                  shortMessage.protocol == 1
+                  shortMessage.protocol == 1 &&
+                  shortMessage.seq == 1
                 ) {
                   const currentNonces =
                     this.adapter.localL01Nonces.get(duid) || {};
@@ -440,8 +491,83 @@ class localConnector {
     }
   }
 
+  // Probe whether a pv-"1.0" device actually speaks L01 on the LAN, over a
+  // throwaway connection. See createClient for the rationale.
+  async detectLocalVersion(duid, ip, port = 58867) {
+    if (this.adapter.localVersions.has(duid)) {
+      return;
+    }
+    if ((await this.adapter.getRobotVersion(duid)) != "1.0") {
+      return;
+    }
+
+    const hello = await this.adapter.message.buildRoborockMessage(
+      duid,
+      0,
+      Math.floor(Date.now() / 1000),
+      Buffer.alloc(0),
+      { version: "L01", seq: 1, random: randomNonce() }
+    );
+
+    const answersL01 = await new Promise((resolve) => {
+      const probe = new net.Socket();
+      const done = (result) => {
+        clearTimeout(timer);
+        probe.destroy();
+        resolve(result);
+      };
+      const timer = setTimeout(() => done(false), PROBE_TIMEOUT);
+      probe.on("data", (data) => {
+        done(data.length >= 7 && data.toString("latin1", 4, 7) == "L01");
+      });
+      probe.on("error", () => done(false));
+      probe.on("close", () => done(false));
+      probe.connect(port, ip, () => probe.write(withLengthPrefix(hello)));
+    });
+
+    if (answersL01) {
+      this.adapter.localVersions.set(duid, "L01");
+      this.adapter.log.info(
+        `Robot ${duid} reports protocol 1.0 but answers L01 locally. Using L01 for the local connection.`
+      );
+    }
+  }
+
+  // A header-only PING (protocol 2, answered with protocol 3, which the data
+  // handler ignores) every KEEPALIVE_INTERVAL keeps an L01 connection open.
+  // 1.0 devices keep idle connections open and get no PING.
+  async startKeepalive(duid, client) {
+    if ((await this.adapter.getRobotVersion(duid, "local")) != "L01") {
+      return;
+    }
+    // The connection may have closed while the version was looked up.
+    if (!client.connected || client.keepaliveTimer) {
+      return;
+    }
+
+    let pingSeq = 0x10000;
+    client.keepaliveTimer = setInterval(async () => {
+      try {
+        const ping = await this.adapter.message.buildRoborockMessage(
+          duid,
+          2,
+          Math.floor(Date.now() / 1000),
+          Buffer.alloc(0),
+          { seq: pingSeq++, random: randomNonce() }
+        );
+        if (ping && client.connected) {
+          client.write(withLengthPrefix(ping));
+        }
+      } catch (error) {
+        this.adapter.log.debug(
+          `Keepalive ping failed for ${duid}: ${error.message}`
+        );
+      }
+    }, KEEPALIVE_INTERVAL);
+  }
+
   async ensureL01Handshake(duid) {
-    const version = await this.adapter.getRobotVersion(duid);
+    const version = await this.adapter.getRobotVersion(duid, "local");
     if (version != "L01") {
       return;
     }
@@ -460,24 +586,29 @@ class localConnector {
       return;
     }
 
+    // HELLO request: protocol 0 (HELLO_REQUEST), 21-byte header+CRC frame,
+    // seq=1, a real timestamp, and random=connect_nonce. The robot replies
+    // with a protocol-1 (HELLO_RESPONSE) frame whose random field is the
+    // ack_nonce. Pick a stable connect_nonce in [10000, 32767] and store it
+    // BEFORE sending, so the follow-up L01 data-message AAD reuses the exact
+    // value the robot saw in the HELLO.
     const timestamp = Math.floor(Date.now() / 1000);
-    const handshakeMessage = await this.adapter.message.buildRoborockMessage(
-      duid,
-      1,
-      timestamp,
-      Buffer.alloc(0)
-    );
-    if (!handshakeMessage) {
-      throw new Error(
-        `Failed to build protocol 1 handshake message for ${duid}`
-      );
-    }
-
-    const connectNonce = handshakeMessage.readUInt32BE(7);
+    const connectNonce = 10000 + Math.floor(Math.random() * 22768);
     this.adapter.localL01Nonces.set(duid, {
       connectNonce,
       ackNonce: undefined,
     });
+
+    const handshakeMessage = await this.adapter.message.buildRoborockMessage(
+      duid,
+      0,
+      timestamp,
+      Buffer.alloc(0),
+      { seq: 1, random: connectNonce }
+    );
+    if (!handshakeMessage) {
+      throw new Error(`Failed to build HELLO handshake message for ${duid}`);
+    }
 
     if (this.l01HandshakeWaiters.has(duid)) {
       const waiter = this.l01HandshakeWaiters.get(duid);
@@ -496,10 +627,7 @@ class localConnector {
       this.l01HandshakeWaiters.set(duid, { resolve, reject, timeout });
     });
 
-    const lengthBuffer = Buffer.alloc(4);
-    lengthBuffer.writeUInt32BE(handshakeMessage.length, 0);
-    const fullMessage = Buffer.concat([lengthBuffer, handshakeMessage]);
-    client.write(fullMessage);
+    client.write(withLengthPrefix(handshakeMessage));
 
     await handshakePromise;
   }

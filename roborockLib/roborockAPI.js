@@ -89,6 +89,17 @@ class Roborock {
 
     this.localKeys = null;
     this.localL01Nonces = new Map();
+    // Protocol version a device was actually found to speak on the LAN
+    // (differs from HomeData's pv for some firmwares). Keyed by duid.
+    this.localVersions = new Map();
+    // Local failover state: after repeated local timeouts a device's local
+    // connection is treated as unresponsive (connected but mute) and the
+    // cloud path is preferred for a cooldown window. See
+    // recordLocalTimeout/recordLocalSuccess/shouldPreferCloudLocally.
+    this.localTimeoutStreak = new Map();
+    this.localCloudPreference = new Map();
+    this.localFailoverThreshold = 3; // consecutive local timeouts before preferring cloud
+    this.localFailoverInterval = 5 * 60 * 1000; // 5 min preferring cloud before retrying local
     this.roomIDs = {};
     this.vacuums = {};
     this.initializedVacuumDuids = new Set();
@@ -3038,14 +3049,34 @@ class Roborock {
       case 16: // Go To
       case 17: // Zone Clean
       case 18: // Room Clean
+      case 23: // Washing the mop (mid-run dock stop; the session continues)
+      case 25: // Washing the mop (alias reported by the Q7 Max family)
       case 26: // Going to wash the mop
+      case 33: // Attaching the mop (mid-run, e.g. G20S Ultra)
+      case 34: // Detaching the mop (mid-run, e.g. G20S Ultra)
+      case 6301: // Mopping
+      case 6302: // Clean+mop, vacuum phase
+      case 6303: // Clean+mop, mop phase
+      case 6304: // Segment mopping
+      case 6305: // Segment clean+mop, vacuum phase
+      case 6306: // Segment clean+mop, mop phase
+      case 6307: // Zoned mopping
+      case 6308: // Zoned clean+mop, vacuum phase
+      case 6309: // Zoned clean+mop, mop phase
+      case 6310: // Back at dock washing the duster (session continues)
         return true;
       default:
         return false;
     }
   }
 
-  async getRobotVersion(duid) {
+  // Returns HomeData's protocol version, or with transport "local" the
+  // version the device was found to speak on the LAN, if that differs.
+  async getRobotVersion(duid, transport) {
+    if (transport == "local" && this.localVersions.has(duid)) {
+      return this.localVersions.get(duid);
+    }
+
     const device = this.getAllHomeDevices().find(
       (device) => device.duid == duid
     );
@@ -3054,6 +3085,48 @@ class Roborock {
     }
 
     return "Error in getRobotVersion. Version not found.";
+  }
+
+  // Called by the message queue when a LOCAL request times out. After a few
+  // consecutive local timeouts we treat the device's local connection as
+  // unresponsive (connected but mute) and prefer the cloud path for a cooldown.
+  recordLocalTimeout(duid) {
+    if (!duid) {
+      return;
+    }
+
+    const streak = (this.localTimeoutStreak.get(duid) || 0) + 1;
+
+    if (streak >= this.localFailoverThreshold) {
+      this.localCloudPreference.set(
+        duid,
+        Date.now() + this.localFailoverInterval
+      );
+      this.localTimeoutStreak.set(duid, 0);
+      this.log.info(
+        `Local connection for ${duid} is unresponsive after ${streak} consecutive timeouts; preferring cloud for ${Math.round(this.localFailoverInterval / 60000)} min.`
+      );
+    } else {
+      this.localTimeoutStreak.set(duid, streak);
+    }
+  }
+
+  // Called by the message queue when a LOCAL request succeeds. Clears any local
+  // failover state so a recovered local connection is used again.
+  recordLocalSuccess(duid) {
+    if (!duid) {
+      return;
+    }
+
+    this.localTimeoutStreak.delete(duid);
+    this.localCloudPreference.delete(duid);
+  }
+
+  // Whether requests for a device should prefer the cloud path because its local
+  // connection is connected but unresponsive (true during the failover cooldown).
+  shouldPreferCloudLocally(duid) {
+    const until = this.localCloudPreference.get(duid);
+    return !!until && Date.now() < until;
   }
 
   getRequestId() {
