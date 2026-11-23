@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.76
+
+- The plugin UI's Matter pairing section now shows only the Matter nodes owned by this plugin. The pairing codes live in Homebridge's shared Matter storage (`matter/<node id>/commissioning.json`), which every Homebridge 2.x plugin with Matter support reads, so the tab previously rendered a QR card for every plugin's bridge on the machine. Nodes are now matched against the child bridge username configured for this plugin in `config.json`, plus each node's `homebridge-owner.json` / `accessories.json` ownership metadata, so only your Roborock child bridge and its Roborock vacuum accessories appear.
+
 ## 1.4.75
 
 - The Matter vacuum now reports an error state you can actually see in Apple Home. When the robot is unreachable on both the local and cloud transports (offline per the cloud, marked remote after local connect failures, or transport-level `device-offline`), the Matter RVC operational state becomes `ERROR(3)`, which Apple Home shows as an attention banner on the accessory tile. The state clears automatically once the robot is reachable again. Shared vacuums accessed via `received-device` are not treated as unreachable.

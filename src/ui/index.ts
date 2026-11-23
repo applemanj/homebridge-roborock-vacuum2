@@ -4,6 +4,12 @@ import fs from "fs";
 import net from "net";
 import QRCode from "qrcode";
 import { encryptSession } from "../crypto";
+import {
+  collectPluginBridgeUsernames,
+  filterPluginOwnedMatterNodes,
+  findMatterNodeCandidates,
+  readHomebridgeConfig,
+} from "./matter_pairing";
 
 const roborockAuth = require("../../roborockLib/lib/roborockAuth");
 
@@ -458,20 +464,18 @@ class RoborockUiServer {
           .map((device) => [device.duid, device])
       );
       const matterPaths = this.getMatterSearchPaths(storagePath);
-      const files = this.findActiveCommissioningFiles(matterPaths);
+      const homebridgeConfig = readHomebridgeConfig(storagePath);
+      const bridgeUsernames = collectPluginBridgeUsernames(homebridgeConfig);
+      const nodes = findMatterNodeCandidates(matterPaths);
+      const ownedNodes = filterPluginOwnedMatterNodes(nodes, bridgeUsernames);
       const entries = await Promise.all(
-        files.map(async (filePath) => {
-          const commissioning = this.readJsonFile(filePath);
-          if (!commissioning) {
-            return null;
-          }
-
-          return this.buildMatterPairingEntry(
-            commissioning,
-            filePath,
+        ownedNodes.map(async (node) =>
+          this.buildMatterPairingEntry(
+            node.commissioning,
+            path.join(node.dirPath, "commissioning.json"),
             deviceByDuid
-          );
-        })
+          )
+        )
       );
       const pairingEntries = entries
         .filter((entry): entry is MatterPairingEntry => Boolean(entry))
@@ -511,56 +515,6 @@ class RoborockUiServer {
         "/homebridge/matter",
       ])
     );
-  }
-
-  private findActiveCommissioningFiles(matterPaths: string[]): string[] {
-    const files: string[] = [];
-    const seen = new Set<string>();
-
-    for (const matterPath of matterPaths) {
-      if (!fs.existsSync(matterPath)) {
-        continue;
-      }
-
-      try {
-        for (const entry of fs.readdirSync(matterPath, {
-          withFileTypes: true,
-        })) {
-          if (!entry.isDirectory() || entry.name.includes(".")) {
-            continue;
-          }
-
-          const filePath = path.join(
-            matterPath,
-            entry.name,
-            "commissioning.json"
-          );
-          if (!fs.existsSync(filePath)) {
-            continue;
-          }
-
-          const key = this.getRealPath(filePath);
-          if (seen.has(key)) {
-            continue;
-          }
-
-          seen.add(key);
-          files.push(filePath);
-        }
-      } catch {
-        // Ignore unreadable Matter storage locations and continue searching.
-      }
-    }
-
-    return files;
-  }
-
-  private getRealPath(filePath: string): string {
-    try {
-      return fs.realpathSync(filePath);
-    } catch {
-      return path.resolve(filePath);
-    }
   }
 
   private async buildMatterPairingEntry(
