@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.75
+
+- The Matter vacuum now reports an error state you can actually see in Apple Home. When the robot is unreachable on both the local and cloud transports (offline per the cloud, marked remote after local connect failures, or transport-level `device-offline`), the Matter RVC operational state becomes `ERROR(3)`, which Apple Home shows as an attention banner on the accessory tile. The state clears automatically once the robot is reachable again. Shared vacuums accessed via `received-device` are not treated as unreachable.
+- Genuine robot errors (Roborock states 9 and 12) now also surface as the Matter `ERROR` operational state in the default configuration, instead of being collapsed into `Stopped`. Previously an actual robot error was indistinguishable from a stopped robot in Apple Home unless the extended operational states option was enabled.
+- Command transports now record a machine-readable `lastError` (reason, timestamp, message) in the TransportDiagnostics entry when a request is refused because the device is offline, the cloud connection is unavailable, or the local socket is unavailable, making it easy to see why a command never reached the robot.
+
 ## 1.4.74
 
 Ported five stability fixes verified against our code from the upstream project this plugin forked from, `tasict/homebridge-roborock-vacuum` (many thanks for the reference implementations):

@@ -29,6 +29,7 @@ function createPlatform({
   maps = [],
   currentMapId = null,
   status = {},
+  transportDiagnostics = null,
   matterUpdates = [],
   appStart = jest.fn().mockResolvedValue(undefined),
   appCharge = jest.fn().mockResolvedValue(undefined),
@@ -81,6 +82,7 @@ function createPlatform({
       app_segment_clean_by_ids: appSegmentCleanByIds,
       load_multi_map: loadMultiMap,
       getStatus,
+      getTransportDiagnostics: () => transportDiagnostics,
     },
   };
 }
@@ -1654,5 +1656,116 @@ describe("Matter optimistic state", () => {
         .attributes.operationalState
     ).toBe(RVC_OPERATIONAL_STATE_STOPPED);
     jest.clearAllTimers();
+  });
+});
+
+describe("Matter unreachable error state", () => {
+  test("publishes ERROR when the robot is offline in the diagnostics", async () => {
+    const matterUpdates = [];
+    const platform = createPlatform({
+      matterUpdates,
+      status: { state: 8, battery: 100 },
+      transportDiagnostics: {
+        "device-1": { online: false, lastTransportReason: "device-offline" },
+      },
+    });
+    const { vacuum } = createAccessory(platform, true);
+
+    await vacuum.updateMatterStateFromRoborock();
+
+    expect(
+      matterUpdates.find((update) => update.cluster === "rvcOperationalState")
+        .attributes.operationalState
+    ).toBe(3);
+  });
+
+  test("treats a remote device after connect failure as unreachable", async () => {
+    const matterUpdates = [];
+    const platform = createPlatform({
+      matterUpdates,
+      status: { state: 8, battery: 100 },
+      transportDiagnostics: {
+        "device-1": {
+          isRemote: true,
+          remoteReason: "marked-remote-after-connect-failure",
+        },
+      },
+    });
+    const { vacuum } = createAccessory(platform, true);
+
+    await vacuum.updateMatterStateFromRoborock();
+
+    expect(
+      matterUpdates.find((update) => update.cluster === "rvcOperationalState")
+        .attributes.operationalState
+    ).toBe(3);
+  });
+
+  test("does not treat shared (received-device) remote access as unreachable", async () => {
+    const matterUpdates = [];
+    const platform = createPlatform({
+      matterUpdates,
+      status: { state: 8, battery: 100 },
+      transportDiagnostics: {
+        "device-1": { isRemote: true, remoteReason: "received-device" },
+      },
+    });
+    const { vacuum } = createAccessory(platform, true);
+
+    await vacuum.updateMatterStateFromRoborock();
+
+    expect(
+      matterUpdates.find((update) => update.cluster === "rvcOperationalState")
+        .attributes.operationalState
+    ).toBe(RVC_OPERATIONAL_STATE_STOPPED);
+  });
+
+  test("clears ERROR once the diagnostics report the robot online", async () => {
+    const matterUpdates = [];
+    const platform = createPlatform({
+      matterUpdates,
+      status: { state: 8, battery: 100 },
+      transportDiagnostics: {
+        "device-1": { online: false, lastTransportReason: "device-offline" },
+      },
+    });
+    const { vacuum } = createAccessory(platform, true);
+
+    await vacuum.updateMatterStateFromRoborock();
+
+    const errorUpdate = matterUpdates.find(
+      (update) => update.cluster === "rvcOperationalState"
+    );
+    expect(errorUpdate.attributes.operationalState).toBe(3);
+
+    matterUpdates.length = 0;
+    platform.roborockAPI.getTransportDiagnostics = () => ({
+      "device-1": { online: true, lastTransportReason: "local-request" },
+    });
+
+    await vacuum.updateMatterStateFromRoborock();
+
+    const recoveredUpdate = matterUpdates.find(
+      (update) => update.cluster === "rvcOperationalState"
+    );
+    expect(recoveredUpdate.attributes.operationalState).toBe(
+      RVC_OPERATIONAL_STATE_STOPPED
+    );
+  });
+
+  test("robot-reported error state stays visible in basic mode", async () => {
+    const matterUpdates = [];
+    const platform = createPlatform({
+      matterUpdates,
+      status: { state: 12, battery: 80 },
+    });
+    const { vacuum } = createAccessory(platform, true);
+
+    await vacuum.updateMatterStateFromRoborock();
+
+    expect(
+      matterUpdates.find((update) => update.cluster === "rvcOperationalState")
+        .attributes.operationalState
+    ).toBe(3);
   });
 });

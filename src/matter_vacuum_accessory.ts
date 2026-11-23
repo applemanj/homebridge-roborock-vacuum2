@@ -1957,6 +1957,12 @@ export default class RoborockMatterVacuumAccessory {
     state = this.getNumberStatus("state"),
     chargeStatus = this.getNumberStatus("charge_status")
   ): number {
+    // When the robot cannot be reached over either transport, surface the
+    // RVC ERROR operational state so Apple Home flags the accessory.
+    if (this.isRobotUnreachable()) {
+      return RVC_OPERATIONAL_STATE.ERROR;
+    }
+
     const operationalState = this.getRoborockOperationalState(
       state,
       chargeStatus
@@ -2015,8 +2021,10 @@ export default class RoborockMatterVacuumAccessory {
     }
 
     switch (operationalState) {
+      // A genuine robot error must stay visible even in the basic (non-extended)
+      // configuration so Apple Home surfaces the attention banner.
       case RVC_OPERATIONAL_STATE.ERROR:
-        return RVC_OPERATIONAL_STATE.STOPPED;
+        return RVC_OPERATIONAL_STATE.ERROR;
       case RVC_OPERATIONAL_STATE.SEEKING_CHARGER:
         return RVC_OPERATIONAL_STATE.STOPPED;
       case RVC_OPERATIONAL_STATE.EMPTYING_DUST_BIN:
@@ -2593,17 +2601,55 @@ export default class RoborockMatterVacuumAccessory {
     return options;
   }
 
-  private getTransportDescription(): string {
-    const diagnostics =
-      typeof this.api.getTransportDiagnostics === "function"
-        ? this.api.getTransportDiagnostics()
-        : null;
-    const transport =
-      diagnostics && typeof diagnostics === "object"
-        ? diagnostics[this.getDuid()]
-        : null;
+  private getTransportDiagnosticsEntry(): Record<string, unknown> | null {
+    if (typeof this.api.getTransportDiagnostics !== "function") {
+      return null;
+    }
 
-    if (!transport || typeof transport !== "object") {
+    const diagnostics = this.api.getTransportDiagnostics();
+    if (!diagnostics || typeof diagnostics !== "object") {
+      return null;
+    }
+
+    const entry = (diagnostics as Record<string, unknown>)[this.getDuid()];
+    return entry && typeof entry === "object"
+      ? (entry as Record<string, unknown>)
+      : null;
+  }
+
+  private isRobotUnreachable(): boolean {
+    const entry = this.getTransportDiagnosticsEntry();
+    if (!entry) {
+      return false;
+    }
+
+    // The cloud-reported online flag is authoritative when present.
+    if (entry.online === false) {
+      return true;
+    }
+
+    // A device only reachable through the Roborock cloud because local
+    // connects kept failing is effectively unreachable for Matter use.
+    if (
+      entry.isRemote === true &&
+      entry.remoteReason === "marked-remote-after-connect-failure"
+    ) {
+      return true;
+    }
+
+    // Transport-level offline signal recorded by the message queue when it
+    // refuses to send a command to an offline device.
+    if (entry.lastTransportReason === "device-offline") {
+      return true;
+    }
+
+    return false;
+  }
+
+  private getTransportDescription(): string {
+    const transport = this.getTransportDiagnosticsEntry();
+
+    if (!transport) {
       return "";
     }
 

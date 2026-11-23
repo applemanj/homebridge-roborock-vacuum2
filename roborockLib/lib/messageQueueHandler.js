@@ -40,6 +40,7 @@ function getRequestTimeout(method, requestTimeoutMs) {
  * @property {"cloud" | "local" | "local-pending"} [lastTransport]
  * @property {string} [lastTransportReason]
  * @property {string} [lastCommandMethod]
+ * @property {{reason: string, at: string, message: string}} [lastError]
  */
 
 /**
@@ -279,6 +280,11 @@ class messageQueueHandler {
           this.adapter.updateTransportDiagnostics(duid, {
             lastCommandMethod: method,
             lastTransportReason: "device-offline",
+            lastError: {
+              reason: "device-offline",
+              at: new Date().toISOString(),
+              message: `Device ${duid} is offline. Not sending method ${method} request.`,
+            },
           });
           this.adapter.pendingRequests.delete(messageID);
           this.adapter.log.debug(
@@ -296,6 +302,13 @@ class messageQueueHandler {
             lastTransportReason: cloudOnlyConnection
               ? "cloud-only-mqtt-unavailable"
               : "mqtt-unavailable",
+            lastError: {
+              reason: cloudOnlyConnection
+                ? "cloud-only-mqtt-unavailable"
+                : "mqtt-unavailable",
+              at: new Date().toISOString(),
+              message: "Cloud connection not available for this request.",
+            },
           });
           this.adapter.pendingRequests.delete(messageID);
           this.adapter.log.debug(
@@ -310,6 +323,11 @@ class messageQueueHandler {
           this.adapter.updateTransportDiagnostics(duid, {
             lastCommandMethod: method,
             lastTransportReason: "local-socket-unavailable",
+            lastError: {
+              reason: "local-socket-unavailable",
+              at: new Date().toISOString(),
+              message: `Local connection not available for ${duid}.`,
+            },
           });
           this.adapter.pendingRequests.delete(messageID);
           this.adapter.log.debug(
